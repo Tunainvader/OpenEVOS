@@ -613,6 +613,9 @@ class CapturePage(QWidget):
                 b.setChecked(True)
             self.map.fov_mm = self._fov_mm()
             self.view.pixel_um = self.session.pixel_size_um(self.role, slot)
+            # scale bar only from a measured pixel size (Calibration › pixel size), never the nominal fallback
+            self.view.pixel_calibrated = bool(
+                self.session.calibration.pixel_size_um.get(self.role.value, {}).get(slot))
         z = self.ctl.focus_z()
         if z is not None:
             self.lbl_z.setText(f"Z {z:9.2f} µm")

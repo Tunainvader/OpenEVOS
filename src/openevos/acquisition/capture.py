@@ -52,6 +52,12 @@ class CapturedImage:
     extra: tuple[tuple[str, str], ...] = ()
 
     @property
+    def pixel_size_calibrated(self) -> bool:
+        """True only when the pixel size was measured on this instrument (Calibration › pixel size); a nominal value
+        (camera pixel / objective magnification) never drives a scale bar (operator, 2026-11-18)."""
+        return self.pixel_size_um is not None and dict(self.extra).get("pixel_size_source") == "calibrated"
+
+    @property
     def is_color(self) -> bool:
         return self.data.ndim == 3
 

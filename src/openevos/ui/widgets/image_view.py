@@ -55,6 +55,9 @@ class ImageView(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.pixel_um: float | None = None
+        #: a scale bar is drawn only for a pixel size measured on this instrument; a nominal one is never shown
+        #: (operator, 2026-11-18: "we will have to properly put the scale with strict precision")
+        self.pixel_calibrated = False
         self.show_scale_bar = True
         self.show_crosshair = False
         self.badge = ""
@@ -231,7 +234,7 @@ class ImageView(QGraphicsView):
             painter.setPen(QColor(255, 255, 255, 150))
             painter.setFont(QFont(painter.font().family(), 9))
             painter.drawText(QRectF(12, vh - 26, vw - 24, 20), Qt.AlignLeft | Qt.AlignVCenter, self.watermark)
-        if self.show_scale_bar and self.pixel_um and self._size:
+        if self.show_scale_bar and self.pixel_um and self.pixel_calibrated and self._size:
             um_per_view_px = self.pixel_um / max(1e-9, self.zoom_factor())
             target = um_per_view_px * vw * 0.18
             nice = _nice(target)

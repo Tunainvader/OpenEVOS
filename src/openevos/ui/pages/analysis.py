@@ -584,6 +584,7 @@ class AnalysisPage(QWidget):
             rgb = render_frame(img.data, img.channel, prof, st, max_value=img.max_value)
         self.view.set_image(rgb, img.data)
         self.view.pixel_um = img.pixel_size_um
+        self.view.pixel_calibrated = img.pixel_size_calibrated
         anns = self.anns()
         if anns.visible:
             for a in anns.items:

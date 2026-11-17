@@ -171,6 +171,7 @@ class ZStackPage(QWidget):
             self.lbl_slice.setText(f"slice {i + 1}/{len(zs.images)}  z={zs.z_um[i]:.2f} µm")
         self.view.set_image(render_frame(data, zs.channel, self.session.profile, st))
         self.view.pixel_um = zs.images[0].pixel_size_um
+        self.view.pixel_calibrated = zs.images[0].pixel_size_calibrated
         self.view.badge = "Z-STACK • SIMULATED" if zs.images[0].synthetic else "Z-STACK"
 
     def showEvent(self, e):
@@ -426,6 +427,7 @@ class ReviewPage(QWidget):
             self.view.set_image(render_frame(i.data, i.channel, self.session.profile, self.session.settings,
                                              max_value=i.max_value))
             self.view.pixel_um = i.pixel_size_um
+            self.view.pixel_calibrated = i.pixel_size_calibrated
             self._selected_meta = i.metadata()
             self.meta.setPlainText(json.dumps(self._selected_meta, indent=2, default=str))
 
@@ -457,7 +459,9 @@ class ReviewPage(QWidget):
         try:
             md = json.loads(side.read_text("utf-8")) if side.exists() else {}
             self._selected_meta = md.get("primary")
-            self.view.pixel_um = (md.get("primary") or {}).get("pixel_size_um")
+            prim = md.get("primary") or {}
+            self.view.pixel_um = prim.get("pixel_size_um")
+            self.view.pixel_calibrated = (prim.get("extra") or {}).get("pixel_size_source") == "calibrated"
             self.view.badge = "SIMULATED" if "SIMULATED" in md.get("provenance", "") else ""
         except ValueError:
             pass

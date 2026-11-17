@@ -178,7 +178,8 @@ class SavePage(QWidget):
         count = ap.count_burn() if ap is not None and ap.current_key == key else {}
         if not (anns and anns.items) and not count:
             return rgb, []
-        out = burn_in(rgb, anns, pixel_um=raw.pixel_size_um if raw else None, **count)
+        # burned-in line lengths in µm only from a measured pixel size (nominal → px), never the estimate
+        out = burn_in(rgb, anns, pixel_um=raw.pixel_size_um if raw and raw.pixel_size_calibrated else None, **count)
         names = [a.name for a in anns.items] if anns else []
         return out, names + (["count tags and totals"] if count else [])
 
@@ -194,6 +195,7 @@ class SavePage(QWidget):
         self.view.set_image(rgb)
         if raw is not None:
             self.view.pixel_um = raw.pixel_size_um
+            self.view.pixel_calibrated = raw.pixel_size_calibrated
             self.view.badge = "SIMULATED" if raw.synthetic else ""
             self.lbl_meta.setText(f"{', '.join(c.channel_label for c in chans.values())} · {raw.camera.value} camera · "
                                   f"{raw.data.shape[1]}x{raw.data.shape[0]} · {raw.bit_depth}-bit native · "
