@@ -24,9 +24,11 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QToolButton,
     QVBoxLayout,
@@ -34,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from openevos.acquisition.capture import CaptureRejected
+from openevos.core.models import Activity, BackendKind, Connection, Health
 from openevos.imaging.composite import (
     Layer,
     adjust_color,
@@ -71,15 +74,13 @@ from openevos.ui.dialogs import (
     ZStackDialog,
 )
 from openevos.ui.icons import icon
-from openevos.ui.widgets.controls import ChannelButton, Joystick, LevelsHistogram, MarkedSlider
+from openevos.ui.widgets.controls import ChannelButton, Joystick, LevelsHistogram
+from openevos.ui.widgets.focus_pad import ZFocusPanel, fmt_um
 from openevos.ui.widgets.image_view import ImageView
 from openevos.ui.widgets.param import ParamRow
 from openevos.ui.widgets.segmented import SegmentedControl
 from openevos.ui.widgets.status import Badge
 from openevos.ui.widgets.vessel_map import VesselMap
-
-QUICK_SPAN_UM = 300.0
-FINE_SPAN_UM = 50.0
 
 
 def tool_button(text: str, ic: str, *, checkable: bool = False, tip: str = "") -> QToolButton:
@@ -140,7 +141,15 @@ class CapturePage(QWidget):
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(10)
         self.left = self._left()
-        self.right = self._right()
+        # the Light & focus column scrolls on short windows instead of squashing the Z focus panel (1100 x 720)
+        self.right = QScrollArea()
+        self.right.setWidget(self._right())
+        self.right.setWidgetResizable(True)
+        self.right.setFrameShape(QFrame.NoFrame)
+        self.right.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.right.setMinimumWidth(300)
+        self.right.setMaximumWidth(330)
+        self.right.viewport().setAutoFillBackground(False)
         root.addWidget(self.left, 0)
         root.addWidget(self._center(), 1)
         root.addWidget(self.right, 0)
@@ -325,8 +334,7 @@ class CapturePage(QWidget):
 
     def _right(self) -> QWidget:
         f, lay = panel("Light & focus")
-        f.setMinimumWidth(300)
-        f.setMaximumWidth(330)
+        f.setMinimumWidth(286)  # inside the column's scroll area (scroll bar 10 px)
         lay.addWidget(label("Light channels", "section"))
         grid = QGridLayout()
         grid.setSpacing(6)
@@ -368,38 +376,13 @@ class CapturePage(QWidget):
         self.lbl_device.setVisible(False)  # the readback repeats the controls above: shown as the Light row's tooltip
         lay.addWidget(self.lbl_device)
 
-        lay.addWidget(label("Focus", "section"))
-        self.lbl_z = label("Z — µm", "value")
-        lay.addWidget(self.lbl_z)
-        fl = QHBoxLayout()
-        self.quick = MarkedSlider(Qt.Vertical)
-        self.coarse = MarkedSlider(Qt.Vertical)
-        self.fine = MarkedSlider(Qt.Vertical)
-        self.quick.setRange(-1000, 1000)
-        self.fine.setRange(-1000, 1000)
-        self.coarse.setRange(0, 10000)
-        for s, name, tip in ((self.quick, "Quick", "Small range centred on the vessel focus nominal"),
-                             (self.coarse, "Coarse", "Full focus range"),
-                             (self.fine, "Fine", f"±{FINE_SPAN_UM / 2:g} µm around the current position")):
-            s.setMinimumHeight(130)
-            s.setToolTip(tip)
-            s.setAccessibleName(f"{name} focus")
-            col = QVBoxLayout()
-            col.addWidget(s, 1, Qt.AlignHCenter)
-            col.addWidget(label(name, "rowlabel"), 0, Qt.AlignHCenter)
-            fl.addLayout(col)
-        btns = QVBoxLayout()
-        self.btn_snap = QPushButton("Snap to last")
-        self.btn_find = QPushButton("Find sample")
-        self.btn_fine = QPushButton("Auto fine")
-        self.btn_snap.setToolTip("Return focus to the Z of the last capture")
-        self.btn_find.setToolTip("Wide search around the vessel focus nominal")
-        self.btn_fine.setToolTip("Narrow search around the current focus (Ctrl+F)")
-        for b in (self.btn_snap, self.btn_find, self.btn_fine):
-            btns.addWidget(b)
-        btns.addStretch(1)
-        fl.addLayout(btns)
-        lay.addLayout(fl)
+        # Z focus: tape scale + focus pad (design handoff 2026-11-18); moves still go through ctl.move_focus
+        self.focus = ZFocusPanel()
+        self.focus.setAccessibleName("Z focus")
+        self.btn_snap, self.btn_find, self.btn_fine = self.focus.btn_snap, self.focus.btn_find, self.focus.btn_fine
+        self._z_goal: float | None = None  # last requested focus target while a focus move is in flight
+        self._z_submitting = False
+        lay.addWidget(self.focus, 1)
         lay.addWidget(label("Capture", "section"))
         self.btn_capture = QPushButton("Capture")
         self.btn_capture.setObjectName("primary")
@@ -418,7 +401,6 @@ class CapturePage(QWidget):
             self.hot.append(b)
             hg.addWidget(b, 1)
         lay.addLayout(hg)
-        lay.addStretch(1)
         return f
 
     # ================================================================== wiring
@@ -446,10 +428,7 @@ class CapturePage(QWidget):
             w.committed.connect(self._actual_changed)
         self.chk_actual.toggled.connect(self._set_actual)
         self.btn_lc.clicked.connect(self._light_camera)
-        self.quick.sliderReleased.connect(self._quick)
-        self.coarse.sliderReleased.connect(self._coarse)
-        self.fine.sliderPressed.connect(self._fine_press)
-        self.fine.sliderReleased.connect(self._fine_release)
+        self.focus.step_requested.connect(self._focus_step)
         self.btn_snap.clicked.connect(self._snap)
         self.btn_find.clicked.connect(lambda: self._autofocus(True))
         self.btn_fine.clicked.connect(lambda: self._autofocus(False))
@@ -624,25 +603,44 @@ class CapturePage(QWidget):
             # scale bar only from a measured pixel size (Calibration › pixel size), never the nominal fallback
             self.view.pixel_calibrated = bool(
                 self.session.calibration.pixel_size_um.get(self.role.value, {}).get(slot))
-        z = self.ctl.focus_z()
-        if z is not None:
-            self.lbl_z.setText(f"Z {z:9.2f} µm")
-            lim = self.ctl.axis_limits(self.profile.focus_device, "z")
-            if lim:
-                self.coarse.setRange(int(lim[0]), int(lim[1]))
-            if not self.coarse.isSliderDown():
-                self.coarse.blockSignals(True)
-                self.coarse.setValue(int(z))
-                self.coarse.blockSignals(False)
-            nominal = self.session.vessel.focus_nominal_um
-            if not self.quick.isSliderDown():
-                self.quick.setValue(int((z - nominal) / (QUICK_SPAN_UM / 2) * 1000))
-            last = self.session.capture.last_capture_z
-            self.quick.marker = int((last - nominal) / (QUICK_SPAN_UM / 2) * 1000) if last is not None else None
-            self.coarse.marker = int(last) if last is not None else None
-            self.quick.update()
-            self.coarse.update()
+        self._refresh_focus()
         self.map.update()
+
+    def _focus_state(self, z: float | None) -> tuple[str, str, str | None]:
+        """(panel state, status line, pad direction while moving) from the focus and turret device snapshots."""
+        snap = self.ctl.snapshot(self.profile.focus_device)
+        tur = self.ctl.snapshot(self.profile.turret_device) if self.profile.turret_device else None
+        moving = (snap is not None and snap.activity is Activity.MOVING) or self.coalesce.busy("focus")
+        direction = None
+        if moving and self._z_goal is not None and z is not None and abs(self._z_goal - z) > 1e-6:
+            direction = "up" if self._z_goal > z else "down"
+        if snap is None or snap.connection is not Connection.CONNECTED:
+            return "locked", "Focus drive not connected", None
+        if snap.recovery_required or snap.health is Health.FAULT:
+            return "fault", f"Stop sent · {snap.note or 'recover Z'} in Service › Hardware", None
+        if dict(snap.attributes).get("homed") is False:
+            return "locked", "Not homed · Z refuses moves until it is homed", None
+        if tur is not None and (tur.activity is Activity.MOVING or self.coalesce.busy("turret")):
+            return "objective", "Objective change · Z retracts to 0, controls held", direction
+        if moving:
+            goal = f" to {fmt_um(self._z_goal)} µm" if self._z_goal is not None else ""
+            return "moving", f"Moving{goal}", direction
+        if snap.backend_kind is BackendKind.SIMULATED:
+            return "simulated", "Simulated drive · idle", None
+        return "ready", "Homed · idle", None
+
+    def _refresh_focus(self) -> None:
+        z = self.ctl.focus_z()
+        lim = self.ctl.axis_limits(self.profile.focus_device, "z")
+        state, status, direction = self._focus_state(z)
+        # the move finished: the next step starts from the readback. Not while a step is being submitted (the
+        # router's first state event arrives inside that call, before the Coalescer records the command)
+        if (state not in ("moving", "objective") and not self._z_submitting and not self.coalesce.busy("focus")
+                and not self.coalesce.waiting("focus")):
+            self._z_goal = None
+        self.focus.set_state(state, status, direction)
+        self.focus.set_values(z, lim[1] if lim else None, self.session.vessel.focus_nominal_um,
+                              self.session.capture.last_capture_z)
 
     def _fov_mm(self):
         from openevos.acquisition.scan_plan import field_of_view_mm
@@ -674,7 +672,7 @@ class CapturePage(QWidget):
     def _on_busy(self, busy: bool) -> None:
         # operator lock-out while a workflow owns the instrument (scan, time-lapse, autofocus...)
         for w in (self.btn_capture, self.btn_find, self.btn_fine, self.btn_snap, *self.hot, self.joy, self.map,
-                  self.quick, self.coarse, self.fine, self.btn_vessel, self.btn_lc, self.light, self.btn_power,
+                  self.focus, self.btn_vessel, self.btn_lc, self.light, self.btn_power,
                   self.led, self.exp, self.gain_row, self.chk_actual, self.seg_camera, self.seg_live,
                   *self.obj_buttons.values(), *self.ch_buttons.values()):
             w.setEnabled(not busy)
@@ -861,20 +859,28 @@ class CapturePage(QWidget):
     def _move_z(self, z: float) -> None:
         self.coalesce.request("focus", lambda: self.ctl.move_focus(z))
 
-    def _quick(self) -> None:
-        self._move_z(self.session.vessel.focus_nominal_um + self.quick.value() / 1000 * QUICK_SPAN_UM / 2)
-
-    def _coarse(self) -> None:
-        self._move_z(float(self.coarse.value()))
-
-    def _fine_press(self) -> None:
-        self._fine_origin = self.ctl.focus_z()
-
-    def _fine_release(self) -> None:
-        z0 = getattr(self, "_fine_origin", None)
-        if z0 is not None:
-            self._move_z(z0 + self.fine.value() / 1000 * FINE_SPAN_UM / 2)
-        self.fine.setValue(0)
+    def _focus_step(self, delta_um: float) -> None:
+        """One pad step: from the in-flight target (rapid clicks add up) or else the readback, through
+        ctl.move_focus. A step that would leave the drive's range is refused with a message, never clamped."""
+        z = self.ctl.focus_z()
+        if z is None:
+            self.model.add_log("warn", "Z step refused: no focus readback")
+            return
+        base = self._z_goal if self._z_goal is not None else z
+        target = round(base + delta_um, 3)
+        lim = self.ctl.axis_limits(self.profile.focus_device, "z")
+        if lim and not (lim[0] - 1e-6 <= target <= lim[1] + 1e-6):
+            self.model.add_log("warn", f"Z step refused: {fmt_um(target)} µm is outside the focus range "
+                                       f"{fmt_um(lim[0])}–{fmt_um(lim[1])} µm")
+            return
+        self._z_goal = target
+        self.focus.pad.set_moving("up" if delta_um > 0 else "down")  # the press pose holds until the drive is idle
+        self._z_submitting = True
+        try:
+            self._move_z(target)
+        finally:
+            self._z_submitting = False
+        self._refresh_focus()
 
     def _snap(self) -> None:
         try:

@@ -195,6 +195,10 @@ class Coalescer(QObject):
         t = self._inflight.get(group)
         return t is not None and not t.status.is_terminal
 
+    def waiting(self, key: str) -> bool:
+        """True while a request for `key` is queued behind the running command of its group."""
+        return key in self._want
+
     def _pump(self) -> None:
         for key in list(self._want):
             group, fn = self._want[key]
