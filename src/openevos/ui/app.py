@@ -56,6 +56,10 @@ def main(argv: list[str] | None = None) -> int:
                          "Real: the light buttons switch brightfield/epi ON/OFF at the board's default level (no "
                          "intensity control); epi only lights the cube in the light path; all off on STOP and exit; "
                          "epi auto-off after 300 s. Never look into the light path (ADR-0048)")
+    ap.add_argument("--mcp", nargs="?", type=int, const=8765, default=None, metavar="PORT",
+                    help="serve the READ-ONLY MCP link for AI assistants on http://127.0.0.1:PORT/mcp (default "
+                         "8765) with a bearer token; prints the `claude mcp add` command. The assistant can read "
+                         "state, events, telemetry and images and can command nothing (ADR-0003, ADR-0054)")
     args = ap.parse_args(argv)
     illumination = _resolve_illumination(args.illumination, screenshots=args.screenshot_dir is not None)
     mono_camera =_resolve_mono_camera(args.mono_camera, screenshots=args.screenshot_dir is not None)
@@ -107,6 +111,12 @@ def main(argv: list[str] | None = None) -> int:
         session.settings.basic.theme = args.theme
     name = session.settings.basic.theme
     theme.apply_theme(("dark" if theme.system_prefers_dark(app) else "light") if name == "system" else name, app)
+    mcp_link = None
+    if args.mcp is not None and not args.screenshot_dir:
+        from openevos.mcp_link.cli import start_for_session
+
+        mcp_link = start_for_session(session, port=args.mcp)
+        print(mcp_link[2], file=sys.stderr, flush=True)
     model = SessionModel(session)
     model.scans_dir = args.scans_dir  # read by the Diagnostics page
     win = MainWindow(model)
@@ -121,6 +131,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return app.exec()
     finally:
+        if mcp_link:
+            mcp_link[0].stop()
+            mcp_link[1].close()
         session.shutdown()
 
 

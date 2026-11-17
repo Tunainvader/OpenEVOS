@@ -28,12 +28,15 @@ dependencies = [
 # workflow layer: optics simulator, focus metrics, counting, image files (UI merge, v0.4.0 line)
 imaging = ["scipy>=1.10", "scikit-image>=0.22", "tifffile>=2023.7", "pillow>=10"]
 ui = ["openevos[imaging]", "PySide6>=6.6"]   # desktop app; not used by the Inspector CLI
-dev = ["pytest>=8", "ruff>=0.5", "openevos[ui]"]
+# read-only MCP link for AI assistants (ADR-0054); the official SDK brings uvicorn/starlette
+mcp = ["openevos[imaging]", "mcp>=2.3,<3"]
+dev = ["pytest>=8", "ruff>=0.5", "openevos[ui]", "openevos[mcp]"]
 
 [project.scripts]
 openevos-inspector = "openevos.inspector.app:main"
 openevos = "openevos.ui.app:main"        # desktop app; needs the `ui` extra
 openevos-ui = "openevos.ui.app:main"     # same, the v0.4.0 name
+openevos-mcp = "openevos.mcp_link.cli:main"  # simulator-only MCP server; needs the `mcp` extra
 
 [tool.setuptools.packages.find]
 where = ["src"]

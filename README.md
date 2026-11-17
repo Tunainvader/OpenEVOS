@@ -115,6 +115,18 @@ tests/                  # mocked Windows fixtures, read-only AST guard, opt-in l
 
 *Layout note:* plan §9.2 shows a top-level `openevos_inspector/` package, while §14 puts the Inspector under `src/openevos/inspector/`. This repository follows §14, so nothing has to be renamed when the HAL and UI arrive.
 
+## AI assistant link (MCP, read-only)
+
+`openevos --mcp` serves a read-only [MCP](https://modelcontextprotocol.io) link inside the running app, so an assistant such as Claude Code can see what the operator sees: positions, device health, events and faults, the X/Y drift monitor, and downsampled images. It can command nothing (ADR-0003). The link listens on `127.0.0.1` only, needs a bearer token and refuses browser origins. The app prints the connect line on start:
+
+```
+pip install -e ".[ui,mcp]"
+openevos --mcp            # http://127.0.0.1:8765/mcp
+claude mcp add --transport http openevos http://127.0.0.1:8765/mcp --header "Authorization: Bearer <token>"
+```
+
+`openevos-mcp` runs the same tools on a headless simulator (stdio by default, `--http` for loopback HTTP) and never opens hardware. Tools: `describe_api`, `get_state`, `get_events`, `probe`, `stage_monitor`, `list_images`, `get_image`. See [ADR-0054](docs/decisions/ADR-0054-read-only-mcp-link.md).
+
 ## Phase 2.1 command core (merged from v0.2.0)
 
 `openevos.core` now contains a headless, Qt-free command core: typed commands, a strict lifecycle (QUEUED → VALIDATING → ACCEPTED → RUNNING → SUCCEEDED, with REJECTED / FAILED / CANCELLED / TIMED_OUT), atomic validation + resource reservation, read-back-verified motion, three-axis device snapshots, capability provenance (simulated / candidate / verified) and a lossless scientific frame path. See [ADR-0007](docs/decisions/ADR-0007-runtime-state-axes.md) and [ADR-0008](docs/decisions/ADR-0008-core-execution-model.md). Firmware safety ([ADR-0009](docs/decisions/ADR-0009-firmware-safety.md)): OpenEVOS never flashes; a device in bootloader mode, or a physical device with unknown firmware mode, accepts no command.
