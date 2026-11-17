@@ -384,6 +384,7 @@ class LevelsHistogram(QWidget):
         self.lo, self.hi = 0.0, 4095.0
         self.clip_lo = self.clip_hi = 0.0
         self.auto = True
+        self.rgb: list[np.ndarray] | None = None  # colour camera: per-channel counts, else None
         self._drag: str | None = None
         self.setMinimumHeight(70)
         self.setToolTip("Drag the triangles to set black and white points · double-click for auto range")
@@ -392,12 +393,32 @@ class LevelsHistogram(QWidget):
     def sizeHint(self) -> QSize:
         return QSize(300, 76)
 
+    #: red, green, blue curve colours for the colour camera; mid-saturation so each reads on both themes
+    RGB_COLORS = ("#E5484D", "#30A46C", "#3E8EED")
+
     def set_data(self, counts, max_value: int, lo: float, hi: float, auto: bool, color: str,
                  clip: tuple[float, float]) -> None:
         self.counts, self.max_value, self.lo, self.hi, self.auto = counts, max_value, lo, hi, auto
+        self.rgb = None
         self.color = color
         self.clip_lo, self.clip_hi = clip
         self.update()
+
+    def set_rgb(self, counts_rgb, clip: tuple[float, float]) -> None:
+        """Colour camera: three overlaid R, G, B curves of the 8-bit frame. There are no black/white handles here
+        (colour adjustments live in Settings › Color camera), so dragging and double-click do nothing."""
+        self.rgb = [np.asarray(c) for c in counts_rgb]
+        self.counts, self.max_value, self.lo, self.hi, self.auto = None, 255, 0.0, 255.0, True
+        self.clip_lo, self.clip_hi = clip
+        self.update()
+
+    def _curve(self, r: QRectF, c: np.ndarray, peak: float) -> QPainterPath:
+        bw = r.width() / len(c)
+        path = QPainterPath(QPointF(r.left(), r.bottom()))
+        for i, v in enumerate(c):
+            path.lineTo(r.left() + i * bw, r.bottom() - v / peak * (r.height() - 2))
+        path.lineTo(r.right(), r.bottom())
+        return path
 
     def _plot(self) -> QRectF:
         return QRectF(self.rect()).adjusted(8, 2, -8, -30)
@@ -411,6 +432,8 @@ class LevelsHistogram(QWidget):
         return min(1.0, max(0.0, (x - r.left()) / max(1.0, r.width()))) * self.max_value
 
     def mousePressEvent(self, e):
+        if self.rgb is not None:
+            return
         x = e.position().x()
         self._drag = "lo" if abs(x - self._x(self.lo)) <= abs(x - self._x(self.hi)) else "hi"
         self.mouseMoveEvent(e)
@@ -431,7 +454,8 @@ class LevelsHistogram(QWidget):
         self._drag = None
 
     def mouseDoubleClickEvent(self, e):
-        self.autoRequested.emit()
+        if self.rgb is None:
+            self.autoRequested.emit()
 
     def paintEvent(self, e):
         p = QPainter(self)
@@ -440,6 +464,34 @@ class LevelsHistogram(QWidget):
         p.setPen(QPen(QColor(theme.BORDER), 1))
         p.setBrush(QColor(theme.INPUT))
         p.drawRoundedRect(r, 4, 4)
+        f = QFont(self.font())
+        f.setPixelSize(10)
+        if self.rgb is not None:
+            logs = [np.log1p(c.astype(float)) for c in self.rgb]
+            peak = max((float(c.max()) for c in logs if c.size), default=0.0) or 1.0  # one scale: heights compare
+            for c, hexcol in zip(logs, self.RGB_COLORS, strict=False):
+                if not c.size:
+                    continue
+                path = self._curve(r, c, peak)
+                fill = QColor(hexcol)
+                fill.setAlpha(55)
+                p.fillPath(path, fill)
+                p.setPen(QPen(QColor(hexcol), 1.4))
+                p.setBrush(Qt.NoBrush)
+                p.drawPath(path)
+            p.setFont(f)
+            x = r.left()
+            for name, hexcol in zip("RGB", self.RGB_COLORS, strict=False):
+                p.setPen(QColor(hexcol))
+                p.drawText(QRectF(x, r.bottom() + 13, 12, 14), Qt.AlignLeft | Qt.AlignVCenter, name)
+                x += 12
+            p.setPen(QColor(theme.TEXT_2))
+            p.drawText(QRectF(x + 4, r.bottom() + 13, r.width() * 0.5, 14), Qt.AlignLeft | Qt.AlignVCenter, "8-bit")
+            warn = self.clip_lo > 0.001 or self.clip_hi > 0.001
+            p.setPen(QColor(theme.WARN if warn else theme.TEXT_2))
+            p.drawText(QRectF(r.left(), r.bottom() + 13, r.width(), 14), Qt.AlignRight | Qt.AlignVCenter,
+                       f"clip ↓{self.clip_lo * 100:.1f}% ↑{self.clip_hi * 100:.1f}%")
+            return
         if self.counts is not None and self.counts.size:
             c = np.log1p(self.counts.astype(float))
             c = c / (c.max() or 1)
@@ -470,8 +522,6 @@ class LevelsHistogram(QWidget):
             p.setPen(QPen(QColor(theme.BORDER_STRONG), 1))
             p.setBrush(QColor(fill))
             p.drawPath(tri)
-        f = QFont(self.font())
-        f.setPixelSize(10)
         p.setFont(f)
         p.setPen(QColor(theme.TEXT_2))
         p.drawText(QRectF(r.left(), r.bottom() + 13, r.width() * 0.6, 14), Qt.AlignLeft | Qt.AlignVCenter,

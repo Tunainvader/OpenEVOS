@@ -737,10 +737,16 @@ class CapturePage(QWidget):
                                channel_color(slot, self.profile, self.settings) if ch else theme.ACCENT,
                                clipped_fractions(raw, ds))
             self.lbl_log.setText(self.display_log(raw, max_value)[0])
+            self.btn_auto.setEnabled(True)
+            hint = "Drag the triangles to set black and white points · double-click for auto range"
         else:
+            # colour camera: one R, G and B curve of the raw 8-bit frame; clip = pixels with any channel at 0 / 255
+            self.hist.set_rgb([histogram(raw[..., k], 128, 255)[0] for k in range(3)],
+                              (float((raw == 0).any(axis=2).mean()), float((raw == 255).any(axis=2).mean())))
             self.lbl_log.setText("Colour camera: colour adjustments from Settings › Color camera (8-bit)")
-        self.hist.setToolTip("Drag the triangles to set black and white points · double-click for auto range\n\n"
-                             f"{self.lbl_log.text()}\n{self.lbl_frame.text()}")
+            self.btn_auto.setEnabled(False)  # no black/white points to reset on the colour camera
+            hint = "Red, green and blue channels of the colour camera frame (8-bit)"
+        self.hist.setToolTip(f"{hint}\n\n{self.lbl_log.text()}\n{self.lbl_frame.text()}")
 
     def display_log(self, raw: np.ndarray | None = None, max_value: int | None = None) -> list[str]:
         bits = int(np.log2(max_value + 1)) if max_value else None

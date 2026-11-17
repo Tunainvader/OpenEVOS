@@ -209,6 +209,17 @@ def test_no_gamma_and_the_histogram_toggles(app, window):
     cap.btn_hist.click()
     pump(app, 0.05)
     assert cap.hist.isVisible() and window.model.session.settings.basic.show_histogram is True
+    # the colour camera's live frames switch the histogram to R, G, B curves; Auto range has nothing to reset
+    from openevos.instrument.profile import CameraRole as _Role
+
+    cap.switch_camera(_Role.COLOR)
+    assert _settled(app, cap)
+    assert wait_for(app, lambda: cap.hist.rgb is not None, timeout=5.0)
+    assert len(cap.hist.rgb) == 3 and not cap.btn_auto.isEnabled()
+    cap.switch_camera(_Role.MONO)
+    assert _settled(app, cap)
+    assert wait_for(app, lambda: cap.hist.rgb is None, timeout=5.0)
+    assert cap.btn_auto.isEnabled()
 
 
 def test_actual_mode_controls_reach_devices_and_read_back(app, window):
