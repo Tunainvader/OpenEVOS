@@ -173,6 +173,43 @@ def test_hover_nudges_two_px_and_press_pose_follows_motion(app, window):
     assert abs(pad._off) < 0.05
 
 
+def test_pad_drives_the_real_z_motor_frames_with_motor_control(app, tmp_path):
+    """With motor control (the 'OpenEVOS (real stage)' shortcut), the pad moves motor.focus through the stage service:
+    Gate 18's Z frames (target, move, stop) on the simulated drive chain. + is up, toward the sample."""
+    from openevos.backends.technosoft import protocol as tp
+    from openevos.backends.technosoft import telemetry as tm
+    from openevos.ui.session_model import SessionModel
+    from openevos.ui.shell import MainWindow
+
+    s = build_sim_session(ThreadClock(), fast=True, fps=30, settings=AppSettings(),
+                          telemetry={"technosoft": {"port": "sim", "motion": True}})
+    w = MainWindow(SessionModel(s))
+    try:
+        w.show()
+        pump(app, 0.4)
+        cap = w.pages["capture"]
+        assert s.profile.focus_device == "motor.focus"
+        chain = s.telemetry[0].simulated_chain
+        assert wait_for(app, lambda: cap.focus.state in ("ready", "simulated") and cap.ctl.focus_z() is not None)
+        assert cap.focus.state == "ready" and "Homed" in cap.focus.readout.toolTip()  # the drive, not the simulator
+        z0 = cap.ctl.focus_z()
+        chain.writes.clear()
+        cap.focus.set_mode("coarse")
+        cap.focus.set_step(100.0)
+        cap.focus.pad.up.click()
+        assert wait_for(app, lambda: not cap.coalesce.pending() and cap._z_goal is None, 15)
+        want = tm.counts_from_um("Z", z0 + 100.0)
+        assert chain.values[("Z", "APOS")] == want
+        z_writes = [x for x in chain.writes if len(x) > 2 and x[2] == tp.Z_ID << 4 and x not in tp.ALLOWED_REQUESTS]
+        assert z_writes == [tp.z_target(want), tp.Z_MOVE_FRAME, tp.Z_STOP_FRAME]
+        assert abs(cap.ctl.focus_z() - (z0 + 100.0)) < tm.um_from_counts("Z", 1)  # within one encoder count
+    finally:
+        w.close()
+        s.shutdown()
+        w.deleteLater()
+        pump(app, 0.1)
+
+
 @pytest.mark.parametrize("name", ["dark", "light"])
 def test_panel_renders_in_both_themes_at_column_width(app, window, name, tmp_path):
     from openevos.ui import theme
