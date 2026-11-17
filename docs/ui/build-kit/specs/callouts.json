@@ -1,0 +1,426 @@
+{
+  "01_capture_live": [
+    [
+      "Menu strip: File \u00b7 Edit \u00b7 View \u00b7 Acquire \u00b7 Microscope \u00b7 Analyze \u00b7 Window \u00b7 Help",
+      [
+        0,
+        0,
+        1680,
+        30
+      ]
+    ],
+    [
+      "Search commands (Ctrl+K) and backend badge",
+      [
+        1526,
+        5,
+        142,
+        20
+      ]
+    ],
+    [
+      "Device status pills: colour + text, shape differs for faults",
+      [
+        597,
+        36,
+        132,
+        36
+      ]
+    ],
+    [
+      "Stop all (Esc): cancels every command and workflow",
+      [
+        1581,
+        39,
+        89,
+        30
+      ]
+    ],
+    [
+      "Navigation rail: icons + labels, labels drop below 1440 px",
+      [
+        0,
+        78,
+        172,
+        897
+      ]
+    ],
+    [
+      "Camera, objective, vessel readouts + SIMULATED badge",
+      [
+        195,
+        167,
+        254,
+        20
+      ]
+    ],
+    [
+      "Vessel expert\u2026",
+      [
+        195,
+        273,
+        254,
+        30
+      ]
+    ],
+    [
+      "Virtual vessel: click a well to centre, drag crosshair, FOV box, reachable area",
+      [
+        195,
+        311,
+        254,
+        175
+      ]
+    ],
+    [
+      "Medium jog joystick + speed",
+      [
+        195,
+        563,
+        132,
+        132
+      ]
+    ],
+    [
+      "Objective buttons (empty slot disabled)",
+      [
+        295,
+        725,
+        44,
+        44
+      ]
+    ],
+    [
+      "Viewer toolbar: Live, Overlay, Fit, 1:1, Crosshair, Scale bar, Clipping, Saturation, Loupe, Compare",
+      [
+        483,
+        99,
+        850,
+        33
+      ]
+    ],
+    [
+      "Image viewport (always dark) with badge: channel \u2022 LIVE/CAPTURED \u2022 SIMULATED",
+      [
+        483,
+        140,
+        850,
+        649
+      ]
+    ],
+    [
+      "Levels histogram: drag black/white points, double-click = auto; clipped % as text",
+      [
+        483,
+        797,
+        320,
+        157
+      ]
+    ],
+    [
+      "Scientific display (linear only) + gamma (disabled) + display log",
+      [
+        815,
+        797,
+        518,
+        16
+      ]
+    ],
+    [
+      "Channel buttons with buffer thumbnails; colour camera greys fluorescence",
+      [
+        1367,
+        150,
+        68,
+        92
+      ]
+    ],
+    [
+      "Light on/off and Light and camera\u2026 dialog",
+      [
+        1367,
+        348,
+        141,
+        30
+      ]
+    ],
+    [
+      "Light row: slider + number + \u21ba reset (Shift \u00d710, Alt \u00d70.1, double-click resets)",
+      [
+        1367,
+        386,
+        290,
+        30
+      ]
+    ],
+    [
+      "Actual mode: LED / exposure / gain rows",
+      [
+        1367,
+        424,
+        290,
+        16
+      ]
+    ],
+    [
+      "Focus column: Quick (LAST marker), Coarse, Fine",
+      [
+        1388,
+        518,
+        15,
+        130
+      ]
+    ],
+    [
+      "Snap to last \u00b7 Find sample \u00b7 Auto fine",
+      [
+        1561,
+        556,
+        96,
+        30
+      ]
+    ],
+    [
+      "Capture (primary) + four hot buttons",
+      [
+        1367,
+        701,
+        290,
+        30
+      ]
+    ],
+    [
+      "Footer: session \u00b7 command bus \u00b7 task \u00b7 XY/Z/objective \u00b7 raw-data note",
+      [
+        237,
+        980,
+        123,
+        16
+      ]
+    ]
+  ],
+  "08_analysis_measure": [
+    [
+      "Image source + Count from file\u2026",
+      [
+        1040,
+        100,
+        78,
+        28
+      ]
+    ],
+    [
+      "Annotations drawn on the image with live measurement",
+      [
+        193,
+        137,
+        1056,
+        794
+      ]
+    ],
+    [
+      "Tool tabs: Overlay \u00b7 Measure \u00b7 Count \u00b7 Auto count",
+      [
+        1283,
+        128,
+        306,
+        32
+      ]
+    ],
+    [
+      "Annotation tools: text, arrow, line, rectangle, ellipse, histogram ROI (\u2264 12 ROIs)",
+      [
+        1293,
+        189,
+        45,
+        30
+      ]
+    ],
+    [
+      "Annotation list: name, type, measurement",
+      [
+        1293,
+        246,
+        354,
+        232
+      ]
+    ],
+    [
+      "Show annotations \u00b7 units \u00b7 Export all \u00b7 Delete",
+      [
+        1293,
+        490,
+        133,
+        16
+      ]
+    ],
+    [
+      "Intensity profile / ROI histogram plot (series also dashed: never colour alone)",
+      [
+        1293,
+        554,
+        354,
+        150
+      ]
+    ],
+    [
+      "Per-channel statistics for the selected annotation",
+      [
+        1293,
+        710,
+        354,
+        232
+      ]
+    ]
+  ],
+  "04_scan": [
+    [
+      "Wizard order on one page: 1 name/vessel/optics",
+      [
+        319,
+        130,
+        322,
+        28
+      ]
+    ],
+    [
+      "2 Area: rectangle per well or two corner beacons",
+      [
+        319,
+        310,
+        322,
+        16
+      ]
+    ],
+    [
+      "3 Focus: Find sample / Auto fine",
+      [
+        319,
+        545,
+        322,
+        16
+      ]
+    ],
+    [
+      "4 Coverage: six options from manual p.24 + overlap",
+      [
+        319,
+        593,
+        322,
+        28
+      ]
+    ],
+    [
+      "Stored routines: save / recall / delete",
+      [
+        197,
+        845,
+        444,
+        110
+      ]
+    ],
+    [
+      "Selectable vessel map with tile overlay",
+      [
+        679,
+        153,
+        966,
+        324
+      ]
+    ],
+    [
+      "Plan summary + warnings (nominal geometry, limits)",
+      [
+        679,
+        485,
+        966,
+        16
+      ]
+    ],
+    [
+      "Start / Pause / Stop + progress",
+      [
+        679,
+        547,
+        56,
+        30
+      ]
+    ],
+    [
+      "Result mosaic, channel, export quality, Export mosaic\u2026 (OME-TIFF / PNG)",
+      [
+        679,
+        670,
+        966,
+        323
+      ]
+    ]
+  ],
+  "15_calibration": [
+    [
+      "Every calibration: manual page, last run, result vs nominal",
+      [
+        197,
+        153,
+        1458,
+        220
+      ]
+    ],
+    [
+      "Run buttons \u2014 simulator only; locked on hardware until gates pass",
+      [
+        197,
+        381,
+        154,
+        30
+      ]
+    ],
+    [
+      "Hot pixel correction toggle \u00b7 Clear all calibrations",
+      [
+        197,
+        426,
+        253,
+        16
+      ]
+    ],
+    [
+      "Capture focus nominal \u00b7 Auto fine range \u00b7 vessel alignment state",
+      [
+        197,
+        599,
+        1458,
+        30
+      ]
+    ]
+  ],
+  "22_capture_narrow": [
+    [
+      "Rail: icons only, tooltips keep the names",
+      [
+        0,
+        78,
+        52,
+        750
+      ]
+    ],
+    [
+      "Viewer toolbar: icons only (labels drop first)",
+      [
+        331,
+        99,
+        538,
+        33
+      ]
+    ],
+    [
+      "Panels narrow to their minimum; nothing is hidden",
+      [
+        890,
+        88,
+        300,
+        730
+      ]
+    ]
+  ]
+}

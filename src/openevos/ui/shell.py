@@ -1,0 +1,642 @@
+"""Main window — Craftimon shell conventions applied to OpenEVOS.
+
+Layout (top to bottom):
+  menu strip   File · Edit · View · Acquire · Microscope · Analyze · Window · Help   [search] [SIMULATION]
+  status bar   brand + profile | device pills (colour + text) | Stop all (Esc)
+  body         navigation rail (icons + labels; labels drop below 1360 px) | workspace
+  footer       session · command bus · task · XY/Z/objective · raw-data note
+
+Menu rules: two levels maximum; commands that do not apply are greyed, never hidden, and their tooltip
+says why; "…" opens a dialog, "▸" a submenu, checkmarks are toggles; destructive commands last.
+Every command is also reachable from the command palette (Ctrl+K).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence
+from PySide6.QtWidgets import (
+    QApplication,
+    QButtonGroup,
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMenu,
+    QPushButton,
+    QScrollArea,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from openevos import __version__
+from openevos.core.models import Connection, Health
+from openevos.instrument.profile import CameraRole
+from openevos.instrument.settings import HotButtonAction
+from openevos.ui import theme
+from openevos.ui.common import label
+from openevos.ui.icons import icon
+from openevos.ui.session_model import SessionModel
+from openevos.ui.widgets.status import Badge, HealthSummary, StatusPill
+
+NAV = [
+    ("Acquire", [("capture", "Capture", "capture"), ("scan", "Scan", "scan"), ("timelapse", "Time-lapse", "timelapse"),
+                 ("zstack", "Z-stack", "zstack"), ("movies", "Movies", "movies")]),
+    ("Inspect", [("save", "Save", "save"), ("review", "Review", "review")]),
+    ("Analyze", [("analysis", "Analysis", "analysis")]),
+    ("Instrument", [("environment", "Environment", "environment"), ("calibration", "Calibration", "calibration")]),
+    ("Manage", [("settings", "Settings", "settings"), ("service_area", "Service", "service")]),
+]
+#: engineering pages, one "Service" area with tabs (UI audit 2026-11-17: 15 rail entries were too many);
+#: navigate("hardware") etc. still lands on the right tab
+SERVICE_TABS = (("hardware", "Hardware"), ("service", "Functions"), ("diagnostics", "Diagnostics"),
+                ("events", "Event log"))
+RAIL_BELOW_PX = 1440
+
+
+def describe_snapshot(snap) -> tuple[str, str]:
+    if snap is None:
+        return "unknown", "NOT REGISTERED"
+    if snap.connection is not Connection.CONNECTED:
+        return ("fault" if snap.health is Health.FAULT else "unknown"), snap.connection.value.upper()
+    if snap.health is Health.FAULT or snap.recovery_required:
+        return "fault", "RECOVERY REQUIRED" if snap.recovery_required else "FAULT"
+    if snap.health is not Health.NORMAL:
+        return "warn", snap.health.value.upper()
+    sim = snap.backend_kind.value == "simulated"
+    if snap.activity.value not in ("idle", "unknown"):
+        return "busy", ("SIM · " if sim else "") + snap.activity.value.upper()
+    return ("simulated" if sim else "ok"), "SIMULATED · IDLE" if sim else "IDLE"
+
+
+@dataclass
+class Cmd:
+    """A command: menu entry + palette entry. `why_disabled` returns a reason or '' when available."""
+
+    key: str
+    text: str
+    run: object
+    shortcut: str | None = None
+    why_disabled: object = None
+    checked: object = None  # callable -> bool for toggles
+    menu_path: str = ""
+    action: QAction | None = field(default=None, repr=False)
+
+
+class CommandPalette(QDialog):
+    """Ctrl+K: type to find any command; disabled commands are listed greyed with the reason."""
+
+    def __init__(self, win: MainWindow):
+        super().__init__(win)
+        self.win = win
+        self.setWindowTitle("Search commands")
+        self.setModal(True)
+        self.resize(560, 420)
+        lay = QVBoxLayout(self)
+        self.edit = QLineEdit()
+        self.edit.setPlaceholderText("Search commands…  e.g. capture, objective 20x, theme")
+        self.list = QListWidget()
+        lay.addWidget(self.edit)
+        lay.addWidget(self.list, 1)
+        lay.addWidget(label("Enter runs · Esc closes · greyed commands show why they are unavailable", "caption"))
+        self.edit.textChanged.connect(self.refresh)
+        self.edit.returnPressed.connect(self.run_current)
+        self.list.itemActivated.connect(lambda _it: self.run_current())
+        self.refresh()
+
+    def refresh(self) -> None:
+        q = self.edit.text().lower().split()
+        self.list.clear()
+        for c in self.win.commands.values():
+            hay = f"{c.menu_path} {c.text}".lower()
+            if all(w in hay for w in q):
+                why = c.why_disabled() if callable(c.why_disabled) else ""
+                text = f"{c.text.replace('&', '')}    —  {c.menu_path}" + (f"    [{c.shortcut}]" if c.shortcut else "")
+                it = QListWidgetItem(text + (f"   ({why})" if why else ""))
+                it.setData(Qt.UserRole, c.key)
+                if why:
+                    it.setFlags(it.flags() & ~Qt.ItemIsEnabled)
+                self.list.addItem(it)
+        for i in range(self.list.count()):
+            if self.list.item(i).flags() & Qt.ItemIsEnabled:
+                self.list.setCurrentRow(i)
+                break
+
+    def run_current(self) -> None:
+        it = self.list.currentItem()
+        if it and it.flags() & Qt.ItemIsEnabled:
+            key = it.data(Qt.UserRole)
+            self.accept()
+            self.win.run_command(key)
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, model: SessionModel):
+        super().__init__()
+        self.model = model
+        self.session = model.session
+        self.setWindowTitle(f"OpenEVOS {__version__} — {self.session.profile.name}")
+        self.resize(1600, 960)
+        self.setMinimumSize(1100, 720)  # below this the three Capture panels overlap (Impeccable audit 2026-11-18)
+        self.commands: dict[str, Cmd] = {}
+        root = QWidget()
+        root.setObjectName("root")
+        self.setCentralWidget(root)
+        v = QVBoxLayout(root)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+        v.addWidget(self._status_bar())
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        body.addWidget(self._nav())
+        self.stack = QStackedWidget()
+        body.addWidget(self.stack, 1)
+        v.addLayout(body, 1)
+        v.addWidget(self._footer())
+        self.pages: dict[str, QWidget] = {}
+        self._build_pages()
+        self._build_menus()
+        model.device_changed.connect(self._on_device)
+        model.tasks.busy_changed.connect(lambda _b: self._tick())
+        self._timer = QTimer(self)
+        self._timer.setInterval(500)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start()
+        for did in self.session.core.devices.device_ids():
+            self._on_device(did, self.session.core.store.get(did))
+        self.navigate("capture")
+        self._apply_nav_mode()
+
+    # ================================================================== chrome
+    def _status_bar(self) -> QWidget:
+        f = QFrame()
+        f.setObjectName("header")
+        lay = QHBoxLayout(f)
+        lay.setContentsMargins(14, 6, 10, 6)
+        lay.setSpacing(8)
+        lay.addWidget(label("OpenEVOS", "brand"))
+        self.lbl_profile = label(f"{self.session.profile.model} · {self.session.profile.name}", "muted")
+        lay.addWidget(self.lbl_profile)
+        lay.addStretch(1)
+        p = self.session.profile
+        self.pills: dict[str, StatusPill] = {}
+        for did, title in ((p.stage_device, "Stage"), (p.focus_device, "Focus"), (p.turret_device, "Turret"),
+                           (p.illumination_device, "Light"),
+                           (p.camera(CameraRole.MONO).device_id if p.camera(CameraRole.MONO) else None, "Mono cam"),
+                           (p.camera(CameraRole.COLOR).device_id if p.camera(CameraRole.COLOR) else None, "Color cam")):
+            if did:
+                pill = StatusPill(title)
+                self.pills[did] = pill
+        env = StatusPill("Environment")
+        env.set_state("unavailable", "UNAVAILABLE", "Onstage incubator: no control or telemetry path (bring-up record)")
+        # one summary pill; the per-device pills open from it (UI audit 2026-11-17)
+        self.health = HealthSummary([*self.pills.values(), env])
+        lay.addWidget(self.health)
+        self.btn_stop = QPushButton("Stop all")
+        self.btn_stop.setObjectName("danger")
+        self.btn_stop.setIcon(icon("stop", theme.FAULT))
+        self.btn_stop.setToolTip("Cancel every running command and workflow (Esc)")
+        self.btn_stop.clicked.connect(self.stop_all)
+        lay.addSpacing(4)
+        lay.addWidget(self.btn_stop)
+        return f
+
+    def _nav(self) -> QWidget:
+        w = QFrame()
+        w.setObjectName("rail")
+        self.nav_frame = w
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(6, 6, 6, 8)
+        lay.setSpacing(1)
+        self.nav_group = QButtonGroup(self)
+        self.nav_buttons: dict[str, QPushButton] = {}
+        self.nav_titles: dict[str, str] = {}
+        self.nav_headers = []
+        for group, items in NAV:
+            h = label(group, "navgroup")
+            self.nav_headers.append(h)
+            lay.addWidget(h)
+            for key, title, ic in items:
+                b = QPushButton(title)
+                b.setObjectName("nav")
+                b.setCheckable(True)
+                b.setIcon(icon(ic))
+                b.setIconSize(QSize(18, 18))
+                b.setToolTip(title)
+                b.clicked.connect(lambda _=False, k=key: self.navigate(k))
+                self.nav_group.addButton(b)
+                self.nav_buttons[key] = b
+                self.nav_titles[key] = title
+                lay.addWidget(b)
+        lay.addStretch(1)
+        self.lbl_version = label(f"v{__version__}", "caption")  # in Help › About; not repeated in the rail
+        self.lbl_version.setVisible(False)
+        lay.addWidget(self.lbl_version)
+        return w
+
+    def _footer(self) -> QWidget:
+        f = QFrame()
+        f.setObjectName("footer")
+        lay = QHBoxLayout(f)
+        lay.setContentsMargins(14, 4, 14, 4)
+        self.f_session = label("", "mono")
+        self.f_bus = label("", "mono")
+        self.f_task = label("", "mono")
+        self.f_pos = label("", "mono")
+        self.f_raw = label("Raw data preserved · display mapping is non-destructive", "caption")
+        # UI audit 2026-11-17: the footer keeps the session and what is running; the position repeats the Capture
+        # page (in another frame), and the slogan and an idle command bus are not operator information
+        self.f_pos.setVisible(False)
+        self.f_raw.setVisible(False)
+        for x in (self.f_session, self.f_bus, self.f_task):
+            lay.addWidget(x)
+            lay.addSpacing(22)
+        lay.addStretch(1)
+        lay.addWidget(self.f_pos)
+        lay.addWidget(self.f_raw)
+        return f
+
+    # ================================================================== commands & menus
+    def _cmd(self, menu, key: str, text: str, run, *, shortcut: str | None = None, why=None, checked=None,
+             path: str = "", group: QActionGroup | None = None) -> Cmd:
+        a = QAction(text, self)
+        if shortcut:
+            a.setShortcut(QKeySequence(shortcut))
+            a.setShortcutContext(Qt.WindowShortcut)
+        if checked is not None:
+            a.setCheckable(True)
+        if group is not None:
+            group.addAction(a)
+        a.triggered.connect(lambda _c=False, k=key: self.run_command(k))
+        menu.addAction(a)
+        c = Cmd(key, text, run, shortcut, why, checked, path or menu.title().replace("&", ""), a)
+        self.commands[key] = c
+        return c
+
+    def run_command(self, key: str) -> None:
+        c = self.commands[key]
+        why = c.why_disabled() if callable(c.why_disabled) else ""
+        if why:
+            self.model.add_log("warn", f"{c.text.replace('&', '')}: {why}")
+            return
+        c.run()
+        self._refresh_commands()
+
+    def _build_menus(self) -> None:
+        mb = self.menuBar()
+        cap = self.pages["capture"]
+        busy = lambda: "the instrument is busy with " + self.model.tasks.current if self.model.tasks.busy else ""
+        no_capture = lambda: "" if self.session.capture.buffers.all() else "capture an image first"
+
+        m = mb.addMenu("&File")
+        self._cmd(m, "file.open", "Open image…", lambda: self.pages["analysis"].open_file_dialog(), shortcut="Ctrl+O")
+        m.addSeparator()
+        self._cmd(m, "file.save", "Save image…", lambda: self.navigate("save"), shortcut="Ctrl+S", why=no_capture)
+        self._cmd(m, "file.quicksave", "Quick save", lambda: self.pages["save"].quick_save(), shortcut="Ctrl+Shift+S",
+                  why=no_capture)
+        self._cmd(m, "file.diag", "Export diagnostics…", lambda: self.pages["service"].export_dialog())
+        m.addSeparator()
+        self._cmd(m, "file.settings", "Settings…", lambda: self.navigate("settings"), shortcut="Ctrl+,")
+        m.addSeparator()
+        self._cmd(m, "file.quit", "Quit", self.close, shortcut="Ctrl+Q")
+
+        m = mb.addMenu("&Edit")
+        self._cmd(m, "edit.copy", "Copy image", cap.copy_image, shortcut="Ctrl+C",
+                  why=lambda: "" if cap.view.has_image() else "no image in the viewer")
+        self._cmd(m, "edit.palette", "Search commands…", self.open_palette, shortcut="Ctrl+K")
+        m.addSeparator()
+        self._cmd(m, "edit.clear", "Clear all channels", lambda: self.session.capture.buffers.clear(), why=no_capture)
+
+        m = mb.addMenu("&View")
+        tm = m.addMenu("Theme")
+        g = QActionGroup(self)
+        for name, text in (("dark", "Dark"), ("light", "Light"), ("system", "Match system")):
+            self._cmd(tm, f"view.theme.{name}", text, lambda n=name: self.set_theme(n), group=g,
+                      checked=lambda n=name: self.session.settings.basic.theme == n, path="View › Theme")
+        nm = m.addMenu("Navigation")
+        g2 = QActionGroup(self)
+        for name, text in (("auto", "Automatic (icons below 1440 px)"), ("expanded", "Labels"), ("rail", "Icons only")):
+            self._cmd(nm, f"view.nav.{name}", text, lambda n=name: self.set_nav(n), group=g2,
+                      checked=lambda n=name: self.session.settings.basic.navigation == n, path="View › Navigation")
+        m.addSeparator()
+        self._cmd(m, "view.fit", "Zoom to fit", cap.view.fit, shortcut="Ctrl+0")
+        self._cmd(m, "view.actual", "Actual size", cap.view.one_to_one, shortcut="Ctrl+1")
+        m.addSeparator()
+        self._cmd(m, "view.cross", "Crosshair", lambda: cap.btn_cross.toggle(), checked=lambda: cap.btn_cross.isChecked())
+        self._cmd(m, "view.scale", "Scale bar", lambda: cap.btn_scale.toggle(), checked=lambda: cap.btn_scale.isChecked())
+        self._cmd(m, "view.clip", "Clipping overlay", lambda: cap.btn_clip.toggle(), shortcut="Ctrl+Shift+C",
+                  checked=lambda: cap.btn_clip.isChecked())
+        self._cmd(m, "view.sat", "Highlight saturated pixels", lambda: cap.btn_sat.toggle(),
+                  checked=lambda: cap.btn_sat.isChecked())
+        self._cmd(m, "view.loupe", "Loupe", lambda: cap.btn_loupe.toggle(), checked=lambda: cap.btn_loupe.isChecked())
+        self._cmd(m, "view.sci", "Scientific display (linear only)", cap.toggle_scientific,
+                  checked=lambda: self.session.settings.basic.scientific_display)
+        m.addSeparator()
+        self._cmd(m, "view.dev", "Developer tools", self._toggle_developer,
+                  checked=lambda: self.session.settings.basic.developer_mode)
+        self._cmd(m, "view.full", "Enter full screen", self._toggle_full, shortcut="F11")
+
+        m = mb.addMenu("&Acquire")
+        self._cmd(m, "acq.live", "Live", cap.go_live, shortcut="Ctrl+L", why=busy)
+        self._cmd(m, "acq.capture", "Capture", cap.capture_current, shortcut="Ctrl+Return", why=busy)
+        self._cmd(m, "acq.all", "Capture all", cap.capture_all, why=lambda: busy() or (
+            "" if self.session.settings.active_camera is CameraRole.MONO else "Capture all uses the monochrome camera"))
+        m.addSeparator()
+        self._cmd(m, "acq.find", "Find sample", lambda: cap._autofocus(True), why=busy)
+        self._cmd(m, "acq.fine", "Auto fine", lambda: cap._autofocus(False), shortcut="Ctrl+F", why=busy)
+        self._cmd(m, "acq.snap", "Snap to last", cap._snap, why=lambda: busy() or (
+            "" if self.session.capture.last_capture_z is not None else "no captured image yet"))
+        self._cmd(m, "acq.nominal", "Capture focus nominal",
+                  lambda: cap.run_action(HotButtonAction.CAPTURE_FOCUS_NOMINAL), why=busy)
+        m.addSeparator()
+        self._cmd(m, "acq.zstack", "Z-stack…", lambda: cap.run_action(HotButtonAction.ZSTACK), why=busy)
+        self._cmd(m, "acq.transfection", "Transfection…", lambda: cap.run_action(HotButtonAction.TRANSFECTION), why=busy)
+        m.addSeparator()
+        self._cmd(m, "acq.scan", "Scan…", lambda: self.navigate("scan"))
+        self._cmd(m, "acq.timelapse", "Time-lapse…", lambda: self.navigate("timelapse"))
+
+        m = mb.addMenu("&Microscope")
+        om = m.addMenu("Objective")
+        go = QActionGroup(self)
+        for o in self.session.profile.objectives:
+            self._cmd(om, f"mic.obj.{o.slot}", f"{o.slot}  {o.label or 'Empty'}",
+                      lambda s=o.slot: cap.obj_group.button(s).click(), shortcut=f"Alt+{o.slot}", group=go,
+                      checked=lambda s=o.slot: self.session.controller.objective_slot() == s,
+                      why=lambda o=o: busy() or ("" if o.installed else "no objective in this slot"),
+                      path="Microscope › Objective")
+        chm = m.addMenu("Channel")
+        gc = QActionGroup(self)
+        for c in self.session.profile.channels:
+            if not c.installed:
+                continue
+            self._cmd(chm, f"mic.ch.{c.slot}", c.display, lambda s=c.slot: cap._select_channel(s), group=gc,
+                      checked=lambda s=c.slot: cap.channel == s,
+                      why=lambda c=c: busy() or self._channel_reason(c), path="Microscope › Channel")
+        cm = m.addMenu("Camera")
+        gcam = QActionGroup(self)
+        for cam in self.session.profile.cameras:
+            self._cmd(cm, f"mic.cam.{cam.role.value}", cam.display_name, lambda r=cam.role: cap.switch_camera(r),
+                      group=gcam, checked=lambda r=cam.role: self.session.settings.active_camera is r, why=busy,
+                      path="Microscope › Camera")
+        self._cmd(m, "mic.light", "Light on", lambda: cap.btn_power.toggle(), shortcut="Ctrl+Shift+L",
+                  checked=lambda: cap.btn_power.isChecked(), why=busy)
+        m.addSeparator()
+        self._cmd(m, "mic.vessel", "Vessel…", cap._vessel_expert, why=busy)
+        self._cmd(m, "mic.lightcam", "Light and camera…", cap._light_camera, why=busy)
+        m.addSeparator()
+        self._cmd(m, "mic.recover", "Recover device…", lambda: self.navigate("hardware"))
+        self._cmd(m, "mic.stop", "Stop all", self.stop_all, shortcut="Esc")
+
+        m = mb.addMenu("A&nalyze")
+        an = self.pages["analysis"]
+        for i, (k, t) in enumerate((("overlay", "Overlay"), ("measure", "Measure"), ("count", "Count"),
+                                    ("auto", "Auto count"))):
+            self._cmd(m, f"an.{k}", t, lambda i=i: (self.navigate("analysis"), an.tabs.setCurrentIndex(i)),
+                      why=no_capture if k != "count" else None)
+        m.addSeparator()
+        self._cmd(m, "an.file", "Count from file…", an.open_file_dialog)
+
+        m = mb.addMenu("&Window")
+        n = 0
+        for _g, items in NAV:
+            for key, title, _ic in items:
+                n += 1
+                self._cmd(m, f"win.{key}", title, lambda k=key: self.navigate(k),
+                          shortcut=f"Ctrl+Alt+{n}" if n <= 9 else None, path="Window")
+            m.addSeparator()
+
+        m = mb.addMenu("&Help")
+        self._cmd(m, "help.start", "Getting started…", self.show_getting_started)
+        self._cmd(m, "help.keys", "Keyboard shortcuts…", self.show_shortcuts)
+        self._cmd(m, "help.palette", "Search commands…", self.open_palette, shortcut="Alt+Q")
+        m.addSeparator()
+        self._cmd(m, "help.about", "About OpenEVOS…", self.show_about)
+
+        corner = QWidget()
+        cl = QHBoxLayout(corner)
+        cl.setContentsMargins(0, 0, 6, 0)
+        cl.setSpacing(6)
+        search = QPushButton("Search  Ctrl+K")
+        search.setObjectName("menu")
+        search.setIcon(icon("search"))
+        search.clicked.connect(self.open_palette)
+        cl.addWidget(search)
+        if getattr(self.session, "physical_stage", False):
+            text, kind = "SIM + PHYSICAL X/Y STAGE", "warn"
+            svc = self.session.telemetry[0] if self.session.telemetry else None
+            tip = ("The X/Y stage is the REAL instrument stage (ADR-0024/0029): the joystick, jogs and Stop move it, "
+                   f"inside the {getattr(svc, 'travel_box_note', 'power-up box')} and through the safety checks. "
+                   "Cameras, light, focus and turret are simulators; frames are synthetic and labelled SIMULATED.")
+        elif getattr(self.session, "telemetry", None):
+            text, kind = "SIM + MOTOR TELEMETRY", "simulated"
+            tip = ("All controls act on simulators. The real motor drives are read live for display only "
+                   "(ADR-0023); nothing is sent to them.")
+        elif self.session.simulated:
+            text, kind = "SIMULATION BACKEND", "simulated"
+            tip = "All devices are simulators. Frames are synthetic and labelled SIMULATED."
+        else:
+            text, kind, tip = "PHYSICAL BACKEND", "warn", "Physical backend"
+        self.mode_badge = Badge(text, kind)
+        self.mode_badge.setToolTip(tip)
+        cl.addWidget(self.mode_badge)
+        self._corner = corner  # PySide does not transfer ownership of corner widgets: keep a reference
+        mb.setCornerWidget(corner, Qt.TopRightCorner)
+        for menu in mb.findChildren(QMenu):
+            menu.aboutToShow.connect(self._refresh_commands)
+        self._refresh_commands()
+
+    def _channel_reason(self, c) -> str:
+        cam = self.session.profile.camera(self.session.settings.active_camera)
+        return "" if cam and cam.supports(c) else "the colour camera is brightfield/phase only"
+
+    def _refresh_commands(self) -> None:
+        for c in self.commands.values():
+            if c.action is None:
+                continue
+            why = c.why_disabled() if callable(c.why_disabled) else ""
+            c.action.setEnabled(not why or c.key == "mic.stop")
+            c.action.setToolTip(why or c.text.replace("&", ""))
+            c.action.setStatusTip(why)
+            if callable(c.checked):
+                c.action.setChecked(bool(c.checked()))
+
+    def open_palette(self) -> None:
+        self._refresh_commands()
+        CommandPalette(self).exec()
+
+    # ================================================================== theme / navigation / chrome actions
+    def set_theme(self, name: str) -> None:
+        self.session.settings.basic.theme = name
+        app = QApplication.instance()
+        resolved = ("dark" if theme.system_prefers_dark(app) else "light") if name == "system" else name
+        theme.apply_theme(resolved, app)
+        self._retint()
+        self.model.settings_changed.emit()
+
+    def _retint(self) -> None:
+        for key, b in self.nav_buttons.items():
+            ic = next(i for _g, items in NAV for k, _t, i in items if k == key)
+            b.setIcon(icon(ic))
+        self.btn_stop.setIcon(icon("stop", theme.FAULT))
+        for p in self.pages.values():
+            fn = getattr(p, "retint", None)
+            if fn:
+                fn()
+
+    def set_nav(self, mode: str) -> None:
+        self.session.settings.basic.navigation = mode
+        self._apply_nav_mode()
+
+    def _apply_nav_mode(self) -> None:
+        mode = self.session.settings.basic.navigation
+        rail = mode == "rail" or (mode == "auto" and self.width() < RAIL_BELOW_PX)
+        for key, b in self.nav_buttons.items():
+            b.setText("" if rail else self.nav_titles[key])
+        for h in self.nav_headers:
+            h.setVisible(not rail)
+        self.lbl_version.setVisible(False)
+        self.nav_frame.setFixedWidth(52 if rail else 172)
+        self.lbl_profile.setVisible(self.width() >= 1500)  # labels drop first, nothing hides
+        for p in self.pages.values():
+            fn = getattr(p, "set_compact", None)
+            if fn:
+                fn(self.width() < RAIL_BELOW_PX)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if hasattr(self, "nav_buttons"):
+            self._apply_nav_mode()
+
+    def _toggle_developer(self) -> None:
+        """View › Developer tools: simulator fault injection and gate evidence (hidden from operators by default)."""
+        on = not self.session.settings.basic.developer_mode
+        self.session.settings.basic.developer_mode = on
+        for p in self.pages.values():
+            fn = getattr(p, "set_developer", None)
+            if fn:
+                fn(on)
+
+    def _toggle_full(self) -> None:
+        self.showNormal() if self.isFullScreen() else self.showFullScreen()
+
+    def stop_all(self) -> None:
+        n = self.model.stop_all()
+        self.model.add_log("warn", f"Stop all: {n} command(s) asked to cancel; workflows stopped")
+
+    def show_getting_started(self) -> None:
+        from openevos.ui.dialogs import GettingStartedDialog
+
+        GettingStartedDialog(self).exec()
+
+    def show_shortcuts(self) -> None:
+        from openevos.ui.dialogs import InfoDialog
+
+        rows = [(c.menu_path, c.text.replace("&", ""), c.shortcut) for c in self.commands.values() if c.shortcut]
+        text = "\n".join(f"{s:<16} {p} › {t}" for p, t, s in sorted(rows, key=lambda r: r[0]))
+        text += "\n\nSliders and number boxes: arrows step · Shift ×10 · Alt ×0.1 · double-click label resets"
+        text += "\nImage: wheel zooms · drag pans · hold B compares raw · Ctrl+0 fit · Ctrl+1 actual size"
+        InfoDialog("Keyboard shortcuts", text, self, mono=True).exec()
+
+    def show_about(self) -> None:
+        from openevos.ui.dialogs import InfoDialog
+
+        InfoDialog("About OpenEVOS", f"OpenEVOS {__version__}\nOpen-source diagnostics and control for the EVOS FL "
+                   "Auto (AMAFD1000).\nSimulation backend: no physical hardware is commanded.\n\nInterface design "
+                   "system: Craftimon Lab tokens (Inter, JetBrains Mono — SIL OFL 1.1).", self).exec()
+
+    # ================================================================== status
+    def _tick(self) -> None:
+        s, m = self.session, self.model
+        kind = ("SIM+STAGE" if getattr(s, "physical_stage", False) else "SIM+TELEMETRY"
+                if getattr(s, "telemetry", None) else "SIM" if s.simulated else "HW")
+        self.f_session.setText(f"SESSION {kind} · {s.vessel.display_name}")
+        n = len(m.active_commands)
+        self.f_bus.setText(f"COMMAND BUS: {'IDLE' if n == 0 else f'{n} ACTIVE'}")
+        self.f_bus.setStyleSheet(f"color: {theme.OK if n == 0 else theme.ACCENT_TX};")
+        self.f_bus.setVisible(n > 0)  # shown only while commands run
+        self.f_task.setText(f"TASK: {m.tasks.current or 'none'}")
+        self.f_task.setVisible(bool(m.tasks.current))
+        xy, z, slot = s.controller.stage_xy(), s.controller.focus_z(), s.controller.objective_slot()
+        obj = s.profile.objective(slot) if slot else None
+        self.f_pos.setText((f"XY {xy[0] / 1000:+.3f}, {xy[1] / 1000:+.3f} mm" if xy else "XY —")
+                           + (f"   Z {z:.1f} µm" if z is not None else "") + (f"   {obj.short}" if obj else ""))
+        self._refresh_commands()
+
+    def _on_device(self, did: str, snap) -> None:
+        pill = self.pills.get(did)
+        if pill is not None:
+            state, text = describe_snapshot(snap)
+            pill.set_state(state, text, f"{did}: {snap.note or ''}" if snap else did)
+            self.health.refresh()
+
+    # ================================================================== pages
+    def _build_pages(self) -> None:
+        from openevos.ui.pages import capture, save
+        from openevos.ui.pages.others import build_other_pages
+
+        cap = capture.CapturePage(self.model)
+        self._add("capture", cap)
+        sv = save.SavePage(self.model, cap)
+        self._add("save", sv)
+        cap.request_page.connect(self._page_request)
+        for key, page in build_other_pages(self.model, cap).items():
+            self._add(key, page)
+        from openevos.ui.pages.diagnostics import DiagnosticsPage
+
+        self._add("diagnostics", DiagnosticsPage(self.model))  # Inspector scans (ported from the legacy UI)
+        from PySide6.QtWidgets import QTabWidget
+
+        self.service_tabs = QTabWidget()
+        self.service_tabs.setDocumentMode(True)
+        for key, title in SERVICE_TABS:
+            self.service_tabs.addTab(self._service_holders[key], title)
+        self.stack.addWidget(self.service_tabs)
+        self.pages["service_area"] = self.service_tabs
+
+    def _add(self, key: str, page: QWidget) -> None:
+        if key in dict(SERVICE_TABS):  # goes into the Service area's tabs (built after all pages)
+            sc = QScrollArea()
+            sc.setWidgetResizable(True)
+            sc.setWidget(page)
+            self._service_holders = getattr(self, "_service_holders", {})
+            self._service_holders[key] = sc
+            self.pages[key] = page
+            return
+        if key != "capture":
+            sc = QScrollArea()
+            sc.setWidgetResizable(True)
+            sc.setWidget(page)
+            self.stack.addWidget(sc)
+        else:
+            self.stack.addWidget(page)
+        self.pages[key] = page
+
+    def _page_request(self, what: str) -> None:
+        if what == "quick_save":
+            self.pages["save"].quick_save()
+        else:
+            self.navigate(what)
+
+    def navigate(self, key: str) -> None:
+        if key in dict(SERVICE_TABS):
+            self.service_tabs.setCurrentIndex([k for k, _t in SERVICE_TABS].index(key))
+            key = "service_area"
+        page = self.pages.get(key)
+        if page is None:
+            return
+        idx = next(i for i in range(self.stack.count())
+                   if self.stack.widget(i) is page or getattr(self.stack.widget(i), "widget", lambda: None)() is page)
+        self.stack.setCurrentIndex(idx)
+        self.nav_buttons[key].setChecked(True)
+
+    def closeEvent(self, e):
+        self.model.shutdown()
+        self.session.save_settings()
+        super().closeEvent(e)

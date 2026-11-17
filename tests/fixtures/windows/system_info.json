@@ -1,0 +1,10 @@
+{
+  "ComputerSystem": {"Name": "LABPC-EVOS01", "Manufacturer": "Dell Inc.", "Model": "OptiPlex 7090", "SystemType": "x64-based PC", "TotalPhysicalMemory": 17179869184},
+  "OperatingSystem": {"Caption": "Microsoft Windows 10 Pro", "Version": "10.0.19045", "BuildNumber": "19045", "OSArchitecture": "64-bit"},
+  "BIOS": {"Manufacturer": "Dell Inc.", "SMBIOSBIOSVersion": "1.20.0", "ReleaseDate": "2023-05-10"},
+  "BaseBoard": {"Manufacturer": "Dell Inc.", "Product": "0XXXXX"},
+  "Processors": [{"Name": "Intel(R) Core(TM) i5-10505 CPU @ 3.20GHz", "NumberOfCores": 6, "NumberOfLogicalProcessors": 12, "AddressWidth": 64}],
+  "VideoControllers": [{"Name": "Intel(R) UHD Graphics 630", "DriverVersion": "31.0.101.2111", "AdapterCompatibility": "Intel Corporation"}],
+  "DiskDrives": [{"Model": "NVMe SSD 512GB", "InterfaceType": "SCSI", "MediaType": "Fixed hard disk media", "Size": 512105932800, "Status": "OK"}],
+  "USBControllers": [{"Name": "Intel(R) USB 3.1 eXtensible Host Controller", "Manufacturer": "Generic USB xHCI Host Controller", "PNPDeviceID": "PCI\\VEN_8086&DEV_A36D&SUBSYS_00000000&REV_10\\3&11583659&0&A0"}]
+}

@@ -1,0 +1,23 @@
+[
+  {"InstanceId": "USB\\ROOT_HUB30\\4&2A3B1C2D&0&0", "KeyName": "DEVPKEY_Device_Parent", "Data": "PCI\\VEN_8086&DEV_A36D&SUBSYS_00000000&REV_10\\3&11583659&0&A0"},
+  {"InstanceId": "USB\\VID_046D&PID_C52B\\5&1A2B3C4D&0&3", "KeyName": "DEVPKEY_Device_Parent", "Data": "USB\\ROOT_HUB30\\4&2A3B1C2D&0&0"},
+  {"InstanceId": "USB\\VID_046D&PID_C52B\\5&1A2B3C4D&0&3", "KeyName": "DEVPKEY_Device_BusReportedDeviceDesc", "Data": "USB Receiver"},
+  {"InstanceId": "USB\\VID_046D&PID_C52B\\5&1A2B3C4D&0&3", "KeyName": "DEVPKEY_Device_LocationInfo", "Data": "Port_#0003.Hub_#0001"},
+  {"InstanceId": "USB\\VID_046D&PID_C52B&MI_00\\6&2B3C4D5E&0&0000", "KeyName": "DEVPKEY_Device_Parent", "Data": "USB\\VID_046D&PID_C52B\\5&1A2B3C4D&0&3"},
+  {"InstanceId": "USB\\VID_0403&PID_6001\\A12345BC", "KeyName": "DEVPKEY_Device_Parent", "Data": "USB\\ROOT_HUB30\\4&2A3B1C2D&0&0"},
+  {"InstanceId": "USB\\VID_0403&PID_6001\\A12345BC", "KeyName": "DEVPKEY_Device_BusReportedDeviceDesc", "Data": "FT232R USB UART"},
+  {"InstanceId": "USB\\VID_0403&PID_6001\\A12345BC", "KeyName": "DEVPKEY_Device_DriverInfPath", "Data": "oem3.inf"},
+  {"InstanceId": "USB\\VID_0403&PID_6001\\A12345BC", "KeyName": "DEVPKEY_Device_DriverProvider", "Data": "FTDI"},
+  {"InstanceId": "USB\\VID_0403&PID_6001\\A12345BC", "KeyName": "DEVPKEY_Device_DriverVersion", "Data": "2.12.36.4"},
+  {"InstanceId": "USB\\VID_0403&PID_6001\\A12345BC", "KeyName": "DEVPKEY_Device_LocationPaths", "Data": ["PCIROOT(0)#PCI(1400)#USBROOT(0)#USB(2)"]},
+  {"InstanceId": "FTDIBUS\\VID_0403+PID_6001+A12345BCA\\0000", "KeyName": "DEVPKEY_Device_Parent", "Data": "USB\\VID_0403&PID_6001\\A12345BC"},
+  {"InstanceId": "USB\\VID_1D6B&PID_ABCD\\OLDSERIAL99", "KeyName": "DEVPKEY_Device_LastArrivalDate", "Data": "2025-03-04T10:11:12.0000000Z"},
+  {"InstanceId": "USB\\VID_05E3&PID_0610\\5&1A2B3C4D&0&4", "KeyName": "DEVPKEY_Device_Parent", "Data": "USB\\ROOT_HUB30\\4&2A3B1C2D&0&0"},
+  {"InstanceId": "USB\\VID_1234&PID_5678\\6&AAAA&0&1", "KeyName": "DEVPKEY_Device_Parent", "Data": "USB\\VID_05E3&PID_0610\\5&1A2B3C4D&0&4"},
+  {"InstanceId": "USB\\VID_1234&PID_5678\\6&AAAA&0&1", "KeyName": "DEVPKEY_Device_BusReportedDeviceDesc", "Data": "Synthetic Test Camera"},
+  {"InstanceId": "USB\\VID_1234&PID_5678&MI_00\\7&BBBB&0&0000", "KeyName": "DEVPKEY_Device_Parent", "Data": "USB\\VID_1234&PID_5678\\6&AAAA&0&1"},
+  {"InstanceId": "USB\\VID_1234&PID_5678&MI_00\\7&BBBB&0&0000", "KeyName": "DEVPKEY_Device_DriverInfPath", "Data": "oem12.inf"},
+  {"InstanceId": "USB\\VID_1234&PID_5678&MI_01\\7&BBBB&0&0001", "KeyName": "DEVPKEY_Device_Parent", "Data": "USB\\VID_1234&PID_5678\\6&AAAA&0&1"},
+  {"InstanceId": "USB\\VID_ABCD&PID_0001\\SN0001TEST", "KeyName": "DEVPKEY_Device_Parent", "Data": "USB\\VID_05E3&PID_0610\\5&1A2B3C4D&0&4"},
+  {"InstanceId": "USB\\VID_ABCD&PID_0001\\SN0001TEST", "KeyName": "DEVPKEY_Device_BusReportedDeviceDesc", "Data": "Synthetic Controller"}
+]

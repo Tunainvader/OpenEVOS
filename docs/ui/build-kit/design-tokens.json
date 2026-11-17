@@ -1,0 +1,177 @@
+{
+  "source": "Craftimon Studio 'Lab' palette, verified WCAG 2.2 AA (see tests/test_design_system.py)",
+  "themes": {
+    "dark": {
+      "name": "dark",
+      "bg": "#0F1115",
+      "s1": "#151922",
+      "s2": "#1B2029",
+      "s3": "#222833",
+      "tx": "#F3F5F7",
+      "t2": "#B4BBC6",
+      "t3": "#8A93A3",
+      "bd": "#2A303B",
+      "bdd": "#65738E",
+      "acc": "#6293FF",
+      "acc_tx": "#98BAFF",
+      "acc_dim": "#25314A",
+      "teal": "#52D1D0",
+      "amber": "#EFAB57",
+      "violet": "#E698F7",
+      "ok": "#4CC38A",
+      "warn": "#EFAB57",
+      "danger": "#FF6B6B",
+      "unknown": "#8A93A3",
+      "stage": "#07090C",
+      "focus": "#6293FF",
+      "acc_on": "#111111"
+    },
+    "light": {
+      "name": "light",
+      "bg": "#FFFFFF",
+      "s1": "#F4F5F7",
+      "s2": "#EAECEF",
+      "s3": "#FFFFFF",
+      "tx": "#14161A",
+      "t2": "#4A5259",
+      "t3": "#5F6877",
+      "bd": "#D8DCE1",
+      "bdd": "#7D8794",
+      "acc": "#3360C8",
+      "acc_tx": "#294DA3",
+      "acc_dim": "#DCE6FB",
+      "teal": "#005F5F",
+      "amber": "#825100",
+      "violet": "#772F87",
+      "ok": "#1A6E44",
+      "warn": "#8A4B00",
+      "danger": "#B42318",
+      "unknown": "#5F6877",
+      "stage": "#07090C",
+      "focus": "#3360C8",
+      "acc_on": "#FFFFFF"
+    }
+  },
+  "typography": {
+    "ui": "Inter",
+    "mono": "JetBrains Mono",
+    "px": {
+      "body": 13,
+      "label": 12,
+      "caption": 11,
+      "section": 11,
+      "title": 15,
+      "brand": 18,
+      "value": 13
+    },
+    "section_header": "11 px, semibold, uppercase, +6 % letter spacing",
+    "numerals": "tabular (font feature tnum)"
+  },
+  "spacing_px": {
+    "xs": 4,
+    "s": 6,
+    "m": 8,
+    "l": 12,
+    "xl": 16,
+    "xxl": 24
+  },
+  "radius_px": {
+    "control": 5,
+    "button": 6,
+    "panel": 8,
+    "menu": 8,
+    "pill": 99
+  },
+  "inspector_row": {
+    "height": 30,
+    "label_width": 84
+  },
+  "states": {
+    "ok": {
+      "token": "ok",
+      "text": "OK"
+    },
+    "simulated": {
+      "token": "teal",
+      "text": "SIMULATED"
+    },
+    "busy": {
+      "token": "acc",
+      "text": "BUSY"
+    },
+    "warn": {
+      "token": "warn",
+      "text": "WARNING"
+    },
+    "fault": {
+      "token": "danger",
+      "text": "FAULT"
+    },
+    "unknown": {
+      "token": "unknown",
+      "text": "UNKNOWN"
+    },
+    "unavailable": {
+      "token": "unknown",
+      "text": "UNAVAILABLE"
+    },
+    "locked": {
+      "token": "warn",
+      "text": "LOCKED"
+    }
+  },
+  "contrast": {
+    "dark": {
+      "tx/bg": 17.29,
+      "tx/s1": 16.09,
+      "tx/s2": 14.95,
+      "t2/bg": 9.78,
+      "t2/s1": 9.1,
+      "t2/s2": 8.45,
+      "t3/bg": 6.1,
+      "t3/s1": 5.68,
+      "t3/s2": 5.28,
+      "acc_tx/bg": 9.72,
+      "acc_tx/s1": 9.05,
+      "acc_tx/s2": 8.41,
+      "teal/bg": 10.25,
+      "teal/s1": 9.54,
+      "teal/s2": 8.86,
+      "ok/bg": 8.53,
+      "ok/s1": 7.94,
+      "ok/s2": 7.38,
+      "warn/bg": 9.57,
+      "warn/s1": 8.91,
+      "warn/s2": 8.27,
+      "danger/bg": 6.81,
+      "danger/s1": 6.34,
+      "danger/s2": 5.89
+    },
+    "light": {
+      "tx/bg": 18.11,
+      "tx/s1": 16.6,
+      "tx/s2": 15.3,
+      "t2/bg": 7.95,
+      "t2/s1": 7.29,
+      "t2/s2": 6.71,
+      "t3/bg": 5.63,
+      "t3/s1": 5.16,
+      "t3/s2": 4.75,
+      "acc_tx/bg": 7.82,
+      "acc_tx/s1": 7.17,
+      "acc_tx/s2": 6.61,
+      "teal/bg": 7.49,
+      "teal/s1": 6.87,
+      "teal/s2": 6.33,
+      "ok/bg": 6.25,
+      "ok/s1": 5.73,
+      "ok/s2": 5.28,
+      "warn/bg": 6.8,
+      "warn/s1": 6.24,
+      "warn/s2": 5.75,
+      "danger/bg": 6.57,
+      "danger/s1": 6.03,
+      "danger/s2": 5.55
+    }
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "meta": {
+    "scan_id": "baseline-20261111T222225Z-ef57c1",
+    "label": "baseline",
+    "tool_version": "0.1.0.dev0",
+    "schema_version": "0.1.0",
+    "started_at": "2026-11-11T22:22:25.280330Z",
+    "finished_at": "2026-11-11T22:22:25.283142Z",
+    "host_platform": "Linux 6.18.44-fc-v378 (x86_64)",
+    "python_version": "3.13.18",
+    "elevated": true,
+    "redacted": false,
+    "artifact_roots": []
+  },
+  "collectors": [
+    {
+      "name": "system",
+      "status": "ok",
+      "reason": "",
+      "started_at": "2026-11-11T22:22:25.281005Z",
+      "duration_s": 0.00027854100005697546,
+      "evidence_count": 1,
+      "operations": [
+        "powershell:system_info",
+        "registry-read:HKLM64\\SOFTWARE\\Microsoft\\NET Framework Setup\\NDP\\v4\\Full\\Release"
+      ]
+    },
+    {
+      "name": "windows_devices",
+      "status": "ok",
+      "reason": "",
+      "started_at": "2026-11-11T22:22:25.281615Z",
+      "duration_s": 0.0005987509999840768,
+      "evidence_count": 8,
+      "operations": [
+        "powershell:pnp_device_properties",
+        "powershell:pnp_devices"
+      ]
+    },
+    {
+      "name": "serial_ports",
+      "status": "ok",
+      "reason": "",
+      "started_at": "2026-11-11T22:22:25.281678Z",
+      "duration_s": 5.1572999950622034e-05,
+      "evidence_count": 1,
+      "operations": [
+        "serial-port-enumeration (metadata only)"
+      ]
+    },
+    {
+      "name": "drivers",
+      "status": "ok",
+      "reason": "",
+      "started_at": "2026-11-11T22:22:25.281828Z",
+      "duration_s": 0.0001466579999487294,
+      "evidence_count": 3,
+      "operations": [
+        "powershell:signed_drivers"
+      ]
+    },
+    {
+      "name": "driver_packages",
+      "status": "skipped",
+      "reason": "no Windows volume available (live or via --artifact-root)",
+      "started_at": "2026-11-11T22:22:25.281846Z",
+      "duration_s": 1.4134000025478599e-05,
+      "evidence_count": 0,
+      "operations": []
+    },
+    {
+      "name": "installed_software",
+      "status": "ok",
+      "reason": "",
+      "started_at": "2026-11-11T22:22:25.282021Z",
+      "duration_s": 0.0001703159999806303,
+      "evidence_count": 4,
+      "operations": [
+        "registry-list-keys:HKCU\\Software",
+        "registry-list-keys:HKLM32\\SOFTWARE",
+        "registry-list-keys:HKLM64\\SOFTWARE",
+        "registry-read:HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+        "registry-read:HKLM32\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+        "registry-read:HKLM64\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall"
+      ]
+    },
+    {
+      "name": "evos_artifacts",
+      "status": "skipped",
+      "reason": "no search roots (not Windows and no --artifact-root given)",
+      "started_at": "2026-11-11T22:22:25.282032Z",
+      "duration_s": 4.731999979412649e-06,
+      "evidence_count": 0,
+      "operations": []
+    },
+    {
+      "name": "camera_sdks",
+      "status": "skipped",
+      "reason": "no search locations",
+      "started_at": "2026-11-11T22:22:25.282040Z",
+      "duration_s": 4.934000003231631e-06,
+      "evidence_count": 0,
+      "operations": []
+    },
+    {
+      "name": "event_logs",
+      "status": "ok",
+      "reason": "",
+      "started_at": "2026-11-11T22:22:25.282144Z",
+      "duration_s": 0.00010260500005188078,
+      "evidence_count": 2,
+      "operations": [
+        "powershell:pnp_events"
+      ]
+    }
+  ],
+  "actions_not_performed": [
+    "No device was opened through a driver, SDK or Micro-Manager.",
+    "No serial port was opened; no data was sent to any COM port or USB endpoint.",
+    "No driver was installed, removed, enabled, disabled or updated.",
+    "No registry value, service, file, firmware or configuration was modified.",
+    "No filesystem check or repair (e.g. CHKDSK) was run; no source disk or image was written.",
+    "No file was copied out of an EVOS installation; only metadata and hashes were recorded.",
+    "No data was sent to any AI provider or network service."
+  ],
+  "notes": [
+    "Running elevated is not required for v0.1; prefer a standard user session."
+  ]
+}

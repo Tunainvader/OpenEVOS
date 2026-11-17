@@ -1,0 +1,37 @@
+moved ui -> ui_legacy
+  rewrote ui imports: src\openevos\ui_legacy\app.py
+  rewrote ui imports: src\openevos\ui_legacy\automate_page.py
+  rewrote ui imports: src\openevos\ui_legacy\capture_page.py
+  rewrote ui imports: src\openevos\ui_legacy\context.py
+  rewrote ui imports: src\openevos\ui_legacy\devices_page.py
+  rewrote ui imports: src\openevos\ui_legacy\diagnostics_page.py
+  rewrote ui imports: src\openevos\ui_legacy\image_view.py
+  rewrote ui imports: src\openevos\ui_legacy\incubator_page.py
+  rewrote ui imports: src\openevos\ui_legacy\main_window.py
+  rewrote ui imports: src\openevos\ui_legacy\screenshot.py
+  rewrote ui imports: src\openevos\ui_legacy\__init__.py
+  rewrote ui imports: src\openevos\ui_legacy\__main__.py
+  rewrote ui imports: tests\test_phase2_import_guard.py
+  rewrote ui imports: tests\test_ui_smoke.py
+copied instrument/ (6 py)
+copied acquisition/ (9 py)
+copied imaging/ (6 py)
+copied analysis/ (3 py)
+copied ui/ (26 py)
+copied v0.4.0 simulator -> backends/rig/
+  rewrote simulator imports: src\openevos\acquisition\session.py
+  rewrote simulator imports: src\openevos\backends\rig\rig.py
+copied test test_analysis_calibration.py
+copied test test_design_system.py
+copied test test_imaging_analysis.py
+copied test test_instrument_models.py
+copied test test_ui_offscreen.py
+copied test test_workflows_sim.py
+  rewrote simulator imports: tests/test_analysis_calibration.py
+  rewrote simulator imports: tests/test_workflows_sim.py
+copied docs/ui/build-kit
+copied docs/ui/screenshots
+copied docs/ui/UI_Integration_Report.md
+copied tools/make_build_kit.py
+copied tools/make_ui_screenshots.py
+copied tools/render_icon_sheet.py

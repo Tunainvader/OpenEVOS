@@ -1,0 +1,5 @@
+[
+  {"DeviceID": "USB\\VID_046D&PID_C52B\\5&1A2B3C4D&0&3", "DeviceName": "USB Composite Device", "DriverProviderName": "Microsoft", "DriverVersion": "10.0.19041.1", "DriverDate": "2006-06-21", "InfName": "usb.inf", "IsSigned": true, "Signer": "Microsoft Windows", "DeviceClass": "USB", "HardWareID": "USB\\VID_046D&PID_C52B&REV_1211", "Manufacturer": "(Standard USB Host Controller)"},
+  {"DeviceID": "USB\\VID_0403&PID_6001\\A12345BC", "DeviceName": "USB Serial Converter", "DriverProviderName": "FTDI", "DriverVersion": "2.12.36.4", "DriverDate": "2021-07-15", "InfName": "oem3.inf", "IsSigned": true, "Signer": "Microsoft Windows Hardware Compatibility Publisher", "DeviceClass": "USB", "HardWareID": "USB\\VID_0403&PID_6001&REV_0600", "Manufacturer": "FTDI"},
+  {"DeviceID": "USB\\VID_1234&PID_5678&MI_00\\7&BBBB&0&0000", "DeviceName": "Synthetic Imaging Interface", "DriverProviderName": "Synthetic Vendor", "DriverVersion": "1.0.0.0", "DriverDate": "2013-03-01", "InfName": "oem12.inf", "IsSigned": false, "Signer": null, "DeviceClass": "IMAGE", "HardWareID": "USB\\VID_1234&PID_5678&REV_0100&MI_00", "Manufacturer": "Synthetic Vendor"}
+]

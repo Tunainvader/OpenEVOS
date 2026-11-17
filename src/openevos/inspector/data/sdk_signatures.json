@@ -1,0 +1,23 @@
+{
+  "_comment": "Filename heuristics for well-known camera SDKs and USB bridge libraries. A match says 'a file with this name exists here', NOT that the EVOS uses it. Never strengthen beyond PROBABLE without version-resource or SDK-enumeration evidence. Extend via pull request with a source for each pattern.",
+  "signatures": [
+    {"id": "flir_flycapture2", "category": "camera_sdk", "vendor": "Point Grey / FLIR", "sdk": "FlyCapture2", "patterns": ["^flycapture2(_c)?(_v\\d+)?\\.dll$"], "company_keywords": ["point grey", "flir"]},
+    {"id": "flir_spinnaker", "category": "camera_sdk", "vendor": "FLIR / Teledyne", "sdk": "Spinnaker", "patterns": ["^spinnaker(c)?(_v\\d+)?\\.dll$"], "company_keywords": ["flir", "teledyne", "point grey"]},
+    {"id": "ids_ueye", "category": "camera_sdk", "vendor": "IDS Imaging", "sdk": "uEye", "patterns": ["^ueye_api(_64)?\\.dll$"], "company_keywords": ["ids imaging", "ids gmbh"]},
+    {"id": "basler_pylon", "category": "camera_sdk", "vendor": "Basler", "sdk": "pylon", "patterns": ["^pylon(base|c)[\\w\\-]*\\.dll$"], "company_keywords": ["basler"]},
+    {"id": "tis_ic", "category": "camera_sdk", "vendor": "The Imaging Source", "sdk": "IC Imaging Control", "patterns": ["^tis_udshl\\d+[\\w\\-]*\\.dll$"], "company_keywords": ["imaging source"]},
+    {"id": "hamamatsu_dcam", "category": "camera_sdk", "vendor": "Hamamatsu", "sdk": "DCAM-API", "patterns": ["^dcamapi\\.dll$"], "company_keywords": ["hamamatsu"]},
+    {"id": "photometrics_pvcam", "category": "camera_sdk", "vendor": "Teledyne Photometrics", "sdk": "PVCAM", "patterns": ["^pvcam(32|64)?\\.dll$"], "company_keywords": ["photometrics", "roper", "teledyne"]},
+    {"id": "qimaging_qcam", "category": "camera_sdk", "vendor": "QImaging", "sdk": "QCam", "patterns": ["^qcamdriver(x64)?\\.dll$"], "company_keywords": ["qimaging"]},
+    {"id": "lumenera_lucam", "category": "camera_sdk", "vendor": "Lumenera", "sdk": "LuCam", "patterns": ["^lucamapi\\.dll$"], "company_keywords": ["lumenera"]},
+    {"id": "avt_vimba", "category": "camera_sdk", "vendor": "Allied Vision", "sdk": "Vimba", "patterns": ["^vimbac\\.dll$"], "company_keywords": ["allied vision"]},
+    {"id": "andor_sdk2", "category": "camera_sdk", "vendor": "Andor", "sdk": "Andor SDK2", "patterns": ["^atmcd(32|64)d\\.dll$"], "company_keywords": ["andor"]},
+    {"id": "ximea_xiapi", "category": "camera_sdk", "vendor": "XIMEA", "sdk": "xiAPI", "patterns": ["^xiapi(32|64)\\.dll$"], "company_keywords": ["ximea"]},
+    {"id": "pco_sc2", "category": "camera_sdk", "vendor": "PCO / Excelitas", "sdk": "pco.sdk", "patterns": ["^sc2_cam\\.dll$"], "company_keywords": ["pco", "excelitas"]},
+    {"id": "touptek_toupcam", "category": "camera_sdk", "vendor": "ToupTek", "sdk": "ToupCam", "patterns": ["^toupcam\\.dll$"], "company_keywords": ["touptek"]},
+    {"id": "cypress_cyusb", "category": "usb_bridge", "vendor": "Cypress / Infineon", "sdk": "CyUSB / CyAPI", "patterns": ["^cyusb(3)?\\.(dll|sys)$", "^cyapi\\.(dll|lib)$"], "company_keywords": ["cypress", "infineon"]},
+    {"id": "ftdi_d2xx", "category": "usb_bridge", "vendor": "FTDI", "sdk": "D2XX", "patterns": ["^ftd2xx(64)?\\.dll$"], "company_keywords": ["ftdi", "future technology devices"]},
+    {"id": "libusb_win32", "category": "usb_bridge", "vendor": "libusb project", "sdk": "libusb-win32 / libusb-1.0", "patterns": ["^libusb0(_x86)?\\.(dll|sys)$", "^libusb-1\\.0\\.dll$", "^libusbk\\.(dll|sys)$"], "company_keywords": ["libusb", "travis"]},
+    {"id": "silabs_usbxpress", "category": "usb_bridge", "vendor": "Silicon Labs", "sdk": "USBXpress", "patterns": ["^siusbxp\\.dll$"], "company_keywords": ["silicon lab"]}
+  ]
+}

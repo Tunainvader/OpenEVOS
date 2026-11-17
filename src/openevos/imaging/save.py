@@ -1,0 +1,163 @@
+"""Saving captured images with the manual's format rules (Image > Save, p.15-17):
+
+* Default: 8-bit colour TIFF including annotations.
+* 16-bit is only possible as TIFF *and* monochrome (raw camera data, no annotations burnt in).
+* JPEG and PNG, and anything saved as colour (composites, pseudo colour, colour camera), are 8-bit.
+* "Save underlying channels" writes each channel of an overlay as well (Mono settings: underlying
+  channel save as 8-bit colour or 16-bit monochrome).
+
+Each image gets a JSON sidecar with acquisition metadata and provenance; simulated frames are
+labelled SIMULATED there and in the TIFF description.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+
+import numpy as np
+
+from openevos.acquisition.capture import CapturedImage
+from openevos.instrument.settings import ImageFormat
+
+
+class SaveError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class SaveOptions:
+    image_format: ImageFormat = ImageFormat.TIFF
+    bit_depth: int = 8
+    as_color: bool = True
+    include_annotations: bool = True
+    save_underlying: bool = False
+    underlying_mode: str = "16bit_mono"  # "8bit_color" | "16bit_mono"
+
+
+class SavePreset(str, Enum):
+    """Save presets named in the manual (p.10): Default, Quantitative Monochrome, Custom."""
+
+    DEFAULT = "default"
+    QUANTITATIVE_MONO = "quantitative_mono"
+    CUSTOM = "custom"
+
+    @property
+    def label(self) -> str:
+        return {"default": "Default", "quantitative_mono": "Quantitative Monochrome", "custom": "Custom"}[self.value]
+
+    def options(self, base: SaveOptions | None = None) -> SaveOptions:
+        if self is SavePreset.DEFAULT:
+            return SaveOptions(ImageFormat.TIFF, 8, True, True)
+        if self is SavePreset.QUANTITATIVE_MONO:
+            return SaveOptions(ImageFormat.TIFF, 16, False, False)
+        return base or SaveOptions()
+
+
+def validate(opts: SaveOptions, *, source_is_color: bool) -> list[str]:
+    errs = []
+    if opts.bit_depth not in (8, 16):
+        errs.append("bit depth must be 8 or 16")
+    if opts.bit_depth == 16:
+        if opts.image_format is not ImageFormat.TIFF:
+            errs.append("16-bit is only available for TIFF")
+        if opts.as_color or source_is_color:
+            errs.append("16-bit requires monochrome (colour images are 8-bit)")
+        if opts.include_annotations:
+            errs.append("annotations cannot be burnt into 16-bit raw data; save them as colour 8-bit")
+    if source_is_color and not opts.as_color:
+        errs.append("a colour-camera image cannot be saved as monochrome")
+    return errs
+
+
+def allowed_bit_depths(fmt: ImageFormat, as_color: bool) -> tuple[int, ...]:
+    return (8, 16) if fmt is ImageFormat.TIFF and not as_color else (8,)
+
+
+_SAFE = re.compile(r"[^A-Za-z0-9._ -]+")
+
+
+def next_free_path(folder: Path, base: str, suffix: str) -> Path:
+    base = _SAFE.sub("_", base).strip() or "Image"
+    i = 1
+    while True:
+        p = folder / f"{base}_{i:04d}{suffix}"
+        if not p.exists() and not p.with_suffix(".json").exists():
+            return p
+        i += 1
+
+
+@dataclass
+class SavedFiles:
+    image: Path
+    sidecar: Path
+    underlying: list[Path] = field(default_factory=list)
+
+
+def save(folder: Path, base: str, *, rgb8: np.ndarray | None, raw: CapturedImage | None,
+         opts: SaveOptions, channels: dict[str, CapturedImage] | None = None,
+         extra_metadata: dict | None = None) -> SavedFiles:
+    """`rgb8` is the displayed (composited/annotated) 8-bit RGB image; `raw` the primary capture."""
+    errs = validate(opts, source_is_color=raw.is_color if raw is not None else True)
+    if errs:
+        raise SaveError("; ".join(errs))
+    folder.mkdir(parents=True, exist_ok=True)
+    path = next_free_path(folder, base, opts.image_format.suffix)
+    if opts.as_color:
+        if rgb8 is None:
+            raise SaveError("nothing to save in colour")
+        data = rgb8
+    else:
+        if raw is None:
+            raise SaveError("monochrome save needs a raw capture")
+        data = raw.data if opts.bit_depth == 16 else _mono8(raw.data)
+    meta = {"openevos_save": {"format": opts.image_format.value, "bit_depth": opts.bit_depth,
+                              "color": opts.as_color, "annotations": opts.include_annotations and opts.as_color},
+            "primary": raw.metadata() if raw else None,
+            "channels": {k: v.metadata() for k, v in (channels or {}).items()},
+            **(extra_metadata or {})}
+    synthetic = (raw is not None and raw.synthetic) or any(v.synthetic for v in (channels or {}).values())
+    meta["provenance"] = "SIMULATED — synthetic simulator frames, not measurements" if synthetic else "camera data"
+    _write(path, data, opts.image_format, json.dumps(meta, default=str))
+    sidecar = path.with_suffix(".json")
+    sidecar.write_text(json.dumps(meta, indent=2, default=str), "utf-8")
+    out = SavedFiles(path, sidecar)
+    if opts.save_underlying and channels:
+        for slot, img in channels.items():
+            if opts.underlying_mode == "16bit_mono" and not img.is_color:
+                p = path.with_name(f"{path.stem}_{slot}.tif")
+                _write(p, img.data, ImageFormat.TIFF, json.dumps(img.metadata(), default=str))
+            else:
+                p = path.with_name(f"{path.stem}_{slot}{opts.image_format.suffix}")
+                _write(p, img.data if img.is_color else _mono8(img.data), opts.image_format,
+                       json.dumps(img.metadata(), default=str))
+            out.underlying.append(p)
+    return out
+
+
+def _mono8(a: np.ndarray) -> np.ndarray:
+    from openevos.imaging.composite import auto_range, to_8bit
+
+    lo, hi = auto_range(a)
+    return to_8bit(a, lo, hi)
+
+
+def _write(path: Path, data: np.ndarray, fmt: ImageFormat, description: str) -> None:
+    if fmt is ImageFormat.TIFF:
+        import tifffile
+
+        tifffile.imwrite(path, np.ascontiguousarray(data), description=description, metadata=None,
+                         photometric="rgb" if data.ndim == 3 else "minisblack")
+        return
+    from PIL import Image
+
+    if data.dtype != np.uint8:
+        raise SaveError(f"{fmt.value.upper()} is 8-bit only")
+    im = Image.fromarray(data)
+    if fmt is ImageFormat.JPEG:
+        im.save(path, quality=95)
+    else:
+        im.save(path)

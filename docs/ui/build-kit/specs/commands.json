@@ -1,0 +1,527 @@
+[
+  {
+    "key": "file.open",
+    "text": "Open image\u2026",
+    "menu": "File",
+    "shortcut": "Ctrl+O",
+    "toggle": false
+  },
+  {
+    "key": "file.save",
+    "text": "Save image\u2026",
+    "menu": "File",
+    "shortcut": "Ctrl+S",
+    "toggle": false
+  },
+  {
+    "key": "file.quicksave",
+    "text": "Quick save",
+    "menu": "File",
+    "shortcut": "Ctrl+Shift+S",
+    "toggle": false
+  },
+  {
+    "key": "file.diag",
+    "text": "Export diagnostics\u2026",
+    "menu": "File",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "file.settings",
+    "text": "Settings\u2026",
+    "menu": "File",
+    "shortcut": "Ctrl+,",
+    "toggle": false
+  },
+  {
+    "key": "file.quit",
+    "text": "Quit",
+    "menu": "File",
+    "shortcut": "Ctrl+Q",
+    "toggle": false
+  },
+  {
+    "key": "edit.copy",
+    "text": "Copy image",
+    "menu": "Edit",
+    "shortcut": "Ctrl+C",
+    "toggle": false
+  },
+  {
+    "key": "edit.palette",
+    "text": "Search commands\u2026",
+    "menu": "Edit",
+    "shortcut": "Ctrl+K",
+    "toggle": false
+  },
+  {
+    "key": "edit.clear",
+    "text": "Clear all channels",
+    "menu": "Edit",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "view.theme.dark",
+    "text": "Dark",
+    "menu": "View \u203a Theme",
+    "shortcut": null,
+    "toggle": true
+  },
+  {
+    "key": "view.theme.light",
+    "text": "Light",
+    "menu": "View \u203a Theme",
+    "shortcut": null,
+    "toggle": true
+  },
+  {
+    "key": "view.theme.system",
+    "text": "Match system",
+    "menu": "View \u203a Theme",
+    "shortcut": null,
+    "toggle": true
+  },
+  {
+    "key": "view.nav.auto",
+    "text": "Automatic (icons below 1440 px)",
+    "menu": "View \u203a Navigation",
+    "shortcut": null,
+    "toggle": true
+  },
+  {
+    "key": "view.nav.expanded",
+    "text": "Labels",
+    "menu": "View \u203a Navigation",
+    "shortcut": null,
+    "toggle": true
+  },
+  {
+    "key": "view.nav.rail",
+    "text": "Icons only",
+    "menu": "View \u203a Navigation",
+    "shortcut": null,
+    "toggle": true
+  },
+  {
+    "key": "view.fit",
+    "text": "Zoom to fit",
+    "menu": "View",
+    "shortcut": "Ctrl+0",
+    "toggle": false
+  },
+  {
+    "key": "view.actual",
+    "text": "Actual size",
+    "menu": "View",
+    "shortcut": "Ctrl+1",
+    "toggle": false
+  },
+  {
+    "key": "view.cross",
+    "text": "Crosshair",
+    "menu": "View",
+    "shortcut": null,
+    "toggle": true
+  },
+  {
+    "key": "view.scale",
+    "text": "Scale bar",
+    "menu": "View",
+    "shortcut": null,
+    "toggle": true
+  },
+  {
+    "key": "view.clip",
+    "text": "Clipping overlay",
+    "menu": "View",
+    "shortcut": "Ctrl+Shift+C",
+    "toggle": true
+  },
+  {
+    "key": "view.sat",
+    "text": "Highlight saturated pixels",
+    "menu": "View",
+    "shortcut": null,
+    "toggle": true
+  },
+  {
+    "key": "view.loupe",
+    "text": "Loupe",
+    "menu": "View",
+    "shortcut": null,
+    "toggle": true
+  },
+  {
+    "key": "view.sci",
+    "text": "Scientific display (linear only)",
+    "menu": "View",
+    "shortcut": null,
+    "toggle": true
+  },
+  {
+    "key": "view.full",
+    "text": "Enter full screen",
+    "menu": "View",
+    "shortcut": "F11",
+    "toggle": false
+  },
+  {
+    "key": "acq.live",
+    "text": "Live",
+    "menu": "Acquire",
+    "shortcut": "Ctrl+L",
+    "toggle": false
+  },
+  {
+    "key": "acq.capture",
+    "text": "Capture",
+    "menu": "Acquire",
+    "shortcut": "Ctrl+Return",
+    "toggle": false
+  },
+  {
+    "key": "acq.all",
+    "text": "Capture all",
+    "menu": "Acquire",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "acq.find",
+    "text": "Find sample",
+    "menu": "Acquire",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "acq.fine",
+    "text": "Auto fine",
+    "menu": "Acquire",
+    "shortcut": "Ctrl+F",
+    "toggle": false
+  },
+  {
+    "key": "acq.snap",
+    "text": "Snap to last",
+    "menu": "Acquire",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "acq.nominal",
+    "text": "Capture focus nominal",
+    "menu": "Acquire",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "acq.zstack",
+    "text": "Z-stack\u2026",
+    "menu": "Acquire",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "acq.transfection",
+    "text": "Transfection\u2026",
+    "menu": "Acquire",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "acq.scan",
+    "text": "Scan\u2026",
+    "menu": "Acquire",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "acq.timelapse",
+    "text": "Time-lapse\u2026",
+    "menu": "Acquire",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "mic.obj.1",
+    "text": "1  4x Plan Fluor",
+    "menu": "Microscope \u203a Objective",
+    "shortcut": "Alt+1",
+    "toggle": true
+  },
+  {
+    "key": "mic.obj.2",
+    "text": "2  10x Plan Fluor",
+    "menu": "Microscope \u203a Objective",
+    "shortcut": "Alt+2",
+    "toggle": true
+  },
+  {
+    "key": "mic.obj.3",
+    "text": "3  20x Plan Fluor",
+    "menu": "Microscope \u203a Objective",
+    "shortcut": "Alt+3",
+    "toggle": true
+  },
+  {
+    "key": "mic.obj.4",
+    "text": "4  40x Plan Fluor",
+    "menu": "Microscope \u203a Objective",
+    "shortcut": "Alt+4",
+    "toggle": true
+  },
+  {
+    "key": "mic.obj.5",
+    "text": "5  Empty",
+    "menu": "Microscope \u203a Objective",
+    "shortcut": "Alt+5",
+    "toggle": true
+  },
+  {
+    "key": "mic.ch.cube1",
+    "text": "DAPI",
+    "menu": "Microscope \u203a Channel",
+    "shortcut": null,
+    "toggle": true
+  },
+  {
+    "key": "mic.ch.cube2",
+    "text": "GFP",
+    "menu": "Microscope \u203a Channel",
+    "shortcut": null,
+    "toggle": true
+  },
+  {
+    "key": "mic.ch.cube3",
+    "text": "TxRed",
+    "menu": "Microscope \u203a Channel",
+    "shortcut": null,
+    "toggle": true
+  },
+  {
+    "key": "mic.ch.trans",
+    "text": "TRANS",
+    "menu": "Microscope \u203a Channel",
+    "shortcut": null,
+    "toggle": true
+  },
+  {
+    "key": "mic.ch.phase",
+    "text": "PHASE",
+    "menu": "Microscope \u203a Channel",
+    "shortcut": null,
+    "toggle": true
+  },
+  {
+    "key": "mic.cam.mono",
+    "text": "Monochrome camera",
+    "menu": "Microscope \u203a Camera",
+    "shortcut": null,
+    "toggle": true
+  },
+  {
+    "key": "mic.cam.color",
+    "text": "Color camera",
+    "menu": "Microscope \u203a Camera",
+    "shortcut": null,
+    "toggle": true
+  },
+  {
+    "key": "mic.light",
+    "text": "Light on",
+    "menu": "Microscope",
+    "shortcut": "Ctrl+Shift+L",
+    "toggle": true
+  },
+  {
+    "key": "mic.vessel",
+    "text": "Vessel\u2026",
+    "menu": "Microscope",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "mic.lightcam",
+    "text": "Light and camera\u2026",
+    "menu": "Microscope",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "mic.recover",
+    "text": "Recover device\u2026",
+    "menu": "Microscope",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "mic.stop",
+    "text": "Stop all",
+    "menu": "Microscope",
+    "shortcut": "Esc",
+    "toggle": false
+  },
+  {
+    "key": "an.overlay",
+    "text": "Overlay",
+    "menu": "Analyze",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "an.measure",
+    "text": "Measure",
+    "menu": "Analyze",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "an.count",
+    "text": "Count",
+    "menu": "Analyze",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "an.auto",
+    "text": "Auto count",
+    "menu": "Analyze",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "an.file",
+    "text": "Count from file\u2026",
+    "menu": "Analyze",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "win.capture",
+    "text": "Capture",
+    "menu": "Window",
+    "shortcut": "Ctrl+Alt+1",
+    "toggle": false
+  },
+  {
+    "key": "win.scan",
+    "text": "Scan",
+    "menu": "Window",
+    "shortcut": "Ctrl+Alt+2",
+    "toggle": false
+  },
+  {
+    "key": "win.timelapse",
+    "text": "Time-lapse",
+    "menu": "Window",
+    "shortcut": "Ctrl+Alt+3",
+    "toggle": false
+  },
+  {
+    "key": "win.zstack",
+    "text": "Z-stack",
+    "menu": "Window",
+    "shortcut": "Ctrl+Alt+4",
+    "toggle": false
+  },
+  {
+    "key": "win.movies",
+    "text": "Movies",
+    "menu": "Window",
+    "shortcut": "Ctrl+Alt+5",
+    "toggle": false
+  },
+  {
+    "key": "win.save",
+    "text": "Save",
+    "menu": "Window",
+    "shortcut": "Ctrl+Alt+6",
+    "toggle": false
+  },
+  {
+    "key": "win.review",
+    "text": "Review",
+    "menu": "Window",
+    "shortcut": "Ctrl+Alt+7",
+    "toggle": false
+  },
+  {
+    "key": "win.analysis",
+    "text": "Analysis",
+    "menu": "Window",
+    "shortcut": "Ctrl+Alt+8",
+    "toggle": false
+  },
+  {
+    "key": "win.hardware",
+    "text": "Hardware",
+    "menu": "Window",
+    "shortcut": "Ctrl+Alt+9",
+    "toggle": false
+  },
+  {
+    "key": "win.environment",
+    "text": "Environment",
+    "menu": "Window",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "win.calibration",
+    "text": "Calibration",
+    "menu": "Window",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "win.settings",
+    "text": "Settings",
+    "menu": "Window",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "win.service",
+    "text": "Service",
+    "menu": "Window",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "win.events",
+    "text": "Event log",
+    "menu": "Window",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "help.start",
+    "text": "Getting started\u2026",
+    "menu": "Help",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "help.keys",
+    "text": "Keyboard shortcuts\u2026",
+    "menu": "Help",
+    "shortcut": null,
+    "toggle": false
+  },
+  {
+    "key": "help.palette",
+    "text": "Search commands\u2026",
+    "menu": "Help",
+    "shortcut": "Alt+Q",
+    "toggle": false
+  },
+  {
+    "key": "help.about",
+    "text": "About OpenEVOS\u2026",
+    "menu": "Help",
+    "shortcut": null,
+    "toggle": false
+  }
+]

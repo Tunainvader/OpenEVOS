@@ -1,0 +1,49 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# --- OpenEVOS: NEVER commit these (plan §14, risk table §17) ---
+# Scan outputs contain serials, paths and institutional details
+openevos-scans/
+scans/
+*.evidence.json
+# Proprietary binaries / drivers recovered from the original EVOS PC
+*.exe
+*.dll
+*.sys
+*.ocx
+*.cat
+*.msi
+*.cab
+# Recovered INFs belong to the vendor (test fixtures are generated in code, not committed)
+*.inf
+!tests/**/*.inf
+# Disk images and forensic containers
+*.img
+*.dd
+*.raw
+*.E01
+*.Ex01
+*.aff
+*.vhd
+*.vhdx
+*.vmdk
+*.iso
+ddrescue*.log
+*.mapfile
+# Original calibration / instrument configuration files
+calibration/private/
+*.evoscal
+# Local zip backups of the project (version control replaces them)
+backups/
+
+# Secrets
+.env
+*.key
+redaction.key

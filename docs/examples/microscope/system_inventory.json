@@ -1,0 +1,90 @@
+{
+  "meta": {
+    "scan_id": "microscope-20261111T222225Z-239965",
+    "label": "microscope",
+    "tool_version": "0.1.0.dev0",
+    "schema_version": "0.1.0",
+    "started_at": "2026-11-11T22:22:25.284554Z",
+    "finished_at": "2026-11-11T22:22:25.287219Z",
+    "host_platform": "Linux 6.18.44-fc-v378 (x86_64)",
+    "python_version": "3.13.18",
+    "elevated": true,
+    "redacted": false,
+    "artifact_roots": []
+  },
+  "system": {
+    "computer_name": "LABPC-EVOS01",
+    "os_caption": "Microsoft Windows 10 Pro",
+    "os_version": "10.0.19045",
+    "os_build": "19045",
+    "os_architecture": "64-bit",
+    "manufacturer": "Dell Inc.",
+    "model": "OptiPlex 7090",
+    "system_type": "x64-based PC",
+    "total_memory_bytes": 17179869184,
+    "bios_vendor": "Dell Inc.",
+    "bios_version": "1.20.0",
+    "bios_date": "2023-05-10",
+    "baseboard_manufacturer": "Dell Inc.",
+    "baseboard_product": "0XXXXX",
+    "cpus": [
+      {
+        "Name": "Intel(R) Core(TM) i5-10505 CPU @ 3.20GHz",
+        "NumberOfCores": 6,
+        "NumberOfLogicalProcessors": 12,
+        "AddressWidth": 64
+      }
+    ],
+    "gpus": [
+      {
+        "Name": "Intel(R) UHD Graphics 630",
+        "DriverVersion": "31.0.101.2111",
+        "AdapterCompatibility": "Intel Corporation"
+      }
+    ],
+    "disks": [
+      {
+        "Model": "NVMe SSD 512GB",
+        "InterfaceType": "SCSI",
+        "MediaType": "Fixed hard disk media",
+        "Size": 512105932800,
+        "Status": "OK"
+      }
+    ],
+    "usb_controllers": [
+      {
+        "Name": "Intel(R) USB 3.1 eXtensible Host Controller",
+        "Manufacturer": "Generic USB xHCI Host Controller",
+        "PNPDeviceID": "PCI\\VEN_8086&DEV_A36D&SUBSYS_00000000&REV_10\\3&11583659&0&A0"
+      }
+    ],
+    "dotnet_framework_release": 528372,
+    "evidence_ids": [
+      "sys-d621c1a716"
+    ]
+  },
+  "events": [
+    {
+      "time": "2026-11-10T14:02:11.0000000+00:00",
+      "log": "Microsoft-Windows-Kernel-PnP/Configuration",
+      "provider": "Microsoft-Windows-Kernel-PnP",
+      "event_id": 411,
+      "level": "Error",
+      "message": "Device USB\\VID_ABCD&PID_0001\\SN0001TEST had a problem starting. Problem: 0x1C",
+      "evidence_ids": [
+        "evt-50060ae5e5"
+      ]
+    },
+    {
+      "time": "2026-11-10T14:02:10.0000000+00:00",
+      "log": "System",
+      "provider": "Microsoft-Windows-UserPnp",
+      "event_id": 20003,
+      "level": "Information",
+      "message": "Driver Management has concluded the process to add Service FTSER2K for Device Instance ID FTDIBUS\\VID_0403+PID_6001+A12345BCA\\0000",
+      "evidence_ids": [
+        "evt-2217fd3bb9"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+[
+  {"Time": "2026-11-10T14:02:11.0000000+00:00", "LogName": "Microsoft-Windows-Kernel-PnP/Configuration", "ProviderName": "Microsoft-Windows-Kernel-PnP", "Id": 411, "LevelDisplayName": "Error", "Message": "Device USB\\VID_ABCD&PID_0001\\SN0001TEST had a problem starting. Problem: 0x1C"},
+  {"Time": "2026-11-10T14:02:10.0000000+00:00", "LogName": "System", "ProviderName": "Microsoft-Windows-UserPnp", "Id": 20003, "LevelDisplayName": "Information", "Message": "Driver Management has concluded the process to add Service FTSER2K for Device Instance ID FTDIBUS\\VID_0403+PID_6001+A12345BCA\\0000"}
+]

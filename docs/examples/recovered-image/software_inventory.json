@@ -1,0 +1,231 @@
+{
+  "meta": {
+    "scan_id": "recovered-image-20261111T222225Z-ea01aa",
+    "label": "recovered-image",
+    "tool_version": "0.1.0.dev0",
+    "schema_version": "0.1.0",
+    "started_at": "2026-11-11T22:22:25.288741Z",
+    "finished_at": "2026-11-11T22:22:25.354445Z",
+    "host_platform": "Linux 6.18.44-fc-v378 (x86_64)",
+    "python_version": "3.13.18",
+    "elevated": true,
+    "redacted": false,
+    "artifact_roots": [
+      "<mounted-image>/img"
+    ]
+  },
+  "programs": [
+    {
+      "name": "Microsoft Visual C++ 2010  x86 Redistributable",
+      "version": "10.0.40219",
+      "publisher": "Microsoft Corporation",
+      "install_date": null,
+      "install_location": null,
+      "registry_view": "HKLM64",
+      "keyword_hits": [],
+      "evidence_ids": [
+        "prog-eaba4024bd"
+      ]
+    },
+    {
+      "name": "Synthetic EVOS Test Suite",
+      "version": "0.0.1",
+      "publisher": "Life Technologies (synthetic)",
+      "install_date": null,
+      "install_location": "C:\\Program Files (x86)\\EVOS",
+      "registry_view": "HKLM32",
+      "keyword_hits": [
+        "evos",
+        "life technologies"
+      ],
+      "evidence_ids": [
+        "prog-f6b26a190f"
+      ]
+    }
+  ],
+  "vendor_registry_keys": [
+    {
+      "path": "HKLM32\\SOFTWARE\\Life Technologies",
+      "keyword_hits": [
+        "life technologies"
+      ],
+      "evidence_ids": [
+        "regkey-4c1a5367fa"
+      ]
+    },
+    {
+      "path": "HKLM32\\SOFTWARE\\Life Technologies\\EVOS",
+      "keyword_hits": [
+        "evos",
+        "life technologies"
+      ],
+      "evidence_ids": [
+        "regkey-0548860cf5"
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "<mounted-image>/img/Program Files (x86)/EVOS FL Auto/CamBridge.dll",
+      "root": "<mounted-image>/img",
+      "size": 1024,
+      "modified": "2026-11-11T22:22:25.280036+00:00",
+      "sha256": "d77d8da47a9903b0b17cae288e799ab4d1fef3fb73ad42d8df53ca98621e4557",
+      "skipped_hash_reason": null,
+      "keyword_hits": [
+        "evos"
+      ],
+      "pe": {
+        "machine": "x86",
+        "pe_format": "PE32",
+        "is_managed": false,
+        "clr_flags": null,
+        "effective_bitness": "32"
+      },
+      "version_info": {},
+      "signature": {
+        "status": "NotSigned",
+        "signer": null,
+        "thumbprint": null
+      },
+      "evidence_ids": [
+        "file-1775593d8d",
+        "sig-1775593d8d"
+      ]
+    },
+    {
+      "path": "<mounted-image>/img/Program Files (x86)/EVOS FL Auto/EvosApp.exe",
+      "root": "<mounted-image>/img",
+      "size": 1024,
+      "modified": "2026-11-11T22:22:25.280010+00:00",
+      "sha256": "0926917ea38efc089bf8069a8fb0a58dfbadedb8462e0058fe4279bad095913b",
+      "skipped_hash_reason": null,
+      "keyword_hits": [
+        "evos"
+      ],
+      "pe": {
+        "machine": "x86",
+        "pe_format": "PE32",
+        "is_managed": true,
+        "clr_flags": {
+          "il_only": true,
+          "32bit_required": true,
+          "32bit_preferred": false
+        },
+        "effective_bitness": "32"
+      },
+      "version_info": {},
+      "signature": {
+        "status": "NotSigned",
+        "signer": null,
+        "thumbprint": null
+      },
+      "evidence_ids": [
+        "file-1f7b794fa4",
+        "sig-1f7b794fa4"
+      ]
+    },
+    {
+      "path": "<mounted-image>/img/Program Files (x86)/EVOS FL Auto/FlyCapture2.dll",
+      "root": "<mounted-image>/img",
+      "size": 1024,
+      "modified": "2026-11-11T22:22:25.280056+00:00",
+      "sha256": "d77d8da47a9903b0b17cae288e799ab4d1fef3fb73ad42d8df53ca98621e4557",
+      "skipped_hash_reason": null,
+      "keyword_hits": [
+        "evos"
+      ],
+      "pe": {
+        "machine": "x86",
+        "pe_format": "PE32",
+        "is_managed": false,
+        "clr_flags": null,
+        "effective_bitness": "32"
+      },
+      "version_info": {},
+      "signature": {
+        "status": "NotSigned",
+        "signer": null,
+        "thumbprint": null
+      },
+      "evidence_ids": [
+        "file-8f40660efa",
+        "sig-8f40660efa"
+      ]
+    },
+    {
+      "path": "<mounted-image>/img/Program Files (x86)/EVOS FL Auto/calibration.xml",
+      "root": "<mounted-image>/img",
+      "size": 6,
+      "modified": "2026-11-11T22:22:25.280080+00:00",
+      "sha256": "b961d672cc30c3a8d030dad5d073a1641ed8d214041631e307fbb8c1a86c77fe",
+      "skipped_hash_reason": null,
+      "keyword_hits": [
+        "evos"
+      ],
+      "pe": null,
+      "version_info": {},
+      "signature": null,
+      "evidence_ids": [
+        "file-ba74998c54"
+      ]
+    }
+  ],
+  "sdk_matches": [
+    {
+      "signature_id": "ftdi_d2xx",
+      "category": "usb_bridge",
+      "vendor": "FTDI",
+      "sdk": "D2XX",
+      "path": "<mounted-image>/img/Windows/System32/ftd2xx.dll",
+      "label": "probable",
+      "basis": [
+        "filename matches /^ftd2xx(64)?\\.dll$/"
+      ],
+      "pe": {
+        "machine": "x64",
+        "pe_format": "PE32+",
+        "is_managed": false,
+        "clr_flags": null,
+        "effective_bitness": "64"
+      },
+      "evidence_ids": [
+        "sdk-1d09f419ae"
+      ]
+    },
+    {
+      "signature_id": "flir_flycapture2",
+      "category": "camera_sdk",
+      "vendor": "Point Grey / FLIR",
+      "sdk": "FlyCapture2",
+      "path": "<mounted-image>/img/Program Files (x86)/EVOS FL Auto/FlyCapture2.dll",
+      "label": "probable",
+      "basis": [
+        "filename matches /^flycapture2(_c)?(_v\\d+)?\\.dll$/"
+      ],
+      "pe": {
+        "machine": "x86",
+        "pe_format": "PE32",
+        "is_managed": false,
+        "clr_flags": null,
+        "effective_bitness": "32"
+      },
+      "evidence_ids": [
+        "sdk-8f40660efa"
+      ]
+    }
+  ],
+  "micromanager": [
+    {
+      "path": "<mounted-image>/img/Program Files/Micro-Manager-2.0",
+      "version_hint": "Micro-Manager-2.0",
+      "adapters": [
+        "DemoCamera",
+        "PointGrey"
+      ],
+      "evidence_ids": [
+        "mm-8e23a1cddd"
+      ]
+    }
+  ]
+}

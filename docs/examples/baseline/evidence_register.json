@@ -1,0 +1,724 @@
+{
+  "scan_id": "baseline-20261111T222225Z-ef57c1",
+  "max_stage": 2,
+  "evidence": {
+    "sys-d621c1a716": {
+      "id": "sys-d621c1a716",
+      "collector": "system",
+      "collector_version": "0.1.0",
+      "source": "powershell:system_info",
+      "collected_at": "2026-11-11T22:22:25.280323Z",
+      "data": {
+        "cim": {
+          "ComputerSystem": {
+            "Name": "LABPC-EVOS01",
+            "Manufacturer": "Dell Inc.",
+            "Model": "OptiPlex 7090",
+            "SystemType": "x64-based PC",
+            "TotalPhysicalMemory": 17179869184
+          },
+          "OperatingSystem": {
+            "Caption": "Microsoft Windows 10 Pro",
+            "Version": "10.0.19045",
+            "BuildNumber": "19045",
+            "OSArchitecture": "64-bit"
+          },
+          "BIOS": {
+            "Manufacturer": "Dell Inc.",
+            "SMBIOSBIOSVersion": "1.20.0",
+            "ReleaseDate": "2023-05-10"
+          },
+          "BaseBoard": {
+            "Manufacturer": "Dell Inc.",
+            "Product": "0XXXXX"
+          },
+          "Processors": [
+            {
+              "Name": "Intel(R) Core(TM) i5-10505 CPU @ 3.20GHz",
+              "NumberOfCores": 6,
+              "NumberOfLogicalProcessors": 12,
+              "AddressWidth": 64
+            }
+          ],
+          "VideoControllers": [
+            {
+              "Name": "Intel(R) UHD Graphics 630",
+              "DriverVersion": "31.0.101.2111",
+              "AdapterCompatibility": "Intel Corporation"
+            }
+          ],
+          "DiskDrives": [
+            {
+              "Model": "NVMe SSD 512GB",
+              "InterfaceType": "SCSI",
+              "MediaType": "Fixed hard disk media",
+              "Size": 512105932800,
+              "Status": "OK"
+            }
+          ],
+          "USBControllers": [
+            {
+              "Name": "Intel(R) USB 3.1 eXtensible Host Controller",
+              "Manufacturer": "Generic USB xHCI Host Controller",
+              "PNPDeviceID": "PCI\\VEN_8086&DEV_A36D&SUBSYS_00000000&REV_10\\3&11583659&0&A0"
+            }
+          ]
+        },
+        "dotnet_release": 528372
+      },
+      "sha256": "228fad74e45b6aed387ce0649fb4968d85904ea7644aaa10c2ea2b2edab1e76e",
+      "redacted": false
+    },
+    "pnp-67815fd111": {
+      "id": "pnp-67815fd111",
+      "collector": "windows_devices",
+      "collector_version": "0.1.0",
+      "source": "powershell:pnp_devices+pnp_device_properties",
+      "collected_at": "2026-11-11T22:22:25.280323Z",
+      "data": {
+        "pnp": {
+          "InstanceId": "PCI\\VEN_8086&DEV_A36D&SUBSYS_00000000&REV_10\\3&11583659&0&A0",
+          "FriendlyName": "Intel(R) USB 3.1 eXtensible Host Controller",
+          "Class": "USB",
+          "ClassGuid": "{36fc9e60-c465-11cf-8056-444553540000}",
+          "Manufacturer": "Generic USB xHCI Host Controller",
+          "Status": "OK",
+          "Present": true,
+          "Problem": "CM_PROB_NONE",
+          "ConfigManagerErrorCode": 0,
+          "Service": "USBXHCI",
+          "HardwareID": [
+            "PCI\\VEN_8086&DEV_A36D&SUBSYS_00000000&REV_10"
+          ],
+          "CompatibleID": [
+            "PCI\\CC_0C0330"
+          ]
+        },
+        "properties": {}
+      },
+      "sha256": "6923605b68dd8ecf067376092fa7a01d1ecd8b725391ad12f0c988894fb09a69",
+      "redacted": false
+    },
+    "pnp-6a4c75ebb1": {
+      "id": "pnp-6a4c75ebb1",
+      "collector": "windows_devices",
+      "collector_version": "0.1.0",
+      "source": "powershell:pnp_devices+pnp_device_properties",
+      "collected_at": "2026-11-11T22:22:25.280323Z",
+      "data": {
+        "pnp": {
+          "InstanceId": "USB\\ROOT_HUB30\\4&2A3B1C2D&0&0",
+          "FriendlyName": "USB Root Hub (USB 3.0)",
+          "Class": "USB",
+          "ClassGuid": "{36fc9e60-c465-11cf-8056-444553540000}",
+          "Manufacturer": "(Standard USB HUBs)",
+          "Status": "OK",
+          "Present": true,
+          "Problem": "CM_PROB_NONE",
+          "ConfigManagerErrorCode": 0,
+          "Service": "USBHUB3",
+          "HardwareID": [
+            "USB\\ROOT_HUB30&VID8086&PID0A36D&REV0010",
+            "USB\\ROOT_HUB30"
+          ],
+          "CompatibleID": []
+        },
+        "properties": {
+          "DEVPKEY_Device_Parent": "PCI\\VEN_8086&DEV_A36D&SUBSYS_00000000&REV_10\\3&11583659&0&A0"
+        }
+      },
+      "sha256": "021124c3b143eae0918bda96b18d0d233e8e72fc3537c5352bafd38084ad47be",
+      "redacted": false
+    },
+    "pnp-293f941195": {
+      "id": "pnp-293f941195",
+      "collector": "windows_devices",
+      "collector_version": "0.1.0",
+      "source": "powershell:pnp_devices+pnp_device_properties",
+      "collected_at": "2026-11-11T22:22:25.280323Z",
+      "data": {
+        "pnp": {
+          "InstanceId": "USB\\VID_046D&PID_C52B\\5&1A2B3C4D&0&3",
+          "FriendlyName": "USB Composite Device",
+          "Class": "USB",
+          "ClassGuid": "{36fc9e60-c465-11cf-8056-444553540000}",
+          "Manufacturer": "(Standard USB Host Controller)",
+          "Status": "OK",
+          "Present": true,
+          "Problem": "CM_PROB_NONE",
+          "ConfigManagerErrorCode": 0,
+          "Service": "usbccgp",
+          "HardwareID": [
+            "USB\\VID_046D&PID_C52B&REV_1211",
+            "USB\\VID_046D&PID_C52B"
+          ],
+          "CompatibleID": [
+            "USB\\COMPOSITE"
+          ]
+        },
+        "properties": {
+          "DEVPKEY_Device_Parent": "USB\\ROOT_HUB30\\4&2A3B1C2D&0&0",
+          "DEVPKEY_Device_BusReportedDeviceDesc": "USB Receiver",
+          "DEVPKEY_Device_LocationInfo": "Port_#0003.Hub_#0001"
+        }
+      },
+      "sha256": "e121e8903f0629a1ddee22d807feea86f16c5df1539692243a5415bd277a8a59",
+      "redacted": false
+    },
+    "pnp-085aae4bc6": {
+      "id": "pnp-085aae4bc6",
+      "collector": "windows_devices",
+      "collector_version": "0.1.0",
+      "source": "powershell:pnp_devices+pnp_device_properties",
+      "collected_at": "2026-11-11T22:22:25.280323Z",
+      "data": {
+        "pnp": {
+          "InstanceId": "USB\\VID_046D&PID_C52B&MI_00\\6&2B3C4D5E&0&0000",
+          "FriendlyName": "USB Input Device",
+          "Class": "HIDClass",
+          "ClassGuid": "{745a17a0-74d3-11d0-b6fe-00a0c90f57da}",
+          "Manufacturer": "(Standard system devices)",
+          "Status": "OK",
+          "Present": true,
+          "Problem": "CM_PROB_NONE",
+          "ConfigManagerErrorCode": 0,
+          "Service": "HidUsb",
+          "HardwareID": [
+            "USB\\VID_046D&PID_C52B&REV_1211&MI_00",
+            "USB\\VID_046D&PID_C52B&MI_00"
+          ],
+          "CompatibleID": [
+            "USB\\Class_03&SubClass_01&Prot_01"
+          ]
+        },
+        "properties": {
+          "DEVPKEY_Device_Parent": "USB\\VID_046D&PID_C52B\\5&1A2B3C4D&0&3"
+        }
+      },
+      "sha256": "fedd503f926ae3feca41ee9b35bed69b3faf45a04b3d03d95e0f243d04bf6911",
+      "redacted": false
+    },
+    "pnp-8086b5c710": {
+      "id": "pnp-8086b5c710",
+      "collector": "windows_devices",
+      "collector_version": "0.1.0",
+      "source": "powershell:pnp_devices+pnp_device_properties",
+      "collected_at": "2026-11-11T22:22:25.280323Z",
+      "data": {
+        "pnp": {
+          "InstanceId": "USB\\VID_0403&PID_6001\\A12345BC",
+          "FriendlyName": "USB Serial Converter",
+          "Class": "USB",
+          "ClassGuid": "{36fc9e60-c465-11cf-8056-444553540000}",
+          "Manufacturer": "FTDI",
+          "Status": "OK",
+          "Present": true,
+          "Problem": "CM_PROB_NONE",
+          "ConfigManagerErrorCode": 0,
+          "Service": "FTDIBUS",
+          "HardwareID": [
+            "USB\\VID_0403&PID_6001&REV_0600",
+            "USB\\VID_0403&PID_6001"
+          ],
+          "CompatibleID": []
+        },
+        "properties": {
+          "DEVPKEY_Device_Parent": "USB\\ROOT_HUB30\\4&2A3B1C2D&0&0",
+          "DEVPKEY_Device_BusReportedDeviceDesc": "FT232R USB UART",
+          "DEVPKEY_Device_DriverInfPath": "oem3.inf",
+          "DEVPKEY_Device_DriverProvider": "FTDI",
+          "DEVPKEY_Device_DriverVersion": "2.12.36.4",
+          "DEVPKEY_Device_LocationPaths": [
+            "PCIROOT(0)#PCI(1400)#USBROOT(0)#USB(2)"
+          ]
+        }
+      },
+      "sha256": "c78f3b0ba9b9f85bd3facc79f9156444407e3259017be0ce69e42e5c3fff1c85",
+      "redacted": false
+    },
+    "pnp-b634d4accb": {
+      "id": "pnp-b634d4accb",
+      "collector": "windows_devices",
+      "collector_version": "0.1.0",
+      "source": "powershell:pnp_devices+pnp_device_properties",
+      "collected_at": "2026-11-11T22:22:25.280323Z",
+      "data": {
+        "pnp": {
+          "InstanceId": "FTDIBUS\\VID_0403+PID_6001+A12345BCA\\0000",
+          "FriendlyName": "USB Serial Port (COM3)",
+          "Class": "Ports",
+          "ClassGuid": "{4d36e978-e325-11ce-bfc1-08002be10318}",
+          "Manufacturer": "FTDI",
+          "Status": "OK",
+          "Present": true,
+          "Problem": "CM_PROB_NONE",
+          "ConfigManagerErrorCode": 0,
+          "Service": "FTSER2K",
+          "HardwareID": [
+            "FTDIBUS\\COMPORT&VID_0403&PID_6001"
+          ],
+          "CompatibleID": []
+        },
+        "properties": {
+          "DEVPKEY_Device_Parent": "USB\\VID_0403&PID_6001\\A12345BC"
+        }
+      },
+      "sha256": "e37e2fee6bbd82911c4be9d82dc5eb7ca20a3a6f8a231af1c97c2dd280a6d432",
+      "redacted": false
+    },
+    "pnp-33ca958b9b": {
+      "id": "pnp-33ca958b9b",
+      "collector": "windows_devices",
+      "collector_version": "0.1.0",
+      "source": "powershell:pnp_devices+pnp_device_properties",
+      "collected_at": "2026-11-11T22:22:25.280323Z",
+      "data": {
+        "pnp": {
+          "InstanceId": "USB\\VID_1D6B&PID_ABCD\\OLDSERIAL99",
+          "FriendlyName": "Unknown USB Device",
+          "Class": "USB",
+          "ClassGuid": null,
+          "Manufacturer": null,
+          "Status": "Unknown",
+          "Present": false,
+          "Problem": "CM_PROB_PHANTOM",
+          "ConfigManagerErrorCode": 45,
+          "Service": null,
+          "HardwareID": [
+            "USB\\VID_1D6B&PID_ABCD&REV_0100"
+          ],
+          "CompatibleID": []
+        },
+        "properties": {
+          "DEVPKEY_Device_LastArrivalDate": "2025-03-04T10:11:12.0000000Z"
+        }
+      },
+      "sha256": "e67bbc3ac8020c6c71467bcd7b8963dbb0476e92697c76d2f2a771ee60102aa9",
+      "redacted": false
+    },
+    "pnp-9adb7535df": {
+      "id": "pnp-9adb7535df",
+      "collector": "windows_devices",
+      "collector_version": "0.1.0",
+      "source": "powershell:pnp_devices+pnp_device_properties",
+      "collected_at": "2026-11-11T22:22:25.280323Z",
+      "data": {
+        "pnp": {
+          "InstanceId": "ACPI\\PNP0303\\4&1D401FB5&0",
+          "FriendlyName": "Standard PS/2 Keyboard",
+          "Class": "Keyboard",
+          "ClassGuid": "{4d36e96b-e325-11ce-bfc1-08002be10318}",
+          "Manufacturer": "(Standard keyboards)",
+          "Status": "OK",
+          "Present": true,
+          "Problem": "CM_PROB_NONE",
+          "ConfigManagerErrorCode": 0,
+          "Service": "i8042prt",
+          "HardwareID": "ACPI\\PNP0303",
+          "CompatibleID": null
+        },
+        "properties": {}
+      },
+      "sha256": "dd031748401d56b913b7064df3d36340e1657a06b9bf6c5c6cb4cecb5999930f",
+      "redacted": false
+    },
+    "com-6b8aaefda6": {
+      "id": "com-6b8aaefda6",
+      "collector": "serial_ports",
+      "collector_version": "0.1.0",
+      "source": "pyserial:list_ports",
+      "collected_at": "2026-11-11T22:22:25.280323Z",
+      "data": {
+        "device": "COM3",
+        "name": "COM3",
+        "description": "USB Serial Port (COM3)",
+        "hwid": "FTDIBUS\\VID_0403+PID_6001+A12345BCA\\0000",
+        "vid": 1027,
+        "pid": 24577,
+        "serial_number": "A12345BCA",
+        "location": null,
+        "manufacturer": "FTDI",
+        "product": null,
+        "interface": null
+      },
+      "sha256": "664332be27a8749d4d65267dcf1ccc4ac793fa6fb798c699429598fdb9b9b9e0",
+      "redacted": false
+    },
+    "drv-293f941195": {
+      "id": "drv-293f941195",
+      "collector": "drivers",
+      "collector_version": "0.1.0",
+      "source": "powershell:signed_drivers",
+      "collected_at": "2026-11-11T22:22:25.280323Z",
+      "data": {
+        "DeviceID": "USB\\VID_046D&PID_C52B\\5&1A2B3C4D&0&3",
+        "DeviceName": "USB Composite Device",
+        "DriverProviderName": "Microsoft",
+        "DriverVersion": "10.0.19041.1",
+        "DriverDate": "2006-06-21",
+        "InfName": "usb.inf",
+        "IsSigned": true,
+        "Signer": "Microsoft Windows",
+        "DeviceClass": "USB",
+        "HardWareID": "USB\\VID_046D&PID_C52B&REV_1211",
+        "Manufacturer": "(Standard USB Host Controller)"
+      },
+      "sha256": "fc547f9558bc64f7f031af16bb0de098ba9248c115f89aecfbab42fb0a19ee0c",
+      "redacted": false
+    },
+    "drv-8086b5c710": {
+      "id": "drv-8086b5c710",
+      "collector": "drivers",
+      "collector_version": "0.1.0",
+      "source": "powershell:signed_drivers",
+      "collected_at": "2026-11-11T22:22:25.280323Z",
+      "data": {
+        "DeviceID": "USB\\VID_0403&PID_6001\\A12345BC",
+        "DeviceName": "USB Serial Converter",
+        "DriverProviderName": "FTDI",
+        "DriverVersion": "2.12.36.4",
+        "DriverDate": "2021-07-15",
+        "InfName": "oem3.inf",
+        "IsSigned": true,
+        "Signer": "Microsoft Windows Hardware Compatibility Publisher",
+        "DeviceClass": "USB",
+        "HardWareID": "USB\\VID_0403&PID_6001&REV_0600",
+        "Manufacturer": "FTDI"
+      },
+      "sha256": "56ff89c7b76ca13b006bdd03ba9cf202d654f5c9208ea5be259d49d703850ae6",
+      "redacted": false
+    },
+    "drv-a7e0f3545d": {
+      "id": "drv-a7e0f3545d",
+      "collector": "drivers",
+      "collector_version": "0.1.0",
+      "source": "powershell:signed_drivers",
+      "collected_at": "2026-11-11T22:22:25.280323Z",
+      "data": {
+        "DeviceID": "USB\\VID_1234&PID_5678&MI_00\\7&BBBB&0&0000",
+        "DeviceName": "Synthetic Imaging Interface",
+        "DriverProviderName": "Synthetic Vendor",
+        "DriverVersion": "1.0.0.0",
+        "DriverDate": "2013-03-01",
+        "InfName": "oem12.inf",
+        "IsSigned": false,
+        "Signer": null,
+        "DeviceClass": "IMAGE",
+        "HardWareID": "USB\\VID_1234&PID_5678&REV_0100&MI_00",
+        "Manufacturer": "Synthetic Vendor"
+      },
+      "sha256": "f09034ec696588f4d20cf1936b030ac4c5cd11f609f6ade21df597352cb0a430",
+      "redacted": false
+    },
+    "prog-eaba4024bd": {
+      "id": "prog-eaba4024bd",
+      "collector": "installed_software",
+      "collector_version": "0.1.0",
+      "source": "registry:HKLM64\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{VC2010}",
+      "collected_at": "2026-11-11T22:22:25.280323Z",
+      "data": {
+        "DisplayName": "Microsoft Visual C++ 2010  x86 Redistributable",
+        "DisplayVersion": "10.0.40219",
+        "Publisher": "Microsoft Corporation",
+        "InstallDate": null,
+        "InstallLocation": null,
+        "view": "HKLM64",
+        "key": "{VC2010}"
+      },
+      "sha256": "9506e6c59c340fb1dfc4881054b569b55f3885b62c3f8a2bd40c3d152928913b",
+      "redacted": false
+    },
+    "prog-f6b26a190f": {
+      "id": "prog-f6b26a190f",
+      "collector": "installed_software",
+      "collector_version": "0.1.0",
+      "source": "registry:HKLM32\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{EVOS}",
+      "collected_at": "2026-11-11T22:22:25.280323Z",
+      "data": {
+        "DisplayName": "Synthetic EVOS Test Suite",
+        "DisplayVersion": "0.0.1",
+        "Publisher": "Life Technologies (synthetic)",
+        "InstallDate": null,
+        "InstallLocation": "C:\\Program Files (x86)\\EVOS",
+        "view": "HKLM32",
+        "key": "{EVOS}"
+      },
+      "sha256": "e57723417d33892e640d63d3c0d4fcdb772628e95ee308d43459ae3eb801e679",
+      "redacted": false
+    },
+    "regkey-4c1a5367fa": {
+      "id": "regkey-4c1a5367fa",
+      "collector": "installed_software",
+      "collector_version": "0.1.0",
+      "source": "registry:HKLM32\\SOFTWARE\\Life Technologies",
+      "collected_at": "2026-11-11T22:22:25.280323Z",
+      "data": {
+        "key": "HKLM32\\SOFTWARE\\Life Technologies"
+      },
+      "sha256": "af7e88b833099865636f478dd3225faaefdb0b78aa8b6bbb561b57d659596baa",
+      "redacted": false
+    },
+    "regkey-0548860cf5": {
+      "id": "regkey-0548860cf5",
+      "collector": "installed_software",
+      "collector_version": "0.1.0",
+      "source": "registry:HKLM32\\SOFTWARE\\Life Technologies\\EVOS",
+      "collected_at": "2026-11-11T22:22:25.280323Z",
+      "data": {
+        "key": "HKLM32\\SOFTWARE\\Life Technologies\\EVOS"
+      },
+      "sha256": "daa27e0f4c56991adbfa31f13713c798dcc4b061c17bcd1e98c8768ccdad0920",
+      "redacted": false
+    },
+    "evt-50060ae5e5": {
+      "id": "evt-50060ae5e5",
+      "collector": "event_logs",
+      "collector_version": "0.1.0",
+      "source": "powershell:pnp_events",
+      "collected_at": "2026-11-11T22:22:25.280323Z",
+      "data": {
+        "Time": "2026-11-10T14:02:11.0000000+00:00",
+        "LogName": "Microsoft-Windows-Kernel-PnP/Configuration",
+        "ProviderName": "Microsoft-Windows-Kernel-PnP",
+        "Id": 411,
+        "LevelDisplayName": "Error",
+        "Message": "Device USB\\VID_ABCD&PID_0001\\SN0001TEST had a problem starting. Problem: 0x1C"
+      },
+      "sha256": "38da880de129afc6583b503665ce058cae4b8e5c85c4aa51c871c752eb3a423a",
+      "redacted": false
+    },
+    "evt-2217fd3bb9": {
+      "id": "evt-2217fd3bb9",
+      "collector": "event_logs",
+      "collector_version": "0.1.0",
+      "source": "powershell:pnp_events",
+      "collected_at": "2026-11-11T22:22:25.280323Z",
+      "data": {
+        "Time": "2026-11-10T14:02:10.0000000+00:00",
+        "LogName": "System",
+        "ProviderName": "Microsoft-Windows-UserPnp",
+        "Id": 20003,
+        "LevelDisplayName": "Information",
+        "Message": "Driver Management has concluded the process to add Service FTSER2K for Device Instance ID FTDIBUS\\VID_0403+PID_6001+A12345BCA\\0000"
+      },
+      "sha256": "708aa6922aa055123a0e5322a7c538a614d9880eff9c8bc429edff7d55a2c90e",
+      "redacted": false
+    }
+  },
+  "findings": [
+    {
+      "id": "R-USB-DETECTED-293f941195",
+      "component": "USB\\VID_046D&PID_C52B\\5&1A2B3C4D&0&3",
+      "claim": "Windows enumerates USB device 046D:C52B.",
+      "label": "verified",
+      "confidence": 1.0,
+      "evidence_ids": [
+        "pnp-293f941195"
+      ],
+      "origin": "rule",
+      "rule_id": "R-USB-DETECTED",
+      "stage": 1,
+      "alternatives": [],
+      "note": ""
+    },
+    {
+      "id": "R-USB-DETECTED-085aae4bc6",
+      "component": "USB\\VID_046D&PID_C52B&MI_00\\6&2B3C4D5E&0&0000",
+      "claim": "Windows enumerates USB interface MI_00 046D:C52B.",
+      "label": "verified",
+      "confidence": 1.0,
+      "evidence_ids": [
+        "pnp-085aae4bc6"
+      ],
+      "origin": "rule",
+      "rule_id": "R-USB-DETECTED",
+      "stage": 1,
+      "alternatives": [],
+      "note": ""
+    },
+    {
+      "id": "R-USB-DETECTED-8086b5c710",
+      "component": "USB\\VID_0403&PID_6001\\A12345BC",
+      "claim": "Windows enumerates USB device 0403:6001.",
+      "label": "verified",
+      "confidence": 1.0,
+      "evidence_ids": [
+        "pnp-8086b5c710"
+      ],
+      "origin": "rule",
+      "rule_id": "R-USB-DETECTED",
+      "stage": 1,
+      "alternatives": [],
+      "note": ""
+    },
+    {
+      "id": "R-USB-DETECTED-b634d4accb",
+      "component": "FTDIBUS\\VID_0403+PID_6001+A12345BCA\\0000",
+      "claim": "Windows enumerates USB device 0403:6001.",
+      "label": "verified",
+      "confidence": 1.0,
+      "evidence_ids": [
+        "pnp-b634d4accb"
+      ],
+      "origin": "rule",
+      "rule_id": "R-USB-DETECTED",
+      "stage": 1,
+      "alternatives": [],
+      "note": ""
+    },
+    {
+      "id": "R-USB-PHANTOM-33ca958b9b",
+      "component": "USB\\VID_1D6B&PID_ABCD\\OLDSERIAL99",
+      "claim": "Windows retains a record of USB device 1D6B:ABCD that is not currently attached.",
+      "label": "verified",
+      "confidence": 1.0,
+      "evidence_ids": [
+        "pnp-33ca958b9b"
+      ],
+      "origin": "rule",
+      "rule_id": "R-USB-PHANTOM",
+      "stage": null,
+      "alternatives": [],
+      "note": "Useful history: it was attached to this PC at some point."
+    },
+    {
+      "id": "R-DRV-UNSIGNED-a7e0f3545d",
+      "component": "USB\\VID_1234&PID_5678&MI_00\\7&BBBB&0&0000",
+      "claim": "Driver oem12.inf (Synthetic Vendor) is reported unsigned.",
+      "label": "verified",
+      "confidence": 1.0,
+      "evidence_ids": [
+        "drv-a7e0f3545d"
+      ],
+      "origin": "rule",
+      "rule_id": "R-DRV-UNSIGNED",
+      "stage": null,
+      "alternatives": [],
+      "note": ""
+    },
+    {
+      "id": "R-COM-USB-6b8aaefda6",
+      "component": "COM3",
+      "claim": "COM3 is provided by USB device 0403:6001 (USB Serial Port (COM3)).",
+      "label": "verified",
+      "confidence": 1.0,
+      "evidence_ids": [
+        "com-6b8aaefda6"
+      ],
+      "origin": "rule",
+      "rule_id": "R-COM-USB",
+      "stage": null,
+      "alternatives": [],
+      "note": "Port listed from metadata only; it was not opened."
+    },
+    {
+      "id": "R-SW-KEYWORD-cc63973769",
+      "component": "program:HKLM32:Synthetic EVOS Test Suite",
+      "claim": "Installed program 'Synthetic EVOS Test Suite' may relate to the EVOS installation (matches: evos, life technologies).",
+      "label": "probable",
+      "confidence": 0.5,
+      "evidence_ids": [
+        "prog-f6b26a190f"
+      ],
+      "origin": "rule",
+      "rule_id": "R-SW-KEYWORD",
+      "stage": null,
+      "alternatives": [
+        "unrelated product from the same vendor",
+        "keyword coincidence"
+      ],
+      "note": ""
+    },
+    {
+      "id": "R-PROFILE-4d74c9c413",
+      "component": "role:camera_mono_ccd",
+      "claim": "High-sensitivity monochrome interline CCD camera (fluorescence; also transmitted light): not tested in this snapshot (needs a 'microscope' snapshot and diff).",
+      "label": "not_tested",
+      "confidence": null,
+      "evidence_ids": [],
+      "origin": "rule",
+      "rule_id": "R-PROFILE",
+      "stage": null,
+      "alternatives": [],
+      "note": ""
+    },
+    {
+      "id": "R-PROFILE-b0cfcb48ee",
+      "component": "role:camera_color_cmos",
+      "claim": "High-sensitivity color CMOS camera (brightfield / phase contrast): not tested in this snapshot (needs a 'microscope' snapshot and diff).",
+      "label": "not_tested",
+      "confidence": null,
+      "evidence_ids": [],
+      "origin": "rule",
+      "rule_id": "R-PROFILE",
+      "stage": null,
+      "alternatives": [],
+      "note": ""
+    },
+    {
+      "id": "R-PROFILE-48c169cb3d",
+      "component": "role:xy_stage",
+      "claim": "Automated XY scanning stage controller: not tested in this snapshot (needs a 'microscope' snapshot and diff).",
+      "label": "not_tested",
+      "confidence": null,
+      "evidence_ids": [],
+      "origin": "rule",
+      "rule_id": "R-PROFILE",
+      "stage": null,
+      "alternatives": [],
+      "note": ""
+    },
+    {
+      "id": "R-PROFILE-14e60e8a3d",
+      "component": "role:objective_turret",
+      "claim": "Five-position automated objective turret controller: not tested in this snapshot (needs a 'microscope' snapshot and diff).",
+      "label": "not_tested",
+      "confidence": null,
+      "evidence_ids": [],
+      "origin": "rule",
+      "rule_id": "R-PROFILE",
+      "stage": null,
+      "alternatives": [],
+      "note": ""
+    },
+    {
+      "id": "R-PROFILE-03a907801f",
+      "component": "role:focus",
+      "claim": "Focus / autofocus mechanism (whether separately controllable is unknown): not tested in this snapshot (needs a 'microscope' snapshot and diff).",
+      "label": "not_tested",
+      "confidence": null,
+      "evidence_ids": [],
+      "origin": "rule",
+      "rule_id": "R-PROFILE",
+      "stage": null,
+      "alternatives": [],
+      "note": ""
+    },
+    {
+      "id": "R-PROFILE-3171fadb3c",
+      "component": "role:illumination",
+      "claim": "LED illumination and up to four fluorescence light cubes: not tested in this snapshot (needs a 'microscope' snapshot and diff).",
+      "label": "not_tested",
+      "confidence": null,
+      "evidence_ids": [],
+      "origin": "rule",
+      "rule_id": "R-PROFILE",
+      "stage": null,
+      "alternatives": [],
+      "note": ""
+    },
+    {
+      "id": "R-PROFILE-e44fe0ebce",
+      "component": "role:amc1000_controller",
+      "claim": "Onstage Incubator (AMC1000) control unit, separate USB connection: not tested in this snapshot (needs a 'amc1000' snapshot and diff).",
+      "label": "not_tested",
+      "confidence": null,
+      "evidence_ids": [],
+      "origin": "rule",
+      "rule_id": "R-PROFILE",
+      "stage": null,
+      "alternatives": [],
+      "note": ""
+    }
+  ]
+}

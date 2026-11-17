@@ -1,0 +1,68 @@
+{
+  "meta": {
+    "scan_id": "microscope-20261111T222225Z-239965",
+    "label": "microscope",
+    "tool_version": "0.1.0.dev0",
+    "schema_version": "0.1.0",
+    "started_at": "2026-11-11T22:22:25.284554Z",
+    "finished_at": "2026-11-11T22:22:25.287219Z",
+    "host_platform": "Linux 6.18.44-fc-v378 (x86_64)",
+    "python_version": "3.13.18",
+    "elevated": true,
+    "redacted": false,
+    "artifact_roots": []
+  },
+  "programs": [
+    {
+      "name": "Microsoft Visual C++ 2010  x86 Redistributable",
+      "version": "10.0.40219",
+      "publisher": "Microsoft Corporation",
+      "install_date": null,
+      "install_location": null,
+      "registry_view": "HKLM64",
+      "keyword_hits": [],
+      "evidence_ids": [
+        "prog-eaba4024bd"
+      ]
+    },
+    {
+      "name": "Synthetic EVOS Test Suite",
+      "version": "0.0.1",
+      "publisher": "Life Technologies (synthetic)",
+      "install_date": null,
+      "install_location": "C:\\Program Files (x86)\\EVOS",
+      "registry_view": "HKLM32",
+      "keyword_hits": [
+        "evos",
+        "life technologies"
+      ],
+      "evidence_ids": [
+        "prog-f6b26a190f"
+      ]
+    }
+  ],
+  "vendor_registry_keys": [
+    {
+      "path": "HKLM32\\SOFTWARE\\Life Technologies",
+      "keyword_hits": [
+        "life technologies"
+      ],
+      "evidence_ids": [
+        "regkey-4c1a5367fa"
+      ]
+    },
+    {
+      "path": "HKLM32\\SOFTWARE\\Life Technologies\\EVOS",
+      "keyword_hits": [
+        "evos",
+        "life technologies"
+      ],
+      "evidence_ids": [
+        "regkey-0548860cf5"
+      ]
+    }
+  ],
+  "artifacts": [],
+  "sdk_matches": [],
+  "micromanager": []
+}

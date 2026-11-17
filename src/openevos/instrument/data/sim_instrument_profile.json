@@ -1,0 +1,29 @@
+{
+  "name": "Simulated EVOS FL Auto",
+  "model": "AMAFD1000",
+  "backend": "simulation",
+  "notes": "Simulator configuration. Cube identities and objectives on the real unit are not taken from here; they come from LED-board cube detection and the recovered lico/tpco records once verified.",
+  "stage_device": "sim-stage",
+  "focus_device": "sim-focus",
+  "turret_device": "sim-turret",
+  "illumination_device": "sim-light",
+  "cameras": [
+    {"role": "mono", "device_id": "sim-camera", "display_name": "Monochrome camera", "sensor_hint": "interline CCD (manual p.56)", "pixel_size_um": 3.75, "width": 648, "height": 482, "native_bit_depth": 12, "provenance": "simulated"},
+    {"role": "color", "device_id": "sim-camera-color", "display_name": "Color camera", "sensor_hint": "CMOS (manual p.56)", "pixel_size_um": 3.2, "width": 640, "height": 480, "native_bit_depth": 8, "provenance": "simulated"}
+  ],
+  "channels": [
+    {"slot": "cube1", "kind": "fluorescence", "label": "DAPI", "pseudocolor": "#4F7CFF", "excitation_nm": 357, "emission_nm": 447, "provenance": "simulated"},
+    {"slot": "cube2", "kind": "fluorescence", "label": "GFP", "pseudocolor": "#2EE66B", "excitation_nm": 470, "emission_nm": 525, "provenance": "simulated"},
+    {"slot": "cube3", "kind": "fluorescence", "label": "TxRed", "pseudocolor": "#FF4D4D", "excitation_nm": 585, "emission_nm": 624, "provenance": "simulated"},
+    {"slot": "cube4", "kind": "fluorescence", "label": "", "installed": false, "provenance": "simulated"},
+    {"slot": "trans", "kind": "transmitted", "label": "TRANS", "pseudocolor": "#D8DEE9", "provenance": "simulated"},
+    {"slot": "phase", "kind": "phase", "label": "PHASE", "pseudocolor": "#C0C8D4", "provenance": "simulated"}
+  ],
+  "objectives": [
+    {"slot": 1, "label": "4x Plan Fluor", "magnification": 4, "numerical_aperture": 0.13, "immersion": "air", "correction": "LWD", "calibration_valid": true, "provenance": "simulated"},
+    {"slot": 2, "label": "10x Plan Fluor", "magnification": 10, "numerical_aperture": 0.30, "immersion": "air", "correction": "LWD", "phase_ring": "Ph1", "calibration_valid": true, "provenance": "simulated"},
+    {"slot": 3, "label": "20x Plan Fluor", "magnification": 20, "numerical_aperture": 0.45, "immersion": "air", "correction": "LWD", "phase_ring": "Ph1", "calibration_valid": true, "provenance": "simulated"},
+    {"slot": 4, "label": "40x Plan Fluor", "magnification": 40, "numerical_aperture": 0.65, "immersion": "air", "correction": "LWD", "calibration_valid": true, "provenance": "simulated"},
+    {"slot": 5, "installed": false, "provenance": "simulated"}
+  ]
+}

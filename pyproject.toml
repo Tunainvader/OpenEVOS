@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openevos"
+version = "0.5.0.dev0"
+description = "OpenEVOS — open-source diagnostics and control for the original EVOS FL Auto (AMAFD1000). Read-only Inspector, command core, manual-parity desktop app (simulated optics; optional physical X/Y stage)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "TBD — choose before first public release" }
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+]
+dependencies = [
+    "pydantic>=2.6,<3",
+    "pyserial>=3.5",      # used ONLY for serial.tools.list_ports (metadata); pyserial never opens a port
+                          # (Motor Gate 1 opens its one port via Win32, maintenance/win_serial.py)
+    "pefile>=2023.2.7",   # read-only PE version-resource parsing for recovered binaries
+    "platformdirs>=4",
+    "numpy>=1.24",        # Phase 2.1 core: frame transport and simulators
+]
+
+[project.optional-dependencies]
+# workflow layer: optics simulator, focus metrics, counting, image files (UI merge, v0.4.0 line)
+imaging = ["scipy>=1.10", "scikit-image>=0.22", "tifffile>=2023.7", "pillow>=10"]
+ui = ["openevos[imaging]", "PySide6>=6.6"]   # desktop app; not used by the Inspector CLI
+dev = ["pytest>=8", "ruff>=0.5", "openevos[ui]"]
+
+[project.scripts]
+openevos-inspector = "openevos.inspector.app:main"
+openevos = "openevos.ui.app:main"        # desktop app; needs the `ui` extra
+openevos-ui = "openevos.ui.app:main"     # same, the v0.4.0 name
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"openevos.inspector.data" = ["*.json"]
+"openevos.instrument.data" = ["*.json"]
+"openevos.ui" = ["assets/icons/*", "assets/fonts/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "hardware: opt-in tests that need the physical instrument (never run in CI)",
+    "windows: tests that need a real Windows host",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

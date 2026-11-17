@@ -1,0 +1,35 @@
+{
+  "_comment": "Candidate USB IDs for EVOS FL Auto (AMAFD1000) subsystems, derived from STATIC analysis of vendor software packages (see docs/evidence/vendor_software_analysis.md). These describe what the vendor software EXPECTS, not what has been observed on our unit, so a match is a candidate role mapping, never 'verified'. Confidence follows the ADR-0003 bands.",
+  "sources": {
+    "fl1_v1.6": "EVOS FL Auto update 1.6, PearlUpdate_Rev1.6_31201.amg (sha256 5ac42b5725c6f213eea8c05d9e69f301a904b7fc6350d281b8cc9275b7d54cf0)",
+    "fl2_v2.0.2094": "EVOS FL Auto 2 installer SetupAuto_2_0_2094_0.exe (sha256 46a11f781d6df490a672b835cc65790005d1111586169255a5a538de7329a3f8)",
+    "usb_ids": "linux-usb.org usb.ids database (vendor 0DAD = Westover Scientific; 1E10 = Point Grey Research; 1409 = IDS Imaging)"
+  },
+  "candidates": [
+    {"vid": "0DAD", "pid": "0058", "role": "amc1000_controller", "device": "AMG 'CN' (ChuckNorris) control board, PIC24F USB HID: incubator temperature/CO2/O2/humidity/gas control", "label": "strongly_supported", "confidence": 0.8,
+     "basis": ["fl1_v1.6 CNControlBoard64.dll references Vid_0dad&Pid_0058 and has PID loops for water/glass/chamber/hose temperature and CO2/O2/gas-flow controllers", "fl2_v2.0.2094 loads the same COM component (8/8 GUIDs, 270/270 parameter names shared) from its Incubator plug-in"],
+     "alternatives": ["a different AMG board in application mode sharing this PID", "AMC1000 hardware revision with a different board"]},
+    {"vid": "0DAD", "pid": "0051", "role": "illumination", "device": "EVOS Gen III LED board (also stores stage HW_DATA: axis offsets, registration, mm/rev)", "label": "strongly_supported", "confidence": 0.75,
+     "basis": ["fl1_v1.6 EvosGenIII_LEDBoard64.dll references Vid_0dad&Pid_0051 and exposes LED/epi channel and HW_DATA methods"],
+     "alternatives": ["LED board in a different firmware mode", "other AMG board"]},
+    {"vid": "0DAD", "pid": "0050", "role": "illumination", "device": "AMG board ID listed by the LED-board bootloader DLL (bootloader-mode or sibling board)", "label": "probable", "confidence": 0.45,
+     "basis": ["fl1_v1.6 EvosGenIII_LEDBoard_Bootloader64.dll references 0DAD:0050-0057"], "alternatives": ["unrelated AMG product ID"]},
+    {"vid": "0DAD", "pid": "0057", "role": "illumination", "device": "EVOS Gen 3 v2 LED board in BOOTLOADER mode (application runs as 0051). Do not flash; see docs/evidence/first_connection_2026-11-12.md", "label": "strongly_supported", "confidence": 0.8,
+     "basis": ["observed 2026-11-12 on our unit: bus-reported description 'EVOS Gen 3 v2 LED Board Bootloader' behind the microscope hub", "fl1_v1.6 PearlScope64.exe lighting controller references PID_0057 next to PID_0051; EvosGenIII_LEDBoard_Bootloader64.dll lists 0DAD:0057 and exposes StartApp"],
+     "alternatives": ["LED board whose application firmware is missing or damaged (also enumerates as 0057)"]},
+    {"vid": "0DAD", "pid": "0059", "role": "amc1000_controller", "device": "AMG board ID listed by the CN bootloader DLL (bootloader-mode or sibling board)", "label": "probable", "confidence": 0.45,
+     "basis": ["fl1_v1.6 CNControlBoardBootloader64.dll references 0DAD:0058-005E"], "alternatives": ["unrelated AMG product ID (e.g. Countess/Manta boards named in the same DLL)"]},
+    {"vid": "1E10", "pid": "2005", "role": "camera_mono_ccd", "device": "Point Grey Chameleon USB 2.0, Sony ICX445AL 1/3\" 1296x964 CCD (FlyCapture2 / pgrusbcam driver)", "label": "strongly_supported", "confidence": 0.8,
+     "basis": ["fl1_v1.6 PearlScope64.exe hard-codes USB\\VID_1E10&PID_2005&REV_0003 next to 'Sony ICX445AL (1/3\" 1296x964 CCD) Camera'", "fl1_v1.6 ships pgrusbcam.inf 2.3.3.59 and chameleon-v1.x .ez2 firmware"],
+     "alternatives": ["a different Point Grey USB 2.0 model"]},
+    {"vid": "1E10", "pid": "2004", "role": "camera_mono_ccd", "device": "Point Grey Chameleon ICX445 (usb.ids naming)", "label": "probable", "confidence": 0.6,
+     "basis": ["usb.ids lists 1E10:2004 as 'Sony 1.3MP 1/3\" ICX445 IIDC video camera [Chameleon]'", "pgrusbcam.inf in both packages binds 1E10:2004"],
+     "alternatives": ["colour Chameleon variant", "camera in a different firmware mode"]},
+    {"vid": "1409", "pid": "*", "role": "camera_color_cmos", "device": "IDS uEye UI-146xLE-C colour camera (uEye API, uEye_usb_64.sys)", "label": "probable", "confidence": 0.6,
+     "basis": ["fl1_v1.6 PearlScope.ini names 'UI146xLE-C Color Camera' and AllowUEyeColorCamera", "UCam264.dll imports ueye_api_64.dll / uEye_usb_64.sys"],
+     "alternatives": ["any other IDS camera attached to the PC"]}
+  ],
+  "non_usb_notes": [
+    "Motion (X, Y, Z, epi/filter carriage F, objective turret O, phase turret P): Technosoft drives driven through TML_lib.dll/tmlcomm.dll over a COM port (\\\\.\\COM%d scan; relay axis; CAN between axes). Expect a serial port (possibly USB-serial) in the microscope snapshot; its VID:PID is not referenced by the vendor software."
+  ]
+}

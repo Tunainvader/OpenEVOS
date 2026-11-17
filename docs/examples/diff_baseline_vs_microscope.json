@@ -1,0 +1,428 @@
+{
+  "baseline": {
+    "scan_id": "baseline-20261111T222225Z-ef57c1",
+    "label": "baseline",
+    "tool_version": "0.1.0.dev0",
+    "schema_version": "0.1.0",
+    "started_at": "2026-11-11T22:22:25.280330Z",
+    "finished_at": "2026-11-11T22:22:25.283142Z",
+    "host_platform": "Linux 6.18.44-fc-v378 (x86_64)",
+    "python_version": "3.13.18",
+    "elevated": true,
+    "redacted": false,
+    "artifact_roots": []
+  },
+  "other": {
+    "scan_id": "microscope-20261111T222225Z-239965",
+    "label": "microscope",
+    "tool_version": "0.1.0.dev0",
+    "schema_version": "0.1.0",
+    "started_at": "2026-11-11T22:22:25.284554Z",
+    "finished_at": "2026-11-11T22:22:25.287219Z",
+    "host_platform": "Linux 6.18.44-fc-v378 (x86_64)",
+    "python_version": "3.13.18",
+    "elevated": true,
+    "redacted": false,
+    "artifact_roots": []
+  },
+  "recovered": {
+    "scan_id": "recovered-image-20261111T222225Z-ea01aa",
+    "label": "recovered-image",
+    "tool_version": "0.1.0.dev0",
+    "schema_version": "0.1.0",
+    "started_at": "2026-11-11T22:22:25.288741Z",
+    "finished_at": "2026-11-11T22:22:25.354445Z",
+    "host_platform": "Linux 6.18.44-fc-v378 (x86_64)",
+    "python_version": "3.13.18",
+    "elevated": true,
+    "redacted": false,
+    "artifact_roots": [
+      "<mounted-image>/img"
+    ]
+  },
+  "added": [
+    {
+      "device": {
+        "instance_id": "USB\\VID_05E3&PID_0610\\5&1A2B3C4D&0&4",
+        "friendly_name": "Generic USB Hub",
+        "device_class": "USB",
+        "class_guid": "{36fc9e60-c465-11cf-8056-444553540000}",
+        "manufacturer": "(Generic USB Hub)",
+        "status": "OK",
+        "present": true,
+        "problem": "CM_PROB_NONE",
+        "problem_code": 0,
+        "service": "USBHUB3",
+        "hardware_ids": [
+          "USB\\VID_05E3&PID_0610&REV_9226",
+          "USB\\VID_05E3&PID_0610"
+        ],
+        "compatible_ids": [
+          "USB\\Class_09"
+        ],
+        "bus_reported_description": null,
+        "parent_instance_id": "USB\\ROOT_HUB30\\4&2A3B1C2D&0&0",
+        "location_info": null,
+        "location_paths": [],
+        "driver_inf": null,
+        "driver_provider": null,
+        "driver_version": null,
+        "driver_date": null,
+        "last_arrival": null,
+        "usb": {
+          "vid": "05E3",
+          "pid": "0610",
+          "rev": "9226",
+          "mi": null,
+          "is_interface": false,
+          "serial_in_instance": null
+        },
+        "stage": 1,
+        "evidence_ids": [
+          "pnp-20573b6ca0"
+        ]
+      },
+      "physical_device_id": "USB\\VID_05E3&PID_0610\\5&1A2B3C4D&0&4",
+      "candidate_role": null,
+      "candidate_label": null,
+      "previously_known": false,
+      "serial_ports": [],
+      "driver": null,
+      "recovered_inf_matches": []
+    },
+    {
+      "device": {
+        "instance_id": "USB\\VID_1234&PID_5678&MI_00\\7&BBBB&0&0000",
+        "friendly_name": "Synthetic Imaging Interface",
+        "device_class": "Image",
+        "class_guid": "{6bdd1fc6-810f-11d0-bec7-08002be2092f}",
+        "manufacturer": "Synthetic Vendor",
+        "status": "OK",
+        "present": true,
+        "problem": "CM_PROB_NONE",
+        "problem_code": 0,
+        "service": "synthcam",
+        "hardware_ids": [
+          "USB\\VID_1234&PID_5678&REV_0100&MI_00",
+          "USB\\VID_1234&PID_5678&MI_00"
+        ],
+        "compatible_ids": [
+          "USB\\Class_FF"
+        ],
+        "bus_reported_description": null,
+        "parent_instance_id": "USB\\VID_1234&PID_5678\\6&AAAA&0&1",
+        "location_info": null,
+        "location_paths": [],
+        "driver_inf": "oem12.inf",
+        "driver_provider": null,
+        "driver_version": null,
+        "driver_date": null,
+        "last_arrival": null,
+        "usb": {
+          "vid": "1234",
+          "pid": "5678",
+          "rev": "0100",
+          "mi": "00",
+          "is_interface": true,
+          "serial_in_instance": null
+        },
+        "stage": 1,
+        "evidence_ids": [
+          "pnp-a7e0f3545d"
+        ]
+      },
+      "physical_device_id": "USB\\VID_1234&PID_5678\\6&AAAA&0&1",
+      "candidate_role": null,
+      "candidate_label": null,
+      "previously_known": false,
+      "serial_ports": [],
+      "driver": {
+        "device_id": "USB\\VID_1234&PID_5678&MI_00\\7&BBBB&0&0000",
+        "device_name": "Synthetic Imaging Interface",
+        "provider": "Synthetic Vendor",
+        "version": "1.0.0.0",
+        "date": "2013-03-01",
+        "inf_name": "oem12.inf",
+        "is_signed": false,
+        "signer": null,
+        "device_class": "IMAGE",
+        "hardware_id": "USB\\VID_1234&PID_5678&REV_0100&MI_00",
+        "evidence_ids": [
+          "drv-a7e0f3545d"
+        ]
+      },
+      "recovered_inf_matches": [
+        {
+          "inf_path": "<mounted-image>/img/Windows/INF/oem12.inf",
+          "windows_root": "<mounted-image>/img",
+          "source": "recovered",
+          "provider": "Life Technologies",
+          "device_class": "Image",
+          "class_guid": "{6bdd1fc6-810f-11d0-bec7-08002be2092f}",
+          "driver_ver": "03/01/2013,1.0.0.0",
+          "catalog_file": "synth.cat",
+          "usb_ids": [
+            "1234:5678",
+            "1234:9999"
+          ],
+          "hardware_ids": [
+            "USB\\VID_1234&PID_5678&MI_00",
+            "USB\\VID_1234&PID_9999"
+          ],
+          "keyword_hits": [
+            "evos",
+            "life technologies"
+          ],
+          "sha256": "4672902ecf2ea4e3a88ca83133c790df804260196cdeef3566fe2f8fd55bf76f",
+          "evidence_ids": [
+            "inf-4977f5e31a"
+          ]
+        }
+      ]
+    },
+    {
+      "device": {
+        "instance_id": "USB\\VID_1234&PID_5678&MI_01\\7&BBBB&0&0001",
+        "friendly_name": "USB Device",
+        "device_class": null,
+        "class_guid": null,
+        "manufacturer": null,
+        "status": "Error",
+        "present": true,
+        "problem": "CM_PROB_FAILED_INSTALL",
+        "problem_code": 28,
+        "service": null,
+        "hardware_ids": [
+          "USB\\VID_1234&PID_5678&REV_0100&MI_01",
+          "USB\\VID_1234&PID_5678&MI_01"
+        ],
+        "compatible_ids": [
+          "USB\\Class_FF"
+        ],
+        "bus_reported_description": null,
+        "parent_instance_id": "USB\\VID_1234&PID_5678\\6&AAAA&0&1",
+        "location_info": null,
+        "location_paths": [],
+        "driver_inf": null,
+        "driver_provider": null,
+        "driver_version": null,
+        "driver_date": null,
+        "last_arrival": null,
+        "usb": {
+          "vid": "1234",
+          "pid": "5678",
+          "rev": "0100",
+          "mi": "01",
+          "is_interface": true,
+          "serial_in_instance": null
+        },
+        "stage": 1,
+        "evidence_ids": [
+          "pnp-e8cd0f28f5"
+        ]
+      },
+      "physical_device_id": "USB\\VID_1234&PID_5678\\6&AAAA&0&1",
+      "candidate_role": null,
+      "candidate_label": null,
+      "previously_known": false,
+      "serial_ports": [],
+      "driver": null,
+      "recovered_inf_matches": [
+        {
+          "inf_path": "<mounted-image>/img/Windows/INF/oem12.inf",
+          "windows_root": "<mounted-image>/img",
+          "source": "recovered",
+          "provider": "Life Technologies",
+          "device_class": "Image",
+          "class_guid": "{6bdd1fc6-810f-11d0-bec7-08002be2092f}",
+          "driver_ver": "03/01/2013,1.0.0.0",
+          "catalog_file": "synth.cat",
+          "usb_ids": [
+            "1234:5678",
+            "1234:9999"
+          ],
+          "hardware_ids": [
+            "USB\\VID_1234&PID_5678&MI_00",
+            "USB\\VID_1234&PID_9999"
+          ],
+          "keyword_hits": [
+            "evos",
+            "life technologies"
+          ],
+          "sha256": "4672902ecf2ea4e3a88ca83133c790df804260196cdeef3566fe2f8fd55bf76f",
+          "evidence_ids": [
+            "inf-4977f5e31a"
+          ]
+        }
+      ]
+    },
+    {
+      "device": {
+        "instance_id": "USB\\VID_1234&PID_5678\\6&AAAA&0&1",
+        "friendly_name": "USB Composite Device",
+        "device_class": "USB",
+        "class_guid": "{36fc9e60-c465-11cf-8056-444553540000}",
+        "manufacturer": "(Standard USB Host Controller)",
+        "status": "OK",
+        "present": true,
+        "problem": "CM_PROB_NONE",
+        "problem_code": 0,
+        "service": "usbccgp",
+        "hardware_ids": [
+          "USB\\VID_1234&PID_5678&REV_0100",
+          "USB\\VID_1234&PID_5678"
+        ],
+        "compatible_ids": [
+          "USB\\COMPOSITE"
+        ],
+        "bus_reported_description": "Synthetic Test Camera",
+        "parent_instance_id": "USB\\VID_05E3&PID_0610\\5&1A2B3C4D&0&4",
+        "location_info": null,
+        "location_paths": [],
+        "driver_inf": null,
+        "driver_provider": null,
+        "driver_version": null,
+        "driver_date": null,
+        "last_arrival": null,
+        "usb": {
+          "vid": "1234",
+          "pid": "5678",
+          "rev": "0100",
+          "mi": null,
+          "is_interface": false,
+          "serial_in_instance": null
+        },
+        "stage": 1,
+        "evidence_ids": [
+          "pnp-3e45335af7"
+        ]
+      },
+      "physical_device_id": "USB\\VID_1234&PID_5678\\6&AAAA&0&1",
+      "candidate_role": null,
+      "candidate_label": null,
+      "previously_known": false,
+      "serial_ports": [],
+      "driver": null,
+      "recovered_inf_matches": [
+        {
+          "inf_path": "<mounted-image>/img/Windows/INF/oem12.inf",
+          "windows_root": "<mounted-image>/img",
+          "source": "recovered",
+          "provider": "Life Technologies",
+          "device_class": "Image",
+          "class_guid": "{6bdd1fc6-810f-11d0-bec7-08002be2092f}",
+          "driver_ver": "03/01/2013,1.0.0.0",
+          "catalog_file": "synth.cat",
+          "usb_ids": [
+            "1234:5678",
+            "1234:9999"
+          ],
+          "hardware_ids": [
+            "USB\\VID_1234&PID_5678&MI_00",
+            "USB\\VID_1234&PID_9999"
+          ],
+          "keyword_hits": [
+            "evos",
+            "life technologies"
+          ],
+          "sha256": "4672902ecf2ea4e3a88ca83133c790df804260196cdeef3566fe2f8fd55bf76f",
+          "evidence_ids": [
+            "inf-4977f5e31a"
+          ]
+        }
+      ]
+    },
+    {
+      "device": {
+        "instance_id": "USB\\VID_ABCD&PID_0001\\SN0001TEST",
+        "friendly_name": "Unknown device",
+        "device_class": null,
+        "class_guid": null,
+        "manufacturer": null,
+        "status": "Error",
+        "present": true,
+        "problem": "CM_PROB_FAILED_INSTALL",
+        "problem_code": 28,
+        "service": null,
+        "hardware_ids": [
+          "USB\\VID_ABCD&PID_0001&REV_0200",
+          "USB\\VID_ABCD&PID_0001"
+        ],
+        "compatible_ids": [
+          "USB\\Class_FF&SubClass_00"
+        ],
+        "bus_reported_description": "Synthetic Controller",
+        "parent_instance_id": "USB\\VID_05E3&PID_0610\\5&1A2B3C4D&0&4",
+        "location_info": null,
+        "location_paths": [],
+        "driver_inf": null,
+        "driver_provider": null,
+        "driver_version": null,
+        "driver_date": null,
+        "last_arrival": null,
+        "usb": {
+          "vid": "ABCD",
+          "pid": "0001",
+          "rev": "0200",
+          "mi": null,
+          "is_interface": false,
+          "serial_in_instance": "SN0001TEST"
+        },
+        "stage": 1,
+        "evidence_ids": [
+          "pnp-bb29bf8966"
+        ]
+      },
+      "physical_device_id": "USB\\VID_ABCD&PID_0001\\SN0001TEST",
+      "candidate_role": null,
+      "candidate_label": null,
+      "previously_known": false,
+      "serial_ports": [
+        "COM7"
+      ],
+      "driver": null,
+      "recovered_inf_matches": []
+    }
+  ],
+  "removed": [],
+  "changed": [],
+  "physical_groups": [
+    {
+      "physical_device_id": "USB\\VID_05E3&PID_0610\\5&1A2B3C4D&0&4",
+      "vid_pid": "05E3:0610",
+      "interface_ids": []
+    },
+    {
+      "physical_device_id": "USB\\VID_1234&PID_5678\\6&AAAA&0&1",
+      "vid_pid": "1234:5678",
+      "interface_ids": [
+        "USB\\VID_1234&PID_5678&MI_00\\7&BBBB&0&0000",
+        "USB\\VID_1234&PID_5678&MI_01\\7&BBBB&0&0001"
+      ]
+    },
+    {
+      "physical_device_id": "USB\\VID_ABCD&PID_0001\\SN0001TEST",
+      "vid_pid": "ABCD:0001",
+      "interface_ids": []
+    }
+  ],
+  "added_serial_ports": [
+    {
+      "device": "COM7",
+      "description": "Synthetic USB Serial (COM7)",
+      "hwid": "USB VID:PID=ABCD:0001 SER=SN0001TEST",
+      "vid": "ABCD",
+      "pid": "0001",
+      "serial_number": "SN0001TEST",
+      "manufacturer": null,
+      "product": null,
+      "location": "1-4.2",
+      "evidence_ids": [
+        "com-2a84ea7c82"
+      ]
+    }
+  ],
+  "removed_serial_ports": [],
+  "port_change_suspects": [],
+  "notes": []
+}

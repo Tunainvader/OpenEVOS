@@ -1,0 +1,981 @@
+{
+ "package": "EVOS FL Auto 1.6 (PearlUpdate rev 31201)",
+ "files": [
+  {
+   "path": "Camera Driver for 1.3/FLAutoUnpatch.exe",
+   "size": 2236047,
+   "sha256": "19261dba16de6907120df74198286cc43f442ec196d7d0a85098cc90426cb6c9",
+   "pe": {
+    "machine": "x86",
+    "pe_format": "PE32",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "32"
+   },
+   "version": {
+    "CompanyName": "Life Technologies",
+    "FileDescription": "FL Auto Mono Camera Driver Restore Setup",
+    "ProductName": "FL Auto Mono Camera Driver Restore",
+    "ProductVersion": "Baseline-2.3.3.42"
+   }
+  },
+  {
+   "path": "code$GetAppFilePath/AmgNetworkSupport64.dll",
+   "size": 601088,
+   "sha256": "406af4e5ff00dea6602d6b84fc528c606b3b90f4d4fc87ae534c8c5065845e41",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Life Technologies",
+    "FileDescription": "AmgNetworkSupport.dll",
+    "FileVersion": "462.326ea0663fed",
+    "ProductName": "AmgNetworkSupport Module",
+    "ProductVersion": "462.326ea0663fed"
+   }
+  },
+  {
+   "path": "code$GetAppFilePath/CNControlBoard64.dll",
+   "size": 1196032,
+   "sha256": "42ac5e42ae9a554c4d232993c8730f5462e7893a2b48ae1dc1670994c8ffcfd9",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Life Technologies",
+    "FileDescription": "CNControlBoard.dll",
+    "FileVersion": "462.326ea0663fed",
+    "ProductName": "CNControlBoard Module",
+    "ProductVersion": "462.326ea0663fed"
+   },
+   "usb_ids_referenced": [
+    "0DAD:0058"
+   ]
+  },
+  {
+   "path": "code$GetAppFilePath/CNControlBoardBootloader64.dll",
+   "size": 323584,
+   "sha256": "d352f149ce0d02e1ea4cd4d02931e843bd4657f0761040838493330ac6073213",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Life Technologies",
+    "FileDescription": "CNControlBoardBootloader.dll",
+    "FileVersion": "462.326ea0663fed",
+    "ProductName": "CNControlBoardBootloader Module",
+    "ProductVersion": "462.326ea0663fed"
+   },
+   "usb_ids_referenced": [
+    "0DAD:0058",
+    "0DAD:0059",
+    "0DAD:005A",
+    "0DAD:005C",
+    "0DAD:005E"
+   ]
+  },
+  {
+   "path": "code$GetAppFilePath/EvosGenIII_LEDBoard64.dll",
+   "size": 758272,
+   "sha256": "6cc96b788142c2e36c0d78fbf440d38efc9fa1566cd36d91c5d7f53850a93f9f",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Life Technologies",
+    "FileDescription": "EvosGenIII_LEDBoard.dll",
+    "FileVersion": "1189.f6421453fb6f",
+    "ProductName": "EvosGenIII_LEDBoard Module",
+    "ProductVersion": "1189.f6421453fb6f"
+   },
+   "usb_ids_referenced": [
+    "0DAD:0051"
+   ]
+  },
+  {
+   "path": "code$GetAppFilePath/EvosGenIII_LEDBoard_Bootloader64.dll",
+   "size": 160256,
+   "sha256": "b56406554346e2472bffd4f10984fe2785311a91b7e6e1710ceddaa7f47fae08",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Life Technologies",
+    "FileDescription": "EvosGenIII_LEDBoard.dll",
+    "FileVersion": "1189.f6421453fb6f",
+    "ProductName": "EvosGenIII_LEDBoard Module",
+    "ProductVersion": "1189.f6421453fb6f"
+   },
+   "usb_ids_referenced": [
+    "0DAD:0050",
+    "0DAD:0051",
+    "0DAD:0052",
+    "0DAD:0053",
+    "0DAD:0055",
+    "0DAD:0056",
+    "0DAD:0057"
+   ]
+  },
+  {
+   "path": "code$GetAppFilePath/Fiber64.dll",
+   "size": 3914240,
+   "sha256": "57566ab19e0638515388d7b572f3cffd4f6e6a83d333e9b02d3a8bf0fca6c149",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Life Technologies",
+    "FileDescription": "fiber Module",
+    "FileVersion": "462.326ea0663fed",
+    "ProductName": "fiber Module",
+    "ProductVersion": "462.326ea0663fed"
+   }
+  },
+  {
+   "path": "code$GetAppFilePath/FlyCapture2_C_v100.dll",
+   "size": 80664,
+   "sha256": "b56f562a7892ba3f2e44fdc8c603006bb3c4164574760679cca9e7b1c93aee8d",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Point Grey Research, Inc.",
+    "FileDescription": "FlyCapture2 C Dynamic Link Library",
+    "FileVersion": "2, 5, 2, 3",
+    "ProductName": "FlyCapture2 C Dynamic Link Library",
+    "ProductVersion": "2, 5, 2, 3"
+   }
+  },
+  {
+   "path": "code$GetAppFilePath/FlyCapture2_v100.dll",
+   "size": 12962584,
+   "sha256": "bcfc550d14c7480ef62932cda108ad410603313ed123e3c9b73f448667b774b5",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Point Grey Research, Inc.",
+    "FileDescription": "FlyCapture2 Dynamic Link Library",
+    "FileVersion": "2, 5, 3, 4",
+    "ProductName": "FlyCapture2 Dynamic Link Library",
+    "ProductVersion": "2, 5, 3, 4"
+   }
+  },
+  {
+   "path": "code$GetAppFilePath/GPUProcessing64.dll",
+   "size": 527360,
+   "sha256": "351df40e3187e64dc17be0751ab3301bbdce5edfbdb7a18b4d6cffcb63a9557b",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Life Technologies",
+    "FileDescription": "GPUProcessing module",
+    "FileVersion": "462.326ea0663fed",
+    "ProductName": "GPUProcessing",
+    "ProductVersion": "462.326ea0663fed"
+   }
+  },
+  {
+   "path": "code$GetAppFilePath/MicronSupport64.dll",
+   "size": 734208,
+   "sha256": "f47278f3de0269e677b907c5587901aa33b21d73f91c5012bc00a602c01c5e5b",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Life Technologies",
+    "FileDescription": "MicronSupport Module",
+    "FileVersion": "462.326ea0663fed",
+    "ProductName": "MicronSupport Module",
+    "ProductVersion": "462.326ea0663fed"
+   }
+  },
+  {
+   "path": "code$GetAppFilePath/Microsoft.VC90.OpenMP.manifest",
+   "size": 473,
+   "sha256": "b08abc23ecfe0f7bffe285b13d5b63efc2ffa94fc43112967390a9d6f2abe1c8"
+  },
+  {
+   "path": "code$GetAppFilePath/MotorController64.dll",
+   "size": 904192,
+   "sha256": "87ae582d7f2960d40efa9c1c0f19045eef55e426cc96385e71eb707e13250979",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Life Technologies",
+    "FileDescription": "MotorController.dll",
+    "FileVersion": "462.326ea0663fed",
+    "ProductName": "MotorController Module",
+    "ProductVersion": "462.326ea0663fed"
+   }
+  },
+  {
+   "path": "code$GetAppFilePath/PGRCamera264.dll",
+   "size": 772608,
+   "sha256": "25ca0787006db979e57cfeec395cffc63d57286781150e73df5467ef3ba06fe2",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "AMG",
+    "FileDescription": "PGRCamera2 Module",
+    "FileVersion": "1189.f6421453fb6f",
+    "ProductName": "PGRCamera2 Module",
+    "ProductVersion": "1189.f6421453fb6f"
+   }
+  },
+  {
+   "path": "code$GetAppFilePath/PearlScope64.exe",
+   "size": 34212864,
+   "sha256": "dc807adeed083224323bb361a04ece70dad5d8b3b627cf081b2dea053a36a629",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Life Technologies",
+    "FileDescription": "PearlScope.exe",
+    "FileVersion": "1202.b302b6cb2506",
+    "ProductName": "Pearl",
+    "ProductVersion": "1202.b302b6cb2506"
+   },
+   "usb_ids_referenced": [
+    "1E10:2005"
+   ]
+  },
+  {
+   "path": "code$GetAppFilePath/PearlScope64.exe.manifest",
+   "size": 3982,
+   "sha256": "15691db076f1553f31a1a32b80fff2a62db6d6c182887bdc48e64fcf9ab5077c"
+  },
+  {
+   "path": "code$GetAppFilePath/PearlScopeSupport.dll",
+   "size": 612352,
+   "sha256": "55ee892925c87e4e680f550b13cc626e49c7039bf8471e059c4ebf64672b9444",
+   "pe": {
+    "machine": "x86",
+    "pe_format": "PE32",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "32"
+   },
+   "version": {
+    "CompanyName": "Life Technologies",
+    "FileDescription": "PearlScopeSupport module",
+    "FileVersion": "1189.f6421453fb6f",
+    "ProductName": "PearlScope",
+    "ProductVersion": "1189.f6421453fb6f"
+   }
+  },
+  {
+   "path": "code$GetAppFilePath/PearlScopeSupport64.dll",
+   "size": 659456,
+   "sha256": "d0cb172eafd6a9ad6a09ba6171bad31343f977fcff076da59fae630c459fdac9",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Life Technologies",
+    "FileDescription": "PearlScopeSupport module",
+    "FileVersion": "1189.f6421453fb6f",
+    "ProductName": "PearlScope",
+    "ProductVersion": "1189.f6421453fb6f"
+   }
+  },
+  {
+   "path": "code$GetAppFilePath/ProductRevision.xml",
+   "size": 90,
+   "sha256": "a0b80294a353fc2af74e7e27ceeb80d69d07a65beff87413e5eebb10f1f1b8c5"
+  },
+  {
+   "path": "code$GetAppFilePath/SmartScopeSupport64.dll",
+   "size": 134656,
+   "sha256": "b728fd2ff8dbb8c7548d93a5193ba63a5b1f17395e257478376aa478307bccb1",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Life Technologies",
+    "FileDescription": "SmartScopeSupport module",
+    "FileVersion": "462.326ea0663fed",
+    "ProductName": "SmartScope",
+    "ProductVersion": "462.326ea0663fed"
+   }
+  },
+  {
+   "path": "code$GetAppFilePath/TML_lib.dll",
+   "size": 917504,
+   "sha256": "93d3ed1efb61dc769cfe303642e6425371d10d5ea36e214bca56b0130d70939a",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Technosoft",
+    "FileDescription": "TML Library (multi-process variant)",
+    "FileVersion": "2, 0, 1, 3",
+    "ProductName": "TML Library",
+    "ProductVersion": "2, 0, 1, 3"
+   }
+  },
+  {
+   "path": "code$GetAppFilePath/UCam264.dll",
+   "size": 1422848,
+   "sha256": "2366e331b17781fc113e9f386a17516af2dc56dc9956e76249f550a6483739b6",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Advanced Microscopy Group",
+    "FileDescription": "UCam2 module (4.00.0)",
+    "FileVersion": "1189.f6421453fb6f",
+    "ProductName": "UCam2 module",
+    "ProductVersion": "1189.f6421453fb6f"
+   }
+  },
+  {
+   "path": "code$GetAppFilePath/UpdatorClassLibrary3_v100.dll",
+   "size": 399640,
+   "sha256": "3a6bcee000338383cc4e090bd11cb991c7c8f230106de4095acdb536c62bf40b",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Point Grey Research",
+    "FileDescription": "Updator 3 Library",
+    "FileVersion": "2. 2. 0. 4",
+    "ProductName": "Point Grey Research Updator 3",
+    "ProductVersion": "2. 2. 0. 4"
+   }
+  },
+  {
+   "path": "code$GetAppFilePath/tmlcomm.dll",
+   "size": 215552,
+   "sha256": "e2b9a8e9f848a9b545c419e1f7febd6d798409ef24692cb1e9f6497f905e591a",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Technosoft",
+    "FileDescription": "Communication driver for Technosoft Motion Drives (multi-process variant)",
+    "FileVersion": "3, 2, 2, 2",
+    "ProductName": "THS tmlcomm",
+    "ProductVersion": "3, 2, 2, 2"
+   }
+  },
+  {
+   "path": "code$GetAppFilePath/vcomp100.dll",
+   "size": 57168,
+   "sha256": "67c5d600c0564dd201377fd06bc1a4b07befdfd30cf7fa410bd5b5c16d5d2ce4",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Microsoft Corporation",
+    "FileDescription": "Microsoft\u00ae C/C++ OpenMP Runtime",
+    "FileVersion": "10.00.40219.001 built by: SP1Rel",
+    "ProductName": "Microsoft\u00ae Visual Studio\u00ae 2010",
+    "ProductVersion": "10.00.40219.01"
+   }
+  },
+  {
+   "path": "code$GetAppFilePath/vcomp110.dll",
+   "size": 138208,
+   "sha256": "30dbc138c12eca9cd0721c2208fd8c657090ac39b1cb7d20f1aa19935cdd946d",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Microsoft Corporation",
+    "FileDescription": "Microsoft\u00ae C/C++ OpenMP Runtime",
+    "FileVersion": "11.00.51106.1 built by: Q11REL",
+    "ProductName": "Microsoft\u00ae Visual Studio\u00ae 2012",
+    "ProductVersion": "11.00.51106.1"
+   }
+  },
+  {
+   "path": "code$GetAppFilePath/vcomp90.dll",
+   "size": 59904,
+   "sha256": "5c3a317908bc4091bb74c276df5d7493a5fde93bfef1df73872523ab5df601a6",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Microsoft Corporation",
+    "FileDescription": "Microsoft\u00ae C/C++ OpenMP Runtime",
+    "FileVersion": "9.00.21022.008 built by: RTM",
+    "ProductName": "Microsoft\u00ae Visual Studio\u00ae 2008",
+    "ProductVersion": "9.00.21022.08"
+   }
+  },
+  {
+   "path": "code$GetIniFilePath.new/AmgNetworkSupport.txt",
+   "size": 719,
+   "sha256": "40826961606439f8a622936b30a286d00d74546a0a0f97ac73f414ae83527267"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Content/CountessSensitivity.txt",
+   "size": 2274,
+   "sha256": "0f4040fae86e8ec5cbe98fc9761b0a834a9740c3a7f541ec7ed50696b7b1e8b4"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Content/ParfocalitySetup.png",
+   "size": 61336,
+   "sha256": "c8664363c835c53f50b3f802c40f1433fea0eb3fe85f041284bfffded3fae20b"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Content/Pgr-FLIllumination-Default.txt",
+   "size": 3480,
+   "sha256": "7cf3e6ea44d475df0913cf8ea9901c9d6b7f44c30f35930751b251fd169b389d"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Content/Pgr-FLIllumination-TRANS.txt",
+   "size": 2107,
+   "sha256": "eda824f5d3d83c864f1961a6cb933706c546f0d4d6479a257d2c211cadf96df5"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Content/XLIllumination.txt",
+   "size": 1472,
+   "sha256": "45ba86127652e7198a54e651d631fe3e7da5a9c837c0084467654503ae853119"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/CN_parameter_update.ini",
+   "size": 14407,
+   "sha256": "dd9600ff53a145dac041aadb0a2c455ceddd55abb4814766bed7e9600fc8d221"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/Certificate/CertificateReadme.txt",
+   "size": 382,
+   "sha256": "ca9d6c9bebae31cbd62defed43069eb8437f67cf76296e7220d4697184d9a9a5"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/Certificate/InstallCertificate.cmd",
+   "size": 57,
+   "sha256": "ad41392e2b3c4f881841371cbfbdd3a64bf6be956709bb7dc5fabe7692e35d5b"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/Certificate/PointGrey.cer",
+   "size": 1410,
+   "sha256": "6ae5615fc96e0605c513afccff7b79cc8aa44b7ba1fe5970cb8a76d3812a6e77"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/Certificate/ViewLocalCertficates.msc",
+   "size": 63374,
+   "sha256": "213b2dff765899cd7d17afa143f120b4f206ed2d1279b1eaabda7e2f1a14a285"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/ChuckNorrisApplication.hex",
+   "size": 380451,
+   "sha256": "d2a6862a90483fbbf72d158f76e05e4a76f514e7bca7e60a748083e3d8d6adb9"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/ChuckNorrisApplication_VERSION4.hex",
+   "size": 371989,
+   "sha256": "3bb544b623629993fa6ce32f5edaa7e50bdd0dff567bb1b3347da465f6d9fc7d"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/ChuckNorrisSensorSlaveBoard.hex",
+   "size": 41539,
+   "sha256": "0fad4029beee062c1cb376080b887fe6dfe89e5d34f6766971816db256aae517"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/ChuckNorrisSensorSlaveBoard_ORIGINAL.hex",
+   "size": 39588,
+   "sha256": "abf68ec5f258d21e7ce8fa3db5f604af46dd3b76b305a4a86c30405e656fbbcc"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/Evos_Update.ini",
+   "size": 10113,
+   "sha256": "ce85424abc4fc80c81567f02918ce450c3964b1bc5d3e71e995208528dd9b060"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/LED Board App - EVOS Gen III.hex",
+   "size": 125434,
+   "sha256": "af93682f7c60512791d9a607652621e42e299da091a7235bc4ae5356ee2d0ecc"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/Mono Camera Installation Disk/DriverInstallUtility.exe",
+   "size": 68376,
+   "sha256": "8f8951c1a6a8e894bcad3c1e2b92b7b700974100173f153c67eae56efdf615dd",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {}
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/Mono Camera Installation Disk/InstallDriver.cmd",
+   "size": 42,
+   "sha256": "7abac1ca2620fc232abc15756288ac8eecb08dd8203371cc6ea801ea7e8c3016"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/Mono Camera Installation Disk/PreInstallDriver.cmd",
+   "size": 41,
+   "sha256": "35e77dae005fb072382d6ea2a55487a21d70f391b2bd0d602e10a7d15a2cd591"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/Mono Camera Installation Disk/WdfCoInstaller01009.dll",
+   "size": 1721576,
+   "sha256": "18487b4ff94edccc98ed59d9fca662d4a1331c5f1e14df8db3093256dd9f1c3e",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Microsoft Corporation",
+    "FileDescription": "WDF Coinstaller",
+    "FileVersion": "1.9.7600.16385 (win7_rtm.090713-1255)",
+    "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+    "ProductVersion": "1.9.7600.16385"
+   }
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/Mono Camera Installation Disk/pgrusbcam.cat",
+   "size": 13515,
+   "sha256": "42e1b0842403d0b519d6a8e3b7999a332166c4f711b9b35d9a2a0132bb48a7ff"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/Mono Camera Installation Disk/pgrusbcam.inf",
+   "size": 9122,
+   "sha256": "264c8e758950aa86ce2240da1d358179381d177a8d090306058da3a7d1360133"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/Mono Camera Installation Disk/pgrusbcam.sys",
+   "size": 41472,
+   "sha256": "fe38d0c3328076312a392689c74d7f67e56f341ca837c4fcb833a9eca69bfea2",
+   "pe": {
+    "machine": "x64",
+    "pe_format": "PE32+",
+    "is_managed": false,
+    "clr_flags": null,
+    "effective_bitness": "64"
+   },
+   "version": {
+    "CompanyName": "Point Grey Research",
+    "FileDescription": "PGR USB driver",
+    "FileVersion": "2, 3, 3, 59",
+    "ProductName": "PGRUSBCam.sys",
+    "ProductVersion": "2, 3, 3, 59"
+   }
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/chameleon-v1.12.2.0.ez2",
+   "size": 356651,
+   "sha256": "85bb1851b4f7899610d1e8828e57e6f8d3ae8ab46ca18a544f5bec95e26a665a"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Firmware/chameleon-v1.17.3.0.ez2",
+   "size": 567917,
+   "sha256": "3abddc7982ba684275af4c968bc9419eb6c7ca17b8ea8ada3c3be65379ff71d6"
+  },
+  {
+   "path": "code$GetIniFilePath.new/MotorController/axis_firmware/F_Axis/FAxis.sw",
+   "size": 11469,
+   "sha256": "ada4e3eec294c39ce6dad3b6a4e539fad8b9c55a430464686bf35066c80b5d9b"
+  },
+  {
+   "path": "code$GetIniFilePath.new/MotorController/axis_firmware/F_Axis/FAxis.t.zip",
+   "size": 5051,
+   "sha256": "056879f4e3536c39d2a443486781a8edf722802ab7043376ac6ed1c4dd1a3a9d"
+  },
+  {
+   "path": "code$GetIniFilePath.new/MotorController/axis_firmware/MotorFirmware.ini",
+   "size": 141,
+   "sha256": "f5f6652ba1f842e3f81b38ee2bbc3e05d3206d90d36ee0ea040027b33e6f98fc"
+  },
+  {
+   "path": "code$GetIniFilePath.new/MotorController/axis_firmware/O_Axis/OAxis.sw",
+   "size": 4140,
+   "sha256": "2d7d855932538baefcb5fc798c2939a97a4d3f406e8548c88fb3538f18b25a97"
+  },
+  {
+   "path": "code$GetIniFilePath.new/MotorController/axis_firmware/O_Axis/OAxis.t.zip",
+   "size": 4259,
+   "sha256": "c284d2e80b629a6b6b17aa07ef77c297e8321a56d44759c45bbcf1daa0868351"
+  },
+  {
+   "path": "code$GetIniFilePath.new/MotorController/axis_firmware/P_Axis/PAxis.sw",
+   "size": 4062,
+   "sha256": "bfcb03e2081a5a5110c8b000661aa0099f6b20725bf312a2e9a9b696adede2c5"
+  },
+  {
+   "path": "code$GetIniFilePath.new/MotorController/axis_firmware/P_Axis/PAxis.t.zip",
+   "size": 4249,
+   "sha256": "2bdd7f3261536c1f002a0940ed13dfc40d070fe0640cef06ad7fbd7f7b04008f"
+  },
+  {
+   "path": "code$GetIniFilePath.new/MotorController/axis_firmware/X_Axis/XAxis.sw",
+   "size": 13400,
+   "sha256": "ea6c1227d9042f1b22de18f4cb4bd631730516eb3c2e321f5d17312acd792468"
+  },
+  {
+   "path": "code$GetIniFilePath.new/MotorController/axis_firmware/X_Axis/XAxis.t.zip",
+   "size": 5308,
+   "sha256": "4e7f755fbcfdd2c61fbfbc9a0885a5e3dae203c0620185f1f89defd981d73ae7"
+  },
+  {
+   "path": "code$GetIniFilePath.new/MotorController/axis_firmware/Y_Axis/YAxis.sw",
+   "size": 13404,
+   "sha256": "4b9bc1d9525d1ea61da679e85a7362d4496b426a4ae92a9c241c3b5a87a570c7"
+  },
+  {
+   "path": "code$GetIniFilePath.new/MotorController/axis_firmware/Y_Axis/YAxis.t.zip",
+   "size": 5308,
+   "sha256": "2afd012b3a1093af965a3ddb69ab168ede7d03042d06d79abe5f78bc76dc6001"
+  },
+  {
+   "path": "code$GetIniFilePath.new/MotorController/axis_firmware/Z_Axis/ZAxis.sw",
+   "size": 9338,
+   "sha256": "1a4ba8691b0a9dc826fb1b16c684c2764ccc9f312c2d5b77b06b5c3917f91218"
+  },
+  {
+   "path": "code$GetIniFilePath.new/MotorController/axis_firmware/Z_Axis/ZAxis.t.zip",
+   "size": 4966,
+   "sha256": "c7a4952aa8915f163584338e3bad0c7b3d8e01a840449840d049d8365c6917fc"
+  },
+  {
+   "path": "code$GetIniFilePath.new/NewUser.bak",
+   "size": 15763,
+   "sha256": "a387192bf2008378fd02228e1beaaf68f4b172202709fce7c33ddc9454a6b3e0"
+  },
+  {
+   "path": "code$GetIniFilePath.new/PearlScope.ini",
+   "size": 19481,
+   "sha256": "54d90b8e792d9622f3d57b01e2dbe808801e040c7f95002eb4167b93b63a37ca"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/100mm_petri.png",
+   "size": 90542,
+   "sha256": "822fc55b558eec62b19f97a244d77c5189228d422bcfff184680906c2689f27e"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/100mm_petri_selected.png",
+   "size": 105676,
+   "sha256": "dd21393becd590c03f19d4771d5e5d2b17c52cbe888fcb50cb523f9c8dba5ab7"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/12_well.png",
+   "size": 201386,
+   "sha256": "93d5a8e15e561f8501972f4d26915f9bc8566c7421c5a3251476f2b71c84cb0b"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/12_well_selected.png",
+   "size": 226003,
+   "sha256": "fadfe2571ac492cf615c2a00866249956054b17d8d6c85d3b760ca914ecf19fe"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/1536_well.png",
+   "size": 506604,
+   "sha256": "c5e88f0632740aab4c4cc0e869b533d53b1a1bf6a61fd97a6d2b5087ad9034e4"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/1536_well_selected.png",
+   "size": 558942,
+   "sha256": "8aff484a50dbd358eb0f4bf9dd2e30f8b04c30dfddb77304ad5aa654be72b3da"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/24_well.png",
+   "size": 253639,
+   "sha256": "13c79ade5c7c63fa99d6c5be10b4aae5c176292fd25477926dda5477cd80da4b"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/24_well_selected.png",
+   "size": 323727,
+   "sha256": "d69c2bee878c7338f17c5c2ecd98bacb0f450653acc68b7c117fbf3dc3ecfe27"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/250ml_flask.png",
+   "size": 54487,
+   "sha256": "18bac5a0afe224fb5cfa862a904c2f27520677554ec4f13540f0d030e6def458"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/25ml_flask_double.png",
+   "size": 104495,
+   "sha256": "6cd9e5728ec454ea430f2c4c48a41b270fd9e62da3f296da30d27703200e2748"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/25ml_flask_single.png",
+   "size": 64289,
+   "sha256": "aa337c45dd31ac8a8f397c61814becc755461d7a8c7e696335e98a7e9740eb7a"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/35mm_petri.png",
+   "size": 165982,
+   "sha256": "a330e1de40a57657da6c6854bc7fd81bb9c0c8db7eb71146cec8e5dc24fadb24"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/35mm_petri_double.png",
+   "size": 36623,
+   "sha256": "67fcdcff589c656e5138deceeeb678b377f82599b56f62405a7bba81146a1913"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/35mm_petri_double_selected.png",
+   "size": 72851,
+   "sha256": "c517efb832bf0a05b1f75a6279b2be91729fe4b7421b480618e08a8f3a40e003"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/35mm_petri_selected.png",
+   "size": 235132,
+   "sha256": "c5c6390f9646df46e2bc8ca1d0b651c3f3bea2d53c671ab0a527f8da63867e4b"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/35mm_petri_single.png",
+   "size": 25081,
+   "sha256": "d8c98d3c30dbc395f2099e67c34518070e9b52a916fdd3b2c09189ead33ad079"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/35mm_petri_single_selected.png",
+   "size": 48685,
+   "sha256": "c5cfc13328dc7546cf80977448c657488c6ba5328023cfddd677a86c51e8d3cd"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/384_well.png",
+   "size": 569094,
+   "sha256": "5b79e17ea13c9f6fe7f66ef0670a96c27110499e083fadbe3b4a704131bc5d81"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/384_well_selected.png",
+   "size": 655954,
+   "sha256": "32c101cd968bd94fbe541f5069180e1af310b85974f1b5147810b8c217b08d06"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/48_well.png",
+   "size": 371407,
+   "sha256": "0342fb995a12f89e3d910ba1804ef22092b526f9ac16f923c0ffaee3f6551158"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/48_well_selected.png",
+   "size": 563157,
+   "sha256": "43293e6c46949397d25121f774b3c8be83e49acef6cac28a78dfed564fb5b203"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/4_chamber_perfusion_plate.png",
+   "size": 227936,
+   "sha256": "8b7c14f661e4a0cb27ee7554722694561771f360d287fad7dea0a6d1ba16efae"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/4_chamber_perfusion_plate_selected.png",
+   "size": 230309,
+   "sha256": "a625ec62fdc72c03bc735cfbaaec3182693ecccebd4064c761b1fd02e69b4360"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/4_chamber_slide.png",
+   "size": 39186,
+   "sha256": "a14740f9cfcb20d2b6b484ebf6a2e41ca72eade184920068a81858b07443442d"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/4_chamber_slide_selected.png",
+   "size": 43227,
+   "sha256": "c5f73ac24136017bade7a76613d52221f37c3dcb27b4491680de61089ef5474c"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/4_well.png",
+   "size": 104159,
+   "sha256": "fdb9a585f965e0d4898e0d448611dbf555352e28c200a2b749e33f8b3f9ec3ac"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/4_well_selected.png",
+   "size": 123458,
+   "sha256": "de7f0c84c6bbb9282c848dd5b7f8477f6a467db7b4d4ae10244d76bcbc298b76"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/50ml_flask.png",
+   "size": 41226,
+   "sha256": "b3a68c370a11daf803d753560d17f202e302d93cb2912898af216bd6bc45ee82"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/60_well.png",
+   "size": 160293,
+   "sha256": "3bd03596c19e09bbd03b3e258443f334a1551dbfdde09bac2fe8d892b2f890e1"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/60_well_selected.png",
+   "size": 205994,
+   "sha256": "097dcbea72f9ef4754d6422857f8f6c18d2c932efa637cabf37e5291319b3c10"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/60mm_petri.png",
+   "size": 122575,
+   "sha256": "a28d4da28f2cd07bbaedb3900d331a6ca792ae47dd23787a1520136c4efca3c3"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/60mm_petri_selected.png",
+   "size": 151423,
+   "sha256": "0fab0e3693fb4bab3c3f0f300a034dcfb3fc38e9f2a87a82977b1bfe7fd893b3"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/60mm_petri_single.png",
+   "size": 31955,
+   "sha256": "957c9f29de8c263fc046245cca127268844da5ac49fb4705eef4cd3b9f4ef4bc"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/60mm_petri_single_selected.png",
+   "size": 78882,
+   "sha256": "360db435b1851485541c41b9eee7a9c28c59ce7251645ecbffac85c57992d814"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/6_well.png",
+   "size": 175775,
+   "sha256": "d0a71cf5f755f08c8f6c5b621a894d441782f3d05cc0d96321b0b335665ef39e"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/6_well_selected.png",
+   "size": 207823,
+   "sha256": "a900ecc9a6b7b225066fa5494aa6e1ca55dea0ef0352d4d79ea0a5be6af5ad17"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/70ml_flask_double.png",
+   "size": 66489,
+   "sha256": "96d4453db5112e96ecf7827c3d00bbe5f45f3e50766c99c2bc67ddc14dab2cd5"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/70ml_flask_single.png",
+   "size": 43715,
+   "sha256": "1f3b5a233b6c8f894a8950d5eeac1838f8f9c589ae7cc63b3bf260d62b8c825d"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/8_chamber_slide.png",
+   "size": 61930,
+   "sha256": "8ef6148c50adb34431cce669350e22d768ecf7570810f932f81720658ec9bb2b"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/8_chamber_slide_selected.png",
+   "size": 79008,
+   "sha256": "39ffc9f4d109f1b3fc22ac33d85d797d6f6946d787ad477b1fe97a4e49a94fe8"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/96_well.png",
+   "size": 307003,
+   "sha256": "2bc6f5367b6c3b79889550c989b1dbdd6430a6c975870440486a54359937b7b9"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/96_well_Falcon.png",
+   "size": 307011,
+   "sha256": "aafcff9c43760786a670f529eed7b8ba4ceff00b102d8dd86992f727005f8023"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/96_well_selected.png",
+   "size": 307458,
+   "sha256": "eb93de68f0f9ac433bd963ee26fc049021cfd52edf5c872989e59ec88ed2e17e"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/MicrofluidicChamber.png",
+   "size": 59343,
+   "sha256": "c0a898776a150ff000d68555d5682cc5a585511c4d947b3f42214791160e6f09"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/OneSlide.png",
+   "size": 37993,
+   "sha256": "850c03eb53c6405513d94cf3525acaf29cdf865570ffbae0b9e510658b62fecc"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/TwoSlides.png",
+   "size": 57325,
+   "sha256": "a35d5684d2ca17ad6a5b5e0d85ed3a5e46b1e64c57619058cb553a9f48a4606a"
+  },
+  {
+   "path": "code$GetIniFilePath.new/Vessels/Viewer.png",
+   "size": 19313,
+   "sha256": "c578bd6825c45f4919649efe3efea04b5c9f626ddfcd829b24ab19e137cf0d8b"
+  },
+  {
+   "path": "fonts/EUROSTIL.TTF",
+   "size": 53144,
+   "sha256": "427a711d002215119da3d1ee22b63bb25d0decfe1187c403e06bb66011be1fb4"
+  }
+ ]
+}

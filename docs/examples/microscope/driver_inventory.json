@@ -1,0 +1,63 @@
+{
+  "meta": {
+    "scan_id": "microscope-20261111T222225Z-239965",
+    "label": "microscope",
+    "tool_version": "0.1.0.dev0",
+    "schema_version": "0.1.0",
+    "started_at": "2026-11-11T22:22:25.284554Z",
+    "finished_at": "2026-11-11T22:22:25.287219Z",
+    "host_platform": "Linux 6.18.44-fc-v378 (x86_64)",
+    "python_version": "3.13.18",
+    "elevated": true,
+    "redacted": false,
+    "artifact_roots": []
+  },
+  "drivers": [
+    {
+      "device_id": "USB\\VID_046D&PID_C52B\\5&1A2B3C4D&0&3",
+      "device_name": "USB Composite Device",
+      "provider": "Microsoft",
+      "version": "10.0.19041.1",
+      "date": "2006-06-21",
+      "inf_name": "usb.inf",
+      "is_signed": true,
+      "signer": "Microsoft Windows",
+      "device_class": "USB",
+      "hardware_id": "USB\\VID_046D&PID_C52B&REV_1211",
+      "evidence_ids": [
+        "drv-293f941195"
+      ]
+    },
+    {
+      "device_id": "USB\\VID_0403&PID_6001\\A12345BC",
+      "device_name": "USB Serial Converter",
+      "provider": "FTDI",
+      "version": "2.12.36.4",
+      "date": "2021-07-15",
+      "inf_name": "oem3.inf",
+      "is_signed": true,
+      "signer": "Microsoft Windows Hardware Compatibility Publisher",
+      "device_class": "USB",
+      "hardware_id": "USB\\VID_0403&PID_6001&REV_0600",
+      "evidence_ids": [
+        "drv-8086b5c710"
+      ]
+    },
+    {
+      "device_id": "USB\\VID_1234&PID_5678&MI_00\\7&BBBB&0&0000",
+      "device_name": "Synthetic Imaging Interface",
+      "provider": "Synthetic Vendor",
+      "version": "1.0.0.0",
+      "date": "2013-03-01",
+      "inf_name": "oem12.inf",
+      "is_signed": false,
+      "signer": null,
+      "device_class": "IMAGE",
+      "hardware_id": "USB\\VID_1234&PID_5678&REV_0100&MI_00",
+      "evidence_ids": [
+        "drv-a7e0f3545d"
+      ]
+    }
+  ],
+  "packages": []
+}

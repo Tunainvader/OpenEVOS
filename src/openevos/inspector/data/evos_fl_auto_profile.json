@@ -1,0 +1,15 @@
+{
+  "_comment": "Documented baseline only (plan §3.2). No VID/PID, chip, SDK or protocol is listed because none has been verified. Add identifiers ONLY with evidence IDs from an Inspector scan.",
+  "instrument": "EVOS FL Auto (AMAFD1000)",
+  "sources": ["Thermo Fisher EVOS FL Auto and Onstage Incubator User Guide, MAN0007986", "Thermo Fisher BioProbes 69 product article"],
+  "host_link": "USB (documented); internal device topology not yet observed",
+  "components": [
+    {"role": "camera_mono_ccd", "description": "High-sensitivity monochrome interline CCD camera (fluorescence; also transmitted light)", "snapshot": "microscope"},
+    {"role": "camera_color_cmos", "description": "High-sensitivity color CMOS camera (brightfield / phase contrast)", "snapshot": "microscope"},
+    {"role": "xy_stage", "description": "Automated XY scanning stage controller", "snapshot": "microscope"},
+    {"role": "objective_turret", "description": "Five-position automated objective turret controller", "snapshot": "microscope"},
+    {"role": "focus", "description": "Focus / autofocus mechanism (whether separately controllable is unknown)", "snapshot": "microscope"},
+    {"role": "illumination", "description": "LED illumination and up to four fluorescence light cubes", "snapshot": "microscope"},
+    {"role": "amc1000_controller", "description": "Onstage Incubator (AMC1000) control unit, separate USB connection", "snapshot": "amc1000"}
+  ]
+}

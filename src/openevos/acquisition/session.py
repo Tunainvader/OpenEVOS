@@ -1,0 +1,365 @@
+"""Session: one object holding the core, profile, controller and workflow services for a UI or a
+script. `build_sim_session()` wires the optics simulator; a physical session will be built the same
+way once verified backends exist (and not before).
+"""
+
+from __future__ import annotations
+
+import threading
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from openevos.acquisition.autofocus import Autofocus
+from openevos.acquisition.calibration import CalibrationStore
+from openevos.acquisition.capture import CaptureService
+from openevos.acquisition.controller import InstrumentController
+from openevos.core.application import CoreServices, build_core
+from openevos.core.clock import Clock
+from openevos.core.device_manager import OwnershipRegistry
+from openevos.instrument.profile import InstrumentProfile, load_profile
+from openevos.instrument.settings import AppSettings
+from openevos.instrument.vessels import Vessel, VesselLibrary, VesselStageMap
+
+
+@dataclass
+class Session:
+    core: CoreServices
+    profile: InstrumentProfile
+    settings: AppSettings
+    vessels: VesselLibrary
+    vessel: Vessel
+    stage_map: VesselStageMap
+    controller: InstrumentController
+    capture: CaptureService
+    autofocus: Autofocus
+    rig: object | None = None  # simulator rig (simulation only)
+    settings_path: Path | None = None
+    listeners: list = field(default_factory=list)
+    calibration: CalibrationStore = field(default_factory=CalibrationStore)
+    nominal_map: VesselStageMap = field(default_factory=VesselStageMap)
+    #: physical motor telemetry services (ADR-0023) and whether the real X/Y stage is under control (ADR-0024)
+    telemetry: list = field(default_factory=list)
+    physical_stage: bool = False
+    physical_audit: list = field(default_factory=list)  # lifecycle of every motor.* command
+
+    def __post_init__(self) -> None:
+        self.nominal_map = self.stage_map
+        self.capture.defects_for = lambda role: (self.calibration.hot_pixels.get(role.value, [])
+                                                 if self.calibration.hot_pixel_correction else [])
+        self.capture.pixel_size_for = lambda role, slot: self.calibration.pixel_size_um.get(role.value, {}).get(slot)
+        self._apply_vessel_offset()
+
+    # ------------------------------------------------------------------ calibration application
+    def _apply_vessel_offset(self) -> None:
+        off = self.calibration.vessel_offset_um.get(self.vessel.vessel_id)
+        self.stage_map = self.nominal_map.model_copy(update={
+            "offset_x": off[0] if off else 0.0, "offset_y": off[1] if off else 0.0, "verified": bool(off)})
+
+    def pixel_size_um(self, role, slot: int | None) -> float | None:
+        if slot is None:
+            return None
+        measured = self.calibration.pixel_size_um.get(role.value, {}).get(slot)
+        if measured:
+            return measured
+        cam, obj = self.profile.camera(role), self.profile.objective(slot)
+        return cam.pixel_size_um / obj.magnification if cam and obj and cam.pixel_size_um and obj.magnification else None
+
+    def change_objective(self, slot: int):
+        """Turret command; once verified, apply calibrated parfocal (Z) and parcentric (XY) compensation so the
+        same sample point stays centred and in focus (what the original software does after calibration)."""
+        ctl = self.controller
+        prev = ctl.objective_slot()
+        ticket = ctl.set_objective(slot)
+        cal = self.calibration
+        dz = (cal.parfocal_um.get(slot, 0.0) - cal.parfocal_um.get(prev, 0.0)) if prev in cal.parfocal_um and \
+            slot in cal.parfocal_um else 0.0
+        a, b = cal.parcentric_um.get(prev), cal.parcentric_um.get(slot)
+        dxy = (a[0] - b[0], a[1] - b[1]) if a is not None and b is not None else (0.0, 0.0)
+        if abs(dz) < 0.05 and abs(dxy[0]) < 0.05 and abs(dxy[1]) < 0.05:
+            return ticket
+
+        def compensate() -> None:
+            from openevos.core.models import CommandStatus
+
+            if ticket.wait(30) is not CommandStatus.SUCCEEDED:
+                return
+            z, xy = ctl.focus_z(), ctl.stage_xy()
+            if z is not None and abs(dz) >= 0.05:
+                ctl.move_focus(z + dz).wait(30)
+            if xy is not None and (abs(dxy[0]) >= 0.05 or abs(dxy[1]) >= 0.05):
+                ctl.move_stage(xy[0] + dxy[0], xy[1] + dxy[1]).wait(30)
+
+        threading.Thread(target=compensate, daemon=True, name="objective-compensation").start()
+        return ticket
+
+    @property
+    def simulated(self) -> bool:
+        return self.profile.backend == "simulation"
+
+    def select_vessel(self, vessel_id: str) -> Vessel:
+        self.vessel = self.vessels.get(vessel_id)
+        self.settings.last_vessel_id = vessel_id
+        self._apply_vessel_offset()
+        if self.rig is not None:
+            self.rig.world.set_vessel(self.vessel)
+        for fn in list(self.listeners):
+            fn("vessel")
+        return self.vessel
+
+    def capture_focus_nominal(self) -> float:
+        z = self.controller.focus_z()
+        if z is None:
+            raise RuntimeError("focus position unknown")
+        self.vessel = self.vessels.with_focus_nominal(self.vessel.vessel_id, z)
+        if self.rig is not None:
+            self.rig.world.vessel = self.vessel  # sample unchanged; nominal only
+        for fn in list(self.listeners):
+            fn("vessel")
+        return z
+
+    def save_settings(self) -> None:
+        if self.settings_path is not None:
+            self.settings.save(self.settings_path)
+
+    def shutdown(self) -> None:
+        for svc in list(self.telemetry):  # release the motor port first
+            try:
+                svc.stop()
+            except Exception:  # noqa: BLE001, S110 — best effort during shutdown
+                pass
+        for role in list(self.profile.cameras):
+            try:
+                self.controller.stop_live(role.role)
+            except Exception:  # noqa: BLE001, S110 — best effort during shutdown
+                pass
+        self.core.shutdown()
+        stop = getattr(self.core.clock, "stop", None)
+        if stop:
+            stop()
+
+
+PHYSICAL_STAGE_DEVICE = "motor.stage"
+
+
+def build_sim_session(clock: Clock, *, fast: bool = False, settings: AppSettings | None = None,
+                      settings_path: Path | None = None, fps: float = 12.0,
+                      calibration_path: Path | None = None,
+                      telemetry: dict[str, dict] | None = None, audit_path: Path | None = None,
+                      cameras: dict[str, str] | None = None, illumination: str | None = None,
+                      led_hid=None) -> Session:
+    """Simulated optics session. `telemetry` (e.g. {"technosoft": {"port": "COM3", "motion": False}})
+    adds the physical motor drives (ADR-0023); with "motion": True the controller's stage becomes the
+    real X/Y stage (ADR-0024): every move still passes the router's safety checks, and the drive
+    clamps to its own limits. Cameras, light, focus and turret stay simulated."""
+    from openevos.backends.rig.rig import attach_optical_simulator
+    from openevos.core.instrument import attach_telemetry
+
+    core = build_core(clock, ownership=OwnershipRegistry())
+    profile = load_profile()
+    settings = settings or (AppSettings.load(settings_path) if settings_path else AppSettings())
+    vessels = VesselLibrary()
+    try:
+        vessel = vessels.get(settings.last_vessel_id)
+    except KeyError:
+        vessel = vessels.get("plate-96")
+    light_factory = _real_illumination_factory(illumination, led_hid)
+    if light_factory is not None:
+        from openevos.backends.ledboard import DEVICE_ID as LED_DEVICE_ID
+
+        profile = profile.model_copy(update={"illumination_device": LED_DEVICE_ID,
+                                             "channels": unit_cube_channels(profile.channels)})
+    rig = attach_optical_simulator(core, profile, vessel, fast=fast, fps=fps,  # rig keeps its own sim stage
+                                   camera_factories=_real_camera_factories(core, cameras or {},
+                                                                           light_real=light_factory is not None),
+                                   illumination_factory=light_factory)
+    services = attach_telemetry(core, telemetry or {})
+    _link_carriage(light_factory, services)
+    physical = any(getattr(s, "motion", False) for s in services)
+    if physical:
+        profile = profile.model_copy(update={"stage_device": PHYSICAL_STAGE_DEVICE})
+        if _enable_focus_and_turret(core, services):
+            profile = profile.model_copy(update={"focus_device": "motor.focus", "turret_device": "motor.objective_turret",
+                                                 "objectives": unit_objectives()})
+    audit = _audit_physical_commands(core, audit_path) if services else []
+    ctl = InstrumentController(core, profile)
+    cap = CaptureService(ctl, profile, settings)
+    af = Autofocus(ctl, profile)
+    session = Session(core, profile, settings, vessels, vessel, rig.stage_map, ctl, cap, af, rig, settings_path,
+                      calibration=CalibrationStore.load(calibration_path), telemetry=services,
+                      physical_stage=physical, physical_audit=audit)
+    for svc in services:
+        svc.start()
+    return session
+
+
+def real_mono_camera_present() -> bool:
+    """Read-only probe for the UI's `--mono-camera auto`: FlyCapture2 present and exactly one Chameleon
+    (1E10:2005) with a working driver. Opens no device (ADR-0037)."""
+    from openevos.backends.flycapture2.sdk import chameleon_present
+
+    return chameleon_present()
+
+
+def real_colour_camera_present() -> bool:
+    """Read-only probe for the UI's `--colour-camera auto`: uEye API present and exactly one UI-146xLE
+    (1409:1465) with a working driver. Opens no device (ADR-0039)."""
+    from openevos.backends.ueye.sdk import ueye_present
+
+    return ueye_present()
+
+
+def real_led_board_present(hid=None) -> bool:
+    """Read-only probe for the UI's `--illumination auto`: exactly one LED board application (0DAD:0051) and no
+    bootloader interface. SetupAPI enumeration only; nothing is opened or sent (ADR-0048)."""
+    from openevos.backends.ledboard import present_application_interfaces
+
+    if hid is None:
+        from openevos.backends.ledboard.winhid import WindowsHid
+
+        hid = WindowsHid()
+    apps, boot = present_application_interfaces(hid)
+    return len(apps) == 1 and not boot
+
+
+def _real_illumination_factory(illumination: str | None, hid=None):
+    """'real' -> factory for the LED board backend (ADR-0048); None/'sim' -> the simulator."""
+    if illumination in (None, "sim"):
+        return None
+    if illumination != "real":
+        raise ValueError(f"unknown illumination backend {illumination!r} (known: real, sim)")
+
+    def make(core, profile, chans, start_channel):
+        from openevos.backends.ledboard import RealLedIllumination
+
+        board = hid
+        if board is None:
+            from openevos.backends.ledboard.winhid import WindowsHid
+
+            board = WindowsHid()
+        labels = {c.slot: c.label for c in profile.channels}
+        dev = RealLedIllumination(board, chans, labels, start_channel=start_channel)
+        make.devices.append(dev)  # type: ignore[attr-defined]
+        return dev
+
+    make.devices = []  # type: ignore[attr-defined]
+    return make
+
+
+#: this unit's cube carriage (ADR-0051): slot -> (label, excitation nm, emission nm, pseudocolour). Slot 1 RFP was read
+#: by the LED board's own cube sensor (LED Gate 3, 0x47); slots 3/4 from the operator's photo, checked by the sensor
+#: before every epi ON; slot 2 is empty.
+UNIT_CUBES: dict[int, tuple[str, int, int, str] | None] = {
+    1: ("RFP", 531, 593, "#FF4D4D"), 2: None, 3: ("DAPI", 357, 447, "#4F7CFF"), 4: ("GFP", 470, 525, "#2EE66B")}
+
+
+def unit_cube_channels(channels):
+    """The profile's channels with the four cube slots replaced by this unit's loadout (UNIT_CUBES); transmitted
+    and phase channels unchanged. Used with the real LED board, so each cube button lights the cube it names."""
+    from openevos.instrument.profile import ChannelKind, ChannelSlot, Provenance
+
+    cubes = []
+    for n, spec in UNIT_CUBES.items():
+        if spec is None:
+            cubes.append(ChannelSlot(slot=f"cube{n}", kind=ChannelKind.FLUORESCENCE, label="", installed=False,
+                                     provenance=Provenance.OPERATOR))
+        else:
+            label, ex, em, colour = spec
+            cubes.append(ChannelSlot(slot=f"cube{n}", kind=ChannelKind.FLUORESCENCE, label=label, pseudocolor=colour,
+                                     excitation_nm=ex, emission_nm=em, provenance=Provenance.OPERATOR))
+    return (*cubes, *(c for c in channels if not c.slot.startswith("cube")))
+
+
+#: this unit's objectives by turret position (calibration `tpco`; position 1 = 4X confirmed by the operator, the full
+#: turret cycle observed 2026-11-17). NA from the AMG catalogue numbers in `tpco`; Probable, not measured here.
+UNIT_OBJECTIVES = ((1, "4X Plan PH", 4, 0.13, "Ph"), (2, "10X LPlan FL PH", 10, 0.25, "Ph1"),
+                   (3, "20X LPlan FL PH", 20, 0.40, "Ph1"), (4, "40X LPlan FL PH", 40, 0.65, "Ph2"),
+                   (5, "60X Plan FL", 60, 0.75, None))
+
+
+def unit_objectives():
+    """The turret buttons for this unit (ADR-0053). Not calibrated (pixel size from the nominal magnification)."""
+    from openevos.instrument.profile import ObjectiveSlot, Provenance
+
+    return tuple(ObjectiveSlot(slot=s, label=label, magnification=mag, numerical_aperture=na, immersion="air",
+                               phase_ring=ring, calibration_valid=False, provenance=Provenance.RECOVERED)
+                 for s, label, mag, na, ring in UNIT_OBJECTIVES)
+
+
+def _enable_focus_and_turret(core, services) -> bool:
+    """ADR-0053: with real motor control (and focus/turret control, on by default with it), the app's focus and
+    objective controls drive the real Z and turret through the stage service, the single owner of the motor port."""
+    motion = [s for s in services if getattr(s, "motion", False) and getattr(s, "zo_control", False)]
+    return len(motion) == 1
+
+
+def _link_carriage(light_factory, services) -> None:
+    """ADR-0051: with the real LED board AND real motor control, a cube channel drives the F carriage to its cube
+    before the light goes on. The stage service is the only owner of the motor port, so it makes the move."""
+    if light_factory is None:
+        return
+    motion = [s for s in services if getattr(s, "motion", False) and hasattr(s, "move_carriage")]
+    if len(motion) != 1:
+        return
+    svc = motion[0]
+    svc.carriage_control = True
+    for dev in getattr(light_factory, "devices", ()):
+        dev.carriage = svc.move_carriage
+
+
+def _real_camera_factories(core: CoreServices, cameras: dict[str, str], *, light_real: bool = False) -> dict:
+    """Camera roles to run on real hardware, e.g. {"mono": "flycapture2", "color": "ueye"}: the mono
+    Chameleon (ADR-0037) and the colour uEye (ADR-0039). Anything else is refused before any device is
+    touched."""
+    from openevos.instrument.profile import CameraRole
+
+    known = {("mono", "flycapture2"): CameraRole.MONO, ("color", "ueye"): CameraRole.COLOR}
+    factories = {}
+    for role_name, backend in cameras.items():
+        role = known.get((role_name, backend))
+        if role is None:
+            raise ValueError(f"no real camera backend {backend!r} for role {role_name!r} "
+                             "(known: mono=flycapture2, color=ueye)")
+
+        def make(rig, cam, backend=backend):
+            extra = lambda: (("camera_role", cam.role.value), ("light_simulated", str(not light_real)))
+            if backend == "flycapture2":
+                from openevos.backends.flycapture2 import FlyCapture2MonoCamera
+
+                return FlyCapture2MonoCamera(cam.device_id, core.transport, channel_fn=lambda: rig.light.channel,
+                                             extra_fn=extra)
+            from openevos.backends.ueye import UeyeColourCamera
+
+            return UeyeColourCamera(cam.device_id, core.transport, channel_fn=lambda: rig.light.channel,
+                                    extra_fn=extra)
+        factories[role] = make
+    return factories
+
+
+def _audit_physical_commands(core: CoreServices, path: Path | None) -> list[dict]:
+    """Append-only JSONL record of every lifecycle step of a command to a physical motor device
+    (the UI's equivalent of the gateway audit trail for ADR-0024). In memory only when path is None."""
+    import json
+    from datetime import datetime, timezone
+
+    from openevos.core.event_bus import CommandLifecycleEvent
+
+    lock = threading.Lock()
+
+    def record(ev: CommandLifecycleEvent) -> None:
+        if not ev.device_id.startswith("motor."):
+            return
+        line = {"time": datetime.now(timezone.utc).isoformat(timespec="milliseconds"), "device": ev.device_id,
+                "command_id": ev.command_id, "status": ev.status.value,
+                "previous": ev.previous_status.value if ev.previous_status else None, "message": ev.message,
+                "result": ev.result.as_dict() if ev.result is not None else None}
+        with lock:
+            records.append(line)
+            if path is not None:
+                with path.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(line) + "\n")
+
+    records: list[dict] = []
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    core.bus.subscribe(CommandLifecycleEvent, record)
+    return records

@@ -1,0 +1,534 @@
+{
+  "meta": {
+    "scan_id": "microscope-20261111T222225Z-239965",
+    "label": "microscope",
+    "tool_version": "0.1.0.dev0",
+    "schema_version": "0.1.0",
+    "started_at": "2026-11-11T22:22:25.284554Z",
+    "finished_at": "2026-11-11T22:22:25.287219Z",
+    "host_platform": "Linux 6.18.44-fc-v378 (x86_64)",
+    "python_version": "3.13.18",
+    "elevated": true,
+    "redacted": false,
+    "artifact_roots": []
+  },
+  "devices": [
+    {
+      "instance_id": "PCI\\VEN_8086&DEV_A36D&SUBSYS_00000000&REV_10\\3&11583659&0&A0",
+      "friendly_name": "Intel(R) USB 3.1 eXtensible Host Controller",
+      "device_class": "USB",
+      "class_guid": "{36fc9e60-c465-11cf-8056-444553540000}",
+      "manufacturer": "Generic USB xHCI Host Controller",
+      "status": "OK",
+      "present": true,
+      "problem": "CM_PROB_NONE",
+      "problem_code": 0,
+      "service": "USBXHCI",
+      "hardware_ids": [
+        "PCI\\VEN_8086&DEV_A36D&SUBSYS_00000000&REV_10"
+      ],
+      "compatible_ids": [
+        "PCI\\CC_0C0330"
+      ],
+      "bus_reported_description": null,
+      "parent_instance_id": null,
+      "location_info": null,
+      "location_paths": [],
+      "driver_inf": null,
+      "driver_provider": null,
+      "driver_version": null,
+      "driver_date": null,
+      "last_arrival": null,
+      "usb": null,
+      "stage": 1,
+      "evidence_ids": [
+        "pnp-67815fd111"
+      ]
+    },
+    {
+      "instance_id": "USB\\ROOT_HUB30\\4&2A3B1C2D&0&0",
+      "friendly_name": "USB Root Hub (USB 3.0)",
+      "device_class": "USB",
+      "class_guid": "{36fc9e60-c465-11cf-8056-444553540000}",
+      "manufacturer": "(Standard USB HUBs)",
+      "status": "OK",
+      "present": true,
+      "problem": "CM_PROB_NONE",
+      "problem_code": 0,
+      "service": "USBHUB3",
+      "hardware_ids": [
+        "USB\\ROOT_HUB30&VID8086&PID0A36D&REV0010",
+        "USB\\ROOT_HUB30"
+      ],
+      "compatible_ids": [],
+      "bus_reported_description": null,
+      "parent_instance_id": "PCI\\VEN_8086&DEV_A36D&SUBSYS_00000000&REV_10\\3&11583659&0&A0",
+      "location_info": null,
+      "location_paths": [],
+      "driver_inf": null,
+      "driver_provider": null,
+      "driver_version": null,
+      "driver_date": null,
+      "last_arrival": null,
+      "usb": null,
+      "stage": 1,
+      "evidence_ids": [
+        "pnp-6a4c75ebb1"
+      ]
+    },
+    {
+      "instance_id": "USB\\VID_046D&PID_C52B\\5&1A2B3C4D&0&3",
+      "friendly_name": "USB Composite Device",
+      "device_class": "USB",
+      "class_guid": "{36fc9e60-c465-11cf-8056-444553540000}",
+      "manufacturer": "(Standard USB Host Controller)",
+      "status": "OK",
+      "present": true,
+      "problem": "CM_PROB_NONE",
+      "problem_code": 0,
+      "service": "usbccgp",
+      "hardware_ids": [
+        "USB\\VID_046D&PID_C52B&REV_1211",
+        "USB\\VID_046D&PID_C52B"
+      ],
+      "compatible_ids": [
+        "USB\\COMPOSITE"
+      ],
+      "bus_reported_description": "USB Receiver",
+      "parent_instance_id": "USB\\ROOT_HUB30\\4&2A3B1C2D&0&0",
+      "location_info": "Port_#0003.Hub_#0001",
+      "location_paths": [],
+      "driver_inf": null,
+      "driver_provider": null,
+      "driver_version": null,
+      "driver_date": null,
+      "last_arrival": null,
+      "usb": {
+        "vid": "046D",
+        "pid": "C52B",
+        "rev": "1211",
+        "mi": null,
+        "is_interface": false,
+        "serial_in_instance": null
+      },
+      "stage": 1,
+      "evidence_ids": [
+        "pnp-293f941195"
+      ]
+    },
+    {
+      "instance_id": "USB\\VID_046D&PID_C52B&MI_00\\6&2B3C4D5E&0&0000",
+      "friendly_name": "USB Input Device",
+      "device_class": "HIDClass",
+      "class_guid": "{745a17a0-74d3-11d0-b6fe-00a0c90f57da}",
+      "manufacturer": "(Standard system devices)",
+      "status": "OK",
+      "present": true,
+      "problem": "CM_PROB_NONE",
+      "problem_code": 0,
+      "service": "HidUsb",
+      "hardware_ids": [
+        "USB\\VID_046D&PID_C52B&REV_1211&MI_00",
+        "USB\\VID_046D&PID_C52B&MI_00"
+      ],
+      "compatible_ids": [
+        "USB\\Class_03&SubClass_01&Prot_01"
+      ],
+      "bus_reported_description": null,
+      "parent_instance_id": "USB\\VID_046D&PID_C52B\\5&1A2B3C4D&0&3",
+      "location_info": null,
+      "location_paths": [],
+      "driver_inf": null,
+      "driver_provider": null,
+      "driver_version": null,
+      "driver_date": null,
+      "last_arrival": null,
+      "usb": {
+        "vid": "046D",
+        "pid": "C52B",
+        "rev": "1211",
+        "mi": "00",
+        "is_interface": true,
+        "serial_in_instance": null
+      },
+      "stage": 1,
+      "evidence_ids": [
+        "pnp-085aae4bc6"
+      ]
+    },
+    {
+      "instance_id": "USB\\VID_0403&PID_6001\\A12345BC",
+      "friendly_name": "USB Serial Converter",
+      "device_class": "USB",
+      "class_guid": "{36fc9e60-c465-11cf-8056-444553540000}",
+      "manufacturer": "FTDI",
+      "status": "OK",
+      "present": true,
+      "problem": "CM_PROB_NONE",
+      "problem_code": 0,
+      "service": "FTDIBUS",
+      "hardware_ids": [
+        "USB\\VID_0403&PID_6001&REV_0600",
+        "USB\\VID_0403&PID_6001"
+      ],
+      "compatible_ids": [],
+      "bus_reported_description": "FT232R USB UART",
+      "parent_instance_id": "USB\\ROOT_HUB30\\4&2A3B1C2D&0&0",
+      "location_info": null,
+      "location_paths": [
+        "PCIROOT(0)#PCI(1400)#USBROOT(0)#USB(2)"
+      ],
+      "driver_inf": "oem3.inf",
+      "driver_provider": "FTDI",
+      "driver_version": "2.12.36.4",
+      "driver_date": null,
+      "last_arrival": null,
+      "usb": {
+        "vid": "0403",
+        "pid": "6001",
+        "rev": "0600",
+        "mi": null,
+        "is_interface": false,
+        "serial_in_instance": "A12345BC"
+      },
+      "stage": 1,
+      "evidence_ids": [
+        "pnp-8086b5c710"
+      ]
+    },
+    {
+      "instance_id": "FTDIBUS\\VID_0403+PID_6001+A12345BCA\\0000",
+      "friendly_name": "USB Serial Port (COM3)",
+      "device_class": "Ports",
+      "class_guid": "{4d36e978-e325-11ce-bfc1-08002be10318}",
+      "manufacturer": "FTDI",
+      "status": "OK",
+      "present": true,
+      "problem": "CM_PROB_NONE",
+      "problem_code": 0,
+      "service": "FTSER2K",
+      "hardware_ids": [
+        "FTDIBUS\\COMPORT&VID_0403&PID_6001"
+      ],
+      "compatible_ids": [],
+      "bus_reported_description": null,
+      "parent_instance_id": "USB\\VID_0403&PID_6001\\A12345BC",
+      "location_info": null,
+      "location_paths": [],
+      "driver_inf": null,
+      "driver_provider": null,
+      "driver_version": null,
+      "driver_date": null,
+      "last_arrival": null,
+      "usb": {
+        "vid": "0403",
+        "pid": "6001",
+        "rev": null,
+        "mi": null,
+        "is_interface": false,
+        "serial_in_instance": "A12345BCA"
+      },
+      "stage": 1,
+      "evidence_ids": [
+        "pnp-b634d4accb"
+      ]
+    },
+    {
+      "instance_id": "USB\\VID_1D6B&PID_ABCD\\OLDSERIAL99",
+      "friendly_name": "Unknown USB Device",
+      "device_class": "USB",
+      "class_guid": null,
+      "manufacturer": null,
+      "status": "Unknown",
+      "present": false,
+      "problem": "CM_PROB_PHANTOM",
+      "problem_code": 45,
+      "service": null,
+      "hardware_ids": [
+        "USB\\VID_1D6B&PID_ABCD&REV_0100"
+      ],
+      "compatible_ids": [],
+      "bus_reported_description": null,
+      "parent_instance_id": null,
+      "location_info": null,
+      "location_paths": [],
+      "driver_inf": null,
+      "driver_provider": null,
+      "driver_version": null,
+      "driver_date": null,
+      "last_arrival": "2025-03-04T10:11:12.0000000Z",
+      "usb": {
+        "vid": "1D6B",
+        "pid": "ABCD",
+        "rev": "0100",
+        "mi": null,
+        "is_interface": false,
+        "serial_in_instance": "OLDSERIAL99"
+      },
+      "stage": 1,
+      "evidence_ids": [
+        "pnp-33ca958b9b"
+      ]
+    },
+    {
+      "instance_id": "ACPI\\PNP0303\\4&1D401FB5&0",
+      "friendly_name": "Standard PS/2 Keyboard",
+      "device_class": "Keyboard",
+      "class_guid": "{4d36e96b-e325-11ce-bfc1-08002be10318}",
+      "manufacturer": "(Standard keyboards)",
+      "status": "OK",
+      "present": true,
+      "problem": "CM_PROB_NONE",
+      "problem_code": 0,
+      "service": "i8042prt",
+      "hardware_ids": [
+        "ACPI\\PNP0303"
+      ],
+      "compatible_ids": [],
+      "bus_reported_description": null,
+      "parent_instance_id": null,
+      "location_info": null,
+      "location_paths": [],
+      "driver_inf": null,
+      "driver_provider": null,
+      "driver_version": null,
+      "driver_date": null,
+      "last_arrival": null,
+      "usb": null,
+      "stage": 1,
+      "evidence_ids": [
+        "pnp-9adb7535df"
+      ]
+    },
+    {
+      "instance_id": "USB\\VID_05E3&PID_0610\\5&1A2B3C4D&0&4",
+      "friendly_name": "Generic USB Hub",
+      "device_class": "USB",
+      "class_guid": "{36fc9e60-c465-11cf-8056-444553540000}",
+      "manufacturer": "(Generic USB Hub)",
+      "status": "OK",
+      "present": true,
+      "problem": "CM_PROB_NONE",
+      "problem_code": 0,
+      "service": "USBHUB3",
+      "hardware_ids": [
+        "USB\\VID_05E3&PID_0610&REV_9226",
+        "USB\\VID_05E3&PID_0610"
+      ],
+      "compatible_ids": [
+        "USB\\Class_09"
+      ],
+      "bus_reported_description": null,
+      "parent_instance_id": "USB\\ROOT_HUB30\\4&2A3B1C2D&0&0",
+      "location_info": null,
+      "location_paths": [],
+      "driver_inf": null,
+      "driver_provider": null,
+      "driver_version": null,
+      "driver_date": null,
+      "last_arrival": null,
+      "usb": {
+        "vid": "05E3",
+        "pid": "0610",
+        "rev": "9226",
+        "mi": null,
+        "is_interface": false,
+        "serial_in_instance": null
+      },
+      "stage": 1,
+      "evidence_ids": [
+        "pnp-20573b6ca0"
+      ]
+    },
+    {
+      "instance_id": "USB\\VID_1234&PID_5678\\6&AAAA&0&1",
+      "friendly_name": "USB Composite Device",
+      "device_class": "USB",
+      "class_guid": "{36fc9e60-c465-11cf-8056-444553540000}",
+      "manufacturer": "(Standard USB Host Controller)",
+      "status": "OK",
+      "present": true,
+      "problem": "CM_PROB_NONE",
+      "problem_code": 0,
+      "service": "usbccgp",
+      "hardware_ids": [
+        "USB\\VID_1234&PID_5678&REV_0100",
+        "USB\\VID_1234&PID_5678"
+      ],
+      "compatible_ids": [
+        "USB\\COMPOSITE"
+      ],
+      "bus_reported_description": "Synthetic Test Camera",
+      "parent_instance_id": "USB\\VID_05E3&PID_0610\\5&1A2B3C4D&0&4",
+      "location_info": null,
+      "location_paths": [],
+      "driver_inf": null,
+      "driver_provider": null,
+      "driver_version": null,
+      "driver_date": null,
+      "last_arrival": null,
+      "usb": {
+        "vid": "1234",
+        "pid": "5678",
+        "rev": "0100",
+        "mi": null,
+        "is_interface": false,
+        "serial_in_instance": null
+      },
+      "stage": 1,
+      "evidence_ids": [
+        "pnp-3e45335af7"
+      ]
+    },
+    {
+      "instance_id": "USB\\VID_1234&PID_5678&MI_00\\7&BBBB&0&0000",
+      "friendly_name": "Synthetic Imaging Interface",
+      "device_class": "Image",
+      "class_guid": "{6bdd1fc6-810f-11d0-bec7-08002be2092f}",
+      "manufacturer": "Synthetic Vendor",
+      "status": "OK",
+      "present": true,
+      "problem": "CM_PROB_NONE",
+      "problem_code": 0,
+      "service": "synthcam",
+      "hardware_ids": [
+        "USB\\VID_1234&PID_5678&REV_0100&MI_00",
+        "USB\\VID_1234&PID_5678&MI_00"
+      ],
+      "compatible_ids": [
+        "USB\\Class_FF"
+      ],
+      "bus_reported_description": null,
+      "parent_instance_id": "USB\\VID_1234&PID_5678\\6&AAAA&0&1",
+      "location_info": null,
+      "location_paths": [],
+      "driver_inf": "oem12.inf",
+      "driver_provider": null,
+      "driver_version": null,
+      "driver_date": null,
+      "last_arrival": null,
+      "usb": {
+        "vid": "1234",
+        "pid": "5678",
+        "rev": "0100",
+        "mi": "00",
+        "is_interface": true,
+        "serial_in_instance": null
+      },
+      "stage": 1,
+      "evidence_ids": [
+        "pnp-a7e0f3545d"
+      ]
+    },
+    {
+      "instance_id": "USB\\VID_1234&PID_5678&MI_01\\7&BBBB&0&0001",
+      "friendly_name": "USB Device",
+      "device_class": null,
+      "class_guid": null,
+      "manufacturer": null,
+      "status": "Error",
+      "present": true,
+      "problem": "CM_PROB_FAILED_INSTALL",
+      "problem_code": 28,
+      "service": null,
+      "hardware_ids": [
+        "USB\\VID_1234&PID_5678&REV_0100&MI_01",
+        "USB\\VID_1234&PID_5678&MI_01"
+      ],
+      "compatible_ids": [
+        "USB\\Class_FF"
+      ],
+      "bus_reported_description": null,
+      "parent_instance_id": "USB\\VID_1234&PID_5678\\6&AAAA&0&1",
+      "location_info": null,
+      "location_paths": [],
+      "driver_inf": null,
+      "driver_provider": null,
+      "driver_version": null,
+      "driver_date": null,
+      "last_arrival": null,
+      "usb": {
+        "vid": "1234",
+        "pid": "5678",
+        "rev": "0100",
+        "mi": "01",
+        "is_interface": true,
+        "serial_in_instance": null
+      },
+      "stage": 1,
+      "evidence_ids": [
+        "pnp-e8cd0f28f5"
+      ]
+    },
+    {
+      "instance_id": "USB\\VID_ABCD&PID_0001\\SN0001TEST",
+      "friendly_name": "Unknown device",
+      "device_class": null,
+      "class_guid": null,
+      "manufacturer": null,
+      "status": "Error",
+      "present": true,
+      "problem": "CM_PROB_FAILED_INSTALL",
+      "problem_code": 28,
+      "service": null,
+      "hardware_ids": [
+        "USB\\VID_ABCD&PID_0001&REV_0200",
+        "USB\\VID_ABCD&PID_0001"
+      ],
+      "compatible_ids": [
+        "USB\\Class_FF&SubClass_00"
+      ],
+      "bus_reported_description": "Synthetic Controller",
+      "parent_instance_id": "USB\\VID_05E3&PID_0610\\5&1A2B3C4D&0&4",
+      "location_info": null,
+      "location_paths": [],
+      "driver_inf": null,
+      "driver_provider": null,
+      "driver_version": null,
+      "driver_date": null,
+      "last_arrival": null,
+      "usb": {
+        "vid": "ABCD",
+        "pid": "0001",
+        "rev": "0200",
+        "mi": null,
+        "is_interface": false,
+        "serial_in_instance": "SN0001TEST"
+      },
+      "stage": 1,
+      "evidence_ids": [
+        "pnp-bb29bf8966"
+      ]
+    }
+  ],
+  "serial_ports": [
+    {
+      "device": "COM3",
+      "description": "USB Serial Port (COM3)",
+      "hwid": "FTDIBUS\\VID_0403+PID_6001+A12345BCA\\0000",
+      "vid": "0403",
+      "pid": "6001",
+      "serial_number": "A12345BCA",
+      "manufacturer": "FTDI",
+      "product": null,
+      "location": null,
+      "evidence_ids": [
+        "com-6b8aaefda6"
+      ]
+    },
+    {
+      "device": "COM7",
+      "description": "Synthetic USB Serial (COM7)",
+      "hwid": "USB VID:PID=ABCD:0001 SER=SN0001TEST",
+      "vid": "ABCD",
+      "pid": "0001",
+      "serial_number": "SN0001TEST",
+      "manufacturer": null,
+      "product": null,
+      "location": "1-4.2",
+      "evidence_ids": [
+        "com-2a84ea7c82"
+      ]
+    }
+  ]
+}
