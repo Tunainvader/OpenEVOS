@@ -188,6 +188,9 @@ class SystemBasicSettings(BaseModel):
     scientific_display: bool = True  # linear display transforms only; display log saved with images
     #: Capture › Histogram toolbar toggle: the levels histogram and Auto range under the live image
     show_histogram: bool = True
+    #: Capture › Z focus: per-objective safe height (µm from home), keyed by turret slot. Above it the panel shows an
+    #: amber warning and a held pad stops; set by the operator at the Z where that objective nears the vessel
+    focus_limit_um: dict[str, float] = Field(default_factory=dict)
     #: View › Developer tools: simulator fault injection and gate-evidence tables on the Hardware tab (UI audit)
     developer_mode: bool = False
 

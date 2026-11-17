@@ -33,14 +33,17 @@ from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from openevos.ui import theme
 from openevos.ui import tokens as tk
+from openevos.ui.icons import icon
 from openevos.ui.widgets.segmented import SegmentedControl
 
 FINE_STEPS = (0.5, 1.0, 2.0, 5.0, 10.0)
@@ -180,8 +183,14 @@ class ZReadout(QWidget):
         super().__init__(parent)
         self.text = "— — —"
         self.dim = False
+        self.warning = ""  # e.g. "above 40X limit": amber outline, value and text (colour never stands alone)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setAccessibleName("Z position")
+
+    def set_warning(self, text: str) -> None:
+        self.warning = text
+        self.setAccessibleName(f"Z position, warning: {text}" if text else "Z position")
+        self.update()
 
     def sizeHint(self) -> QSize:
         return QSize(240, 42)
@@ -199,26 +208,35 @@ class ZReadout(QWidget):
         t = theme.current()
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        p.setPen(QPen(QColor(t.bd), 1))
-        p.setBrush(Qt.NoBrush)
+        warn = QColor(t.warn) if self.warning else None
+        r = QRectF(self.rect()).adjusted(1, 1, -1, -1) if warn else QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        if warn:
+            fill = QColor(warn)
+            fill.setAlpha(28)
+            p.setBrush(fill)
+            p.setPen(QPen(warn, 2))
+        else:
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(QColor(t.bd), 1))
         p.drawRoundedRect(r, 8, 8)
         f = QFont(self.font())
         f.setPixelSize(12)
         f.setWeight(QFont.DemiBold)
         p.setFont(f)
-        p.setPen(QColor(t.t2))
+        p.setPen(warn or QColor(t.t2))
         p.drawText(r.adjusted(12, 0, 0, 0), Qt.AlignVCenter | Qt.AlignLeft, "Z")
-        unit = "µm from home"
+        unit = f"⚠ {self.warning}" if self.warning else "µm from home"
         f2 = QFont(self.font())
         f2.setPixelSize(12)
+        if warn:
+            f2.setWeight(QFont.DemiBold)
         p.setFont(f2)
         uw = p.fontMetrics().horizontalAdvance(unit)
         p.drawText(r.adjusted(0, 0, -12, 0), Qt.AlignVCenter | Qt.AlignRight, unit)
         mf = QFont(tk.FONT_MONO)
-        mf.setPixelSize(22)
+        mf.setPixelSize(22 if uw < 110 else 19)
         p.setFont(mf)
-        p.setPen(QColor(t.t2 if self.dim else t.tx))
+        p.setPen(warn or QColor(t.t2 if self.dim else t.tx))
         p.drawText(r.adjusted(30, 0, -(uw + 20), 0), Qt.AlignVCenter | Qt.AlignLeft, self.text)
 
 
@@ -237,6 +255,7 @@ class FocusTape(QWidget):
         self.fine = True
         self.nominal: float | None = None
         self.last: float | None = None
+        self.limit: float | None = None  # the objective's safe height: amber band above it
         self.known = True
         self.setFixedWidth(self.W)
         self.setMinimumHeight(150)
@@ -259,6 +278,18 @@ class FocusTape(QWidget):
         mono = QFont(tk.FONT_MONO)
         mono.setPixelSize(12)
         p.setFont(mono)
+        if self.known and self.limit is not None:
+            y_lim = cy + (self.z - self.limit) * ppu  # higher Z is up: the band runs from the limit to the top
+            if y_lim > r.top():
+                amber = QColor(t.warn)
+                band = QColor(amber)
+                band.setAlpha(46)
+                p.fillRect(QRectF(r.left(), r.top(), r.width(), min(y_lim, r.bottom()) - r.top()), band)
+                if y_lim <= r.bottom():
+                    pen = QPen(amber, 1.6)
+                    pen.setDashPattern([3, 2])
+                    p.setPen(pen)
+                    p.drawLine(QPointF(r.left(), y_lim), QPointF(r.right() - 10, y_lim))
         if self.known:
             v = math.ceil((self.z - reach) / minor) * minor
             while v <= self.z + reach:
@@ -336,6 +367,17 @@ class _Half(QAbstractButton):
         self.setFocusPolicy(Qt.StrongFocus)
         self.setCursor(Qt.PointingHandCursor)
         self.setAttribute(Qt.WA_Hover, True)
+        # hold to keep moving: a click is one step; held past the delay it repeats (speed = step / interval)
+        self.setAutoRepeat(True)
+        self.setAutoRepeatDelay(400)
+        self.setAutoRepeatInterval(100)
+        # this press has auto-repeated (a hold). Reset only on a genuine new press: Qt emits pressed again during
+        # every repeat, so the pressed signal cannot be used
+        self.repeated = False
+
+    def mousePressEvent(self, e):
+        self.repeated = False
+        super().mousePressEvent(e)
 
     def paintEvent(self, _e):  # the pad draws the button, chevrons and focus ring
         pass
@@ -361,11 +403,15 @@ class _Half(QAbstractButton):
 
     def keyPressEvent(self, e):
         k = e.key()
+        if k == Qt.Key_Space and not e.isAutoRepeat():
+            self.repeated = False
         if k in (Qt.Key_Return, Qt.Key_Enter):
             self.click()
             return
         if k in (Qt.Key_Up, Qt.Key_Down):
-            self.pad.stepped.emit(1 if k == Qt.Key_Up else -1, 10 if e.modifiers() & Qt.ShiftModifier else 1)
+            if not self.pad.inert:
+                self.pad.stepped.emit(1 if k == Qt.Key_Up else -1, 10 if e.modifiers() & Qt.ShiftModifier else 1,
+                                      e.isAutoRepeat())
             return
         super().keyPressEvent(e)
 
@@ -374,8 +420,9 @@ class FocusPad(QWidget):
     """Stadium base, sunken well and a domed button whose face (four dots, top dot in the accent colour) turns with Z:
     one turn = 100 µm. Two hit areas: top half steps Z up (toward the sample), bottom half down."""
 
-    #: (direction +1 / -1, multiplier): one step of the panel's current size
-    stepped = Signal(int, int)
+    #: (direction +1 / -1, multiplier, held): one step of the panel's current size; held = a repeat while the pad half
+    #: or arrow key is held down (the page keeps a held move close behind the drive and stops it at the limit)
+    stepped = Signal(int, int, bool)
 
     # design units (handoff: 340 x 370 pad area); the captions above and below keep a fixed 16 px band
     DW, DH = 340.0, 370.0
@@ -398,8 +445,8 @@ class FocusPad(QWidget):
         for h in (self.up, self.down):
             h.pressed.connect(self._sync)
             h.released.connect(self._sync)
-        self.up.clicked.connect(lambda: self._click(1))
-        self.down.clicked.connect(lambda: self._click(-1))
+        self.up.clicked.connect(lambda: self._clicked(self.up, 1))
+        self.down.clicked.connect(lambda: self._clicked(self.down, -1))
         self.setMinimumSize(170, 200)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.set_step_label("1 µm")
@@ -435,8 +482,10 @@ class FocusPad(QWidget):
         self.step_label = text
         self.up.setAccessibleName(f"Focus up {text}, toward the sample")
         self.down.setAccessibleName(f"Focus down {text}, away from the sample")
-        self.up.setToolTip(f"Focus up {text} · toward the sample (↑, Shift = ×10, wheel)")
-        self.down.setToolTip(f"Focus down {text} · away from the sample (↓, Shift = ×10, wheel)")
+        self.up.setToolTip(f"Focus up {text} · toward the sample. Click = one step, hold = keep moving "
+                           "(↑, Shift = ×10, wheel)")
+        self.down.setToolTip(f"Focus down {text} · away from the sample. Click = one step, hold = keep moving "
+                             "(↓, Shift = ×10, wheel)")
 
     def set_angle_from_z(self, z: float) -> None:
         self.angle = (z % 100.0) / 100.0 * 360.0
@@ -486,9 +535,24 @@ class FocusPad(QWidget):
         self._off = float(v)
         self.update()
 
-    def _click(self, direction: int) -> None:
+    def _clicked(self, half: _Half, direction: int) -> None:
+        """Qt emits clicked for each auto-repeat (the half is still down) and once more on release. A press that
+        already repeated is a hold: its release adds no step, so Z stops when the operator lets go."""
+        if half.isDown():
+            half.repeated = True
+            self._click(direction, True)
+        elif half.repeated:
+            half.repeated = False
+        else:
+            self._click(direction, False)
+
+    def _click(self, direction: int, held: bool = False) -> None:
         if not self.inert:
-            self.stepped.emit(direction, 1)
+            self.stepped.emit(direction, 1, held)
+
+    def set_repeat_interval(self, ms: int) -> None:
+        for h in (self.up, self.down):
+            h.setAutoRepeatInterval(ms)
 
     def leaveEvent(self, e):
         self.hover = None
@@ -500,7 +564,7 @@ class FocusPad(QWidget):
             return
         dy = e.angleDelta().y()
         if dy:
-            self.stepped.emit(1 if dy > 0 else -1, 10 if e.modifiers() & Qt.ShiftModifier else 1)
+            self.stepped.emit(1 if dy > 0 else -1, 10 if e.modifiers() & Qt.ShiftModifier else 1, False)
         e.accept()
 
     # ---------------------------------------------------------------- paint
@@ -666,8 +730,11 @@ class FocusPad(QWidget):
 class ZFocusPanel(QWidget):
     """The whole Z focus block of the Capture page's Light & focus column."""
 
-    #: signed step in µm (the page turns it into a readback-based target, or refuses it)
-    step_requested = Signal(float)
+    #: (signed step in µm, held): the page turns it into a readback-based target, or refuses it
+    step_requested = Signal(float, bool)
+    #: Set limit here / Clear limit for the objective in the light path
+    limit_set_requested = Signal()
+    limit_clear_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -725,15 +792,26 @@ class ZFocusPanel(QWidget):
         self.seg_mode.set_current(self.mode)
         self.seg_mode.setToolTip("Coarse: 10–500 µm steps, 1,000 µm scale · Fine: 0.5–10 µm steps, 50 µm scale")
         row.addWidget(self.seg_mode, 1)
-        lbl_step = QLabel("Step")
-        lbl_step.setObjectName("caption")
-        row.addWidget(lbl_step)
+        # no "Step" caption: the column is ~290 px and the list's values ("1 µm") say what it is
         self.cmb_step = QComboBox()
         self.cmb_step.setAccessibleName("Focus step")
-        self.cmb_step.setToolTip(f"1 encoder count ≈ {UM_PER_COUNT:g} µm")
-        self.cmb_step.setMinimumWidth(84)
-        lbl_step.setBuddy(self.cmb_step)
+        self.cmb_step.setToolTip(f"Step per click (held: per repeat) · 1 encoder count ≈ {UM_PER_COUNT:g} µm")
+        self.cmb_step.setMinimumWidth(80)
         row.addWidget(self.cmb_step)
+        self.btn_limit = QToolButton()
+        self.btn_limit.setPopupMode(QToolButton.InstantPopup)
+        self.btn_limit.setAccessibleName("Objective safe height")
+        self.btn_limit.setFixedSize(34, 34)
+        self.btn_limit.setIconSize(QSize(18, 18))
+        self.btn_limit.setStyleSheet("QToolButton { padding: 0px; } "
+                                     "QToolButton::menu-indicator { image: none; width: 0px; }")
+        self.limit_menu = QMenu(self.btn_limit)
+        self.act_limit_set = self.limit_menu.addAction("Set limit here")
+        self.act_limit_clear = self.limit_menu.addAction("Clear limit")
+        self.btn_limit.setMenu(self.limit_menu)
+        self.act_limit_set.triggered.connect(self.limit_set_requested)
+        self.act_limit_clear.triggered.connect(self.limit_clear_requested)
+        row.addWidget(self.btn_limit)
         lay.addLayout(row)
         # autofocus
         af = QHBoxLayout()
@@ -772,6 +850,7 @@ class ZFocusPanel(QWidget):
         self.mode = mode
         self.seg_mode.set_current(mode)
         self.tape.fine = mode == "fine"
+        self.pad.set_repeat_interval(100 if mode == "fine" else 150)  # held speed = step / interval
         self._fill_steps()
         self.tape.update()
 
@@ -792,10 +871,10 @@ class ZFocusPanel(QWidget):
         self.step_idx[self.mode] = i
         self.pad.set_step_label(f"{self.step_um():g} µm")
 
-    def _stepped(self, direction: int, mult: int) -> None:
+    def _stepped(self, direction: int, mult: int, held: bool = False) -> None:
         if self.state in INERT:
             return
-        self.step_requested.emit(direction * mult * self.step_um())
+        self.step_requested.emit(direction * mult * self.step_um(), held)
 
     # ---------------------------------------------------------------- values / state
     def set_values(self, z: float | None, z_max: float | None, nominal: float | None, last: float | None) -> None:
@@ -827,6 +906,30 @@ class ZFocusPanel(QWidget):
         self.tape.z = self._z_disp
         self.pad.set_angle_from_z(self._z_disp)
         self.tape.update()
+
+    def set_limit(self, limit_um: float | None, objective: str, z: float | None) -> None:
+        """The objective's safe height: an amber band on the tape above it, and an amber readout while Z is above."""
+        above = limit_um is not None and z is not None and z > limit_um + 1e-6
+        t = theme.current()
+        key = (limit_um, objective, above, z, t.name)
+        if key == getattr(self, "_limit_key", None):
+            return
+        self._limit_key = key
+        # amber when a safe height is set for this objective, secondary text colour when none
+        self.btn_limit.setIcon(icon("warning", t.warn if limit_um is not None else t.t2))
+        self.tape.limit = limit_um
+        self.tape.update()
+        self.readout.set_warning(f"above {objective} limit" if above else "")
+        here = f" ({fmt_um(z)} µm)" if z is not None else ""
+        self.act_limit_set.setText(f"Set {objective} limit here{here}")
+        self.act_limit_set.setEnabled(z is not None and bool(objective))
+        self.act_limit_clear.setText(f"Clear {objective} limit" + (f" ({fmt_um(limit_um)} µm)" if limit_um else ""))
+        self.act_limit_clear.setEnabled(limit_um is not None)
+        tip = (f"{objective} safe height: {fmt_um(limit_um)} µm. Above it the readout turns amber and holding the "
+               "pad stops at the limit; a single click can still go past it." if limit_um is not None else
+               f"No safe height set for {objective}. Move Z to where this objective nears the vessel, then "
+               "Set limit here.")
+        self.btn_limit.setToolTip(tip)
 
     def set_state(self, state: str, status: str, moving: str | None = None) -> None:
         if (state, status, moving) == getattr(self, "_state_key", None):

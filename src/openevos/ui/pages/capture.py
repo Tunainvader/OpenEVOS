@@ -429,6 +429,8 @@ class CapturePage(QWidget):
         self.chk_actual.toggled.connect(self._set_actual)
         self.btn_lc.clicked.connect(self._light_camera)
         self.focus.step_requested.connect(self._focus_step)
+        self.focus.limit_set_requested.connect(self._set_focus_limit)
+        self.focus.limit_clear_requested.connect(self._clear_focus_limit)
         self.btn_snap.clicked.connect(self._snap)
         self.btn_find.clicked.connect(lambda: self._autofocus(True))
         self.btn_fine.clicked.connect(lambda: self._autofocus(False))
@@ -641,6 +643,33 @@ class CapturePage(QWidget):
         self.focus.set_state(state, status, direction)
         self.focus.set_values(z, lim[1] if lim else None, self.session.vessel.focus_nominal_um,
                               self.session.capture.last_capture_z)
+        name, safe = self._focus_limit()
+        self.focus.set_limit(safe, name, z)
+
+    # ------------------------------------------------------------------ per-objective safe height
+    def _focus_limit(self) -> tuple[str, float | None]:
+        """(objective name, safe height in µm or None) for the objective in the light path."""
+        slot = self.ctl.objective_slot()
+        obj = self.profile.objective(slot) if slot else None
+        name = obj.short if obj else (f"position {slot}" if slot else "")
+        return name, self.settings.basic.focus_limit_um.get(str(slot)) if slot else None
+
+    def _set_focus_limit(self) -> None:
+        slot, z = self.ctl.objective_slot(), self.ctl.focus_z()
+        if not slot or z is None:
+            self.model.add_log("warn", "Z limit not set: no objective position or Z readback")
+            return
+        self.settings.basic.focus_limit_um[str(slot)] = round(z, 2)
+        self.session.save_settings()
+        self.model.add_log("info", f"Z safe height for {self._focus_limit()[0]} set to {fmt_um(z)} µm")
+        self._refresh_focus()
+
+    def _clear_focus_limit(self) -> None:
+        slot = self.ctl.objective_slot()
+        if slot and self.settings.basic.focus_limit_um.pop(str(slot), None) is not None:
+            self.session.save_settings()
+            self.model.add_log("info", f"Z safe height for {self._focus_limit()[0]} cleared")
+        self._refresh_focus()
 
     def _fov_mm(self):
         from openevos.acquisition.scan_plan import field_of_view_mm
@@ -859,15 +888,34 @@ class CapturePage(QWidget):
     def _move_z(self, z: float) -> None:
         self.coalesce.request("focus", lambda: self.ctl.move_focus(z))
 
-    def _focus_step(self, delta_um: float) -> None:
+    def _focus_step(self, delta_um: float, held: bool = False) -> None:
         """One pad step: from the in-flight target (rapid clicks add up) or else the readback, through
-        ctl.move_focus. A step that would leave the drive's range is refused with a message, never clamped."""
+        ctl.move_focus. A step that would leave the drive's range is refused with a message, never clamped.
+
+        Held (pad or arrow key held down): the target stays at most two steps ahead of the readback, so Z stops
+        within about two steps of the release, and a held move upward stops at the objective's safe height. A single
+        click may still cross that height (the readout then turns amber)."""
         z = self.ctl.focus_z()
         if z is None:
             self.model.add_log("warn", "Z step refused: no focus readback")
             return
         base = self._z_goal if self._z_goal is not None else z
+        if held and abs(base - z) >= 2 * abs(delta_um) - 1e-6:
+            return  # the drive is behind: skip this repeat instead of queueing an overshoot
         target = round(base + delta_um, 3)
+        name, safe = self._focus_limit()
+        if held and delta_um > 0 and safe is not None and target > safe + 1e-6:
+            if base >= safe - 1e-6:
+                if not getattr(self, "_hold_at_limit", False):
+                    self._hold_at_limit = True
+                    self.model.add_log("warn", f"Held focus stopped at the {name} safe height ({fmt_um(safe)} µm); "
+                                               "click to step past it")
+                return
+            target = round(safe, 3)  # a held move ends exactly at the safe height
+        elif not held:
+            self._hold_at_limit = False
+        if not held and delta_um > 0 and safe is not None and base <= safe + 1e-6 < target:
+            self.model.add_log("warn", f"Z {fmt_um(target)} µm is above the {name} safe height ({fmt_um(safe)} µm)")
         lim = self.ctl.axis_limits(self.profile.focus_device, "z")
         if lim and not (lim[0] - 1e-6 <= target <= lim[1] + 1e-6):
             self.model.add_log("warn", f"Z step refused: {fmt_um(target)} µm is outside the focus range "

@@ -146,7 +146,8 @@ def test_inert_states_block_the_pad(app, window):
     for state in ("locked", "fault", "objective"):
         f.set_state(state, "test")
         assert not f.pad.up.isEnabled() and not f.pad.down.isEnabled()
-        f.pad.stepped.emit(1, 1)  # a wheel / key step while inert
+        f.pad.stepped.emit(1, 1, False)  # a wheel / key step while inert
+        f.pad.stepped.emit(1, 1, True)  # a held repeat while inert
     assert seen == []
     f.set_state("locked", "Not homed")
     f.set_values(None, 8050.0, None, None)
@@ -208,6 +209,74 @@ def test_pad_drives_the_real_z_motor_frames_with_motor_control(app, tmp_path):
         s.shutdown()
         w.deleteLater()
         pump(app, 0.1)
+
+
+def test_hold_keeps_moving_and_stops_on_release(app, window):
+    """Holding the top half keeps stepping (auto-repeat); releasing adds no extra step, and Z stops within about two
+    steps of the release."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    cap = window.pages["capture"]
+    f = cap.focus
+    assert _idle(app, cap)
+    f.set_mode("fine")
+    f.set_step(1.0)
+    z0 = cap.ctl.focus_z()
+    half = f.pad.up
+    QTest.mousePress(half, Qt.LeftButton, pos=QPoint(half.width() // 2, half.height() // 2))
+    pump(app, 1.3)  # 400 ms delay, then a step every 100 ms
+    assert half.repeated
+    QTest.mouseRelease(half, Qt.LeftButton, pos=QPoint(half.width() // 2, half.height() // 2))
+    goal_at_release = cap._z_goal
+    assert _idle(app, cap)
+    moved = cap.ctl.focus_z() - z0
+    assert moved >= 4.0  # kept moving while held
+    assert abs(cap.ctl.focus_z() - goal_at_release) < 1e-6  # the release added no step
+
+
+def test_objective_safe_height_warns_and_stops_a_hold(app, window):
+    cap = window.pages["capture"]
+    f = cap.focus
+    assert _idle(app, cap)
+    f.set_mode("fine")
+    f.set_step(10.0)
+    z0 = cap.ctl.focus_z()
+    slot = cap.ctl.objective_slot()
+    name = cap.profile.objective(slot).short
+    try:
+        cap._set_focus_limit()  # safe height = here
+        assert cap.settings.basic.focus_limit_um[str(slot)] == round(z0, 2)
+        assert f.tape.limit == round(z0, 2) and f.readout.warning == ""
+        assert f.act_limit_set.text().startswith(f"Set {name} limit here")
+        # a held move upward does not cross it
+        n = len(_warns(window))
+        cap._focus_step(10.0, held=True)
+        pump(app, 0.2)
+        assert _idle(app, cap) and abs(cap.ctl.focus_z() - z0) < 1e-6
+        assert "stopped at the" in _warns(window)[n][2]
+        # a deliberate click does, with an amber readout and a log line
+        f.pad.up.click()
+        assert _idle(app, cap)
+        assert abs(cap.ctl.focus_z() - (z0 + 10.0)) < 1e-6
+        cap._refresh_focus()
+        assert f.readout.warning == f"above {name} limit"
+        assert any("above the" in w[2] for w in _warns(window)[n:])
+        # below the limit again: no warning
+        f.pad.down.click()
+        assert _idle(app, cap)
+        cap._refresh_focus()
+        assert f.readout.warning == ""
+        # a held move from below the limit ends exactly at it
+        cap._move_z(z0 - 25.0)
+        assert _idle(app, cap)
+        for _ in range(6):
+            cap._focus_step(10.0, held=True)
+            assert _idle(app, cap)
+        assert abs(cap.ctl.focus_z() - round(z0, 2)) < 1e-6
+    finally:
+        cap._clear_focus_limit()
+    assert str(slot) not in cap.settings.basic.focus_limit_um and f.tape.limit is None
 
 
 @pytest.mark.parametrize("name", ["dark", "light"])
