@@ -186,6 +186,8 @@ class SystemBasicSettings(BaseModel):
     theme: str = "dark"  # "dark" | "light" | "system"
     navigation: str = "auto"  # "auto" (rail below 1360 px) | "expanded" | "rail"
     scientific_display: bool = True  # linear display transforms only; display log saved with images
+    #: Capture › Histogram toolbar toggle: the levels histogram and Auto range under the live image
+    show_histogram: bool = True
     #: View › Developer tools: simulator fault injection and gate-evidence tables on the Hardware tab (UI audit)
     developer_mode: bool = False
 

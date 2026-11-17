@@ -195,6 +195,22 @@ def _errors(window):
     return [e for e in window.model.log if e[1] == "error"]
 
 
+def test_no_gamma_and_the_histogram_toggles(app, window):
+    """Gamma was removed (the live display is always linear); the Histogram toolbar button shows and hides the
+    levels histogram and Auto range, and remembers the choice (operator, 2026-11-18)."""
+    cap = window.pages["capture"]
+    assert not hasattr(cap, "gamma")
+    assert not cap.chk_sci.isVisible()
+    assert cap.btn_hist.isChecked() and cap.hist.isVisible() and cap.btn_auto.isVisible()
+    cap.btn_hist.click()
+    pump(app, 0.05)
+    assert not cap.hist.isVisible() and not cap.btn_auto.isVisible()
+    assert window.model.session.settings.basic.show_histogram is False
+    cap.btn_hist.click()
+    pump(app, 0.05)
+    assert cap.hist.isVisible() and window.model.session.settings.basic.show_histogram is True
+
+
 def test_actual_mode_controls_reach_devices_and_read_back(app, window):
 
     cap = window.pages["capture"]

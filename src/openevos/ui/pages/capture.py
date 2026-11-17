@@ -5,7 +5,7 @@ Craftimon conventions:
   │ camera · objective   │ │                                                                │ │ channel buttons │
   │ vessel + map         │ │                 image viewport (always dark)                   │ │ power · light   │
   │ position             │ │   badge: channel • LIVE/CAPTURED • SIMULATED   loupe   scale    │ │ actual mode     │
-  │ medium jog           │ ├ display: levels histogram │ scientific · gamma · log · readout ┤ │ focus column    │
+  │ medium jog           │ ├ display: levels histogram (toggle) │ auto range · readout     ┤ │ focus column    │
   │ objectives           │ └────────────────────────────────────────────────────────────────┘ │ capture + hot   │
   └──────────────────────┘                                                                    └─────────────────┘
 
@@ -46,7 +46,6 @@ from openevos.imaging.composite import (
 from openevos.imaging.composite import pseudocolor as tint
 from openevos.imaging.display import (
     DisplaySettings,
-    NonLinearRefused,
     clipped_fractions,
     clipping_overlay,
     map_to_8bit,
@@ -262,12 +261,15 @@ class CapturePage(QWidget):
         self.btn_sat = tool_button("Saturation", "warning", checkable=True,
                                    tip="Highlight sensor-saturated pixels in red")
         self.btn_loupe = tool_button("Loupe", "loupe", checkable=True, tip="Magnified view and pixel value at the cursor")
+        self.btn_hist = tool_button("Histogram", "histogram", checkable=True,
+                                    tip="Show the levels histogram (black/white points) under the image")
+        self.btn_hist.setChecked(self.settings.basic.show_histogram)
         self.btn_compare = tool_button("Compare", "compare",
                                        tip="Hold to see the raw frame mapped linearly over its full range (or hold B)")
         self.toolbuttons = [self.btn_live, self.btn_overlay, self.btn_fit, self.btn_11, self.btn_cross, self.btn_scale,
-                            self.btn_clip, self.btn_sat, self.btn_loupe, self.btn_compare]
+                            self.btn_clip, self.btn_sat, self.btn_loupe, self.btn_hist, self.btn_compare]
         for i, b in enumerate(self.toolbuttons):
-            if i in (2, 4, 9):
+            if i in (2, 4, 10):
                 sep = QWidget()
                 sep.setFixedWidth(8)
                 top.addWidget(sep)
@@ -288,12 +290,12 @@ class CapturePage(QWidget):
         self.chk_sci = QCheckBox("Scientific display (linear only)")
         self.chk_sci.setChecked(self.display.scientific)
         self.chk_sci.setToolTip("Only whole-image linear mappings; the display log is saved with every image")
-        self.gamma = ParamRow("Gamma", 0.3, 3.0, 1.0, step=0.05, decimals=2, tooltip="Non-linear; off in Scientific mode")
-        self.gamma.setEnabled(not self.display.scientific)
+        # gamma was removed (operator, 2026-11-18): the live display is always linear, so the Scientific switch has
+        # nothing to guard on this page and stays hidden (View menu / Settings keep it)
+        self.chk_sci.setVisible(False)
         self.btn_auto = QPushButton("Auto range")
         self.btn_auto.setToolTip("Return to automatic black/white points (or double-click the histogram)")
         info.addWidget(self.chk_sci)
-        info.addWidget(self.gamma)
         self.lbl_log = label("", "caption", wrap=True)
         self.lbl_frame = label("—", "mono", wrap=True)  # wraps at narrow widths instead of being cut off
         self.lbl_hover = label("", "mono")
@@ -313,7 +315,13 @@ class CapturePage(QWidget):
         info.addWidget(self.lbl_task)
         bottom.addLayout(info, 1)
         lay.addLayout(bottom)
+        self._show_histogram(self.btn_hist.isChecked())
         return f
+
+    def _show_histogram(self, on: bool) -> None:
+        self.settings.basic.show_histogram = on
+        self.hist.setVisible(on)
+        self.btn_auto.setVisible(on)
 
     def _right(self) -> QWidget:
         f, lay = panel("Light & focus")
@@ -467,7 +475,7 @@ class CapturePage(QWidget):
         self.hist.autoRequested.connect(self._auto_levels)
         self.btn_auto.clicked.connect(self._auto_levels)
         self.chk_sci.toggled.connect(self._set_scientific)
-        self.gamma.valueChanged.connect(self._set_gamma)
+        self.btn_hist.toggled.connect(self._show_histogram)
 
     def _initial_state(self) -> None:
         self._on_vessel()
@@ -755,26 +763,11 @@ class CapturePage(QWidget):
 
     def _set_scientific(self, on: bool) -> None:
         self.settings.basic.scientific_display = on
-        if on and not self.display.linear:
-            self.gamma.set_value(1.0)
-        g = 1.0 if on else self.gamma.value()
-        self.display = DisplaySettings(auto=self.display.auto, lo=self.display.lo, hi=self.display.hi, gamma=g,
-                                       scientific=on)
-        self.gamma.setEnabled(not on)
-        self.gamma.setToolTip("Turn off Scientific display to use gamma (non-linear)" if on else "Display gamma")
+        self.display = DisplaySettings(auto=self.display.auto, lo=self.display.lo, hi=self.display.hi, scientific=on)
         self._redraw()
 
     def toggle_scientific(self) -> None:
         self.chk_sci.toggle()
-
-    def _set_gamma(self, g: float) -> None:
-        try:
-            self.display = self.display.with_gamma(g)
-        except NonLinearRefused as exc:
-            self.model.add_log("warn", str(exc))
-            self.gamma.set_value(1.0)
-            return
-        self._redraw()
 
     def _compare(self, on: bool) -> None:
         self._comparing = on
