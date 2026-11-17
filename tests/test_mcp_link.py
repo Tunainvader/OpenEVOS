@@ -117,6 +117,7 @@ def test_get_state_reports_simulated_session(sim):
     ids = {d["device_id"] for d in st["devices"]}
     assert s.profile.stage_device in ids and s.profile.focus_device in ids
     assert all(d["backend"] == "simulated" for d in st["devices"])
+    assert set(st["simulated_devices"]) == ids  # every device simulated here
     assert st["stage_monitor"] == []  # no physical stage, no drift monitor
 
 

@@ -156,8 +156,13 @@ class InstrumentView:
         light = ctl.light
         snaps = s.core.store.snapshot_all()
         xy = ctl.stage_xy()
+        # from each device's own backend, not the profile name: the real-instrument profile is still called
+        # "simulation" while its cameras, light and motors are physical (seen on the instrument 2026-11-18)
+        cams = [c.device_id for c in getattr(prof, "cameras", [])]
+        simulated = sorted(d for d, v in snaps.items() if v.backend_kind.value == "simulated")
         return {
-            "simulated_optics": bool(getattr(s, "simulated", True)),
+            "simulated_optics": any(d in simulated for d in cams) if cams else True,
+            "simulated_devices": simulated,
             "physical_stage": bool(s.physical_stage),
             "stage_device": prof.stage_device,
             "focus_device": prof.focus_device,
