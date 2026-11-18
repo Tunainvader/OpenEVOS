@@ -93,10 +93,16 @@ def test_overcurrent_lock_rehomes_x_then_y_and_returns(tmp_path):
         w = writes_after(chain, n)
         homes = [f for f in w if f in tp.XY_HOME_FRAMES.values()]
         assert homes == [tp.XY_HOME_FRAMES["X"], tp.XY_HOME_FRAMES["Y"]]
-        assert w.index(tp.XY_HOME_FRAMES["X"]) < w.index(tp.XY_HOME_FRAMES["Y"])
+        hx, hy = w.index(tp.XY_HOME_FRAMES["X"]), w.index(tp.XY_HOME_FRAMES["Y"])
+        assert hx < hy
+        # the approach (2026-11-19): powered X is first brought near home; Y, switched off by its trip, is not
+        assert tp.move_target("X", tm.REHOME_APPROACH_TO_COUNTS) in w[:hx] and tp.move_request("X") in w[:hx]
+        assert tp.move_request("Y") not in w[:hy]
+        assert job.record["approach"]["X"]["ok"] and "Y" not in job.record["approach"]
         # the return: X's move request strictly before Y's, after both homes, never both together
-        mx, my = w.index(tp.move_request("X")), w.index(tp.move_request("Y"))
-        assert w.index(tp.XY_HOME_FRAMES["Y"]) < mx < my
+        after = w[hy:]
+        mx, my = after.index(tp.move_request("X")), after.index(tp.move_request("Y"))
+        assert mx < my
         assert (chain.values[("X", "APOS")], chain.values[("Y", "APOS")]) == (X0, Y0)
         assert chain.extra_writes == frozenset()  # registered only for the home request itself
         assert list(tmp_path.glob("stage-rehome-*-pass.json")) and list(tmp_path.glob("stage-latch-cleared-*.json"))
@@ -149,7 +155,59 @@ def test_homing_fault_stops_after_x_and_keeps_the_lock(fault, why):
         assert not job.ok and job.stage == "failed" and why in job.message
         assert svc.monitor.latched
         w = writes_after(chain, n)
-        assert tp.XY_HOME_FRAMES["Y"] not in w and tp.move_request("X") not in w  # never Y, never a return
+        after_x = w[w.index(tp.XY_HOME_FRAMES["X"]):]  # (the approach moves come before X's home request)
+        assert tp.XY_HOME_FRAMES["Y"] not in w and tp.move_request("X") not in after_x  # never Y, never a return
+    finally:
+        svc.stop()
+
+
+def test_powered_axes_approach_home_before_their_home_requests():
+    """2026-11-19: homing from mid-travel slams the hard stop at 5.6 mm/s. X then Y are first brought near home with
+    verified legs; each home request follows its axis' approach."""
+    chain = locked_chain()
+    svc = service(chain)
+    try:
+        svc.monitor.trip("landing_error", "Y", "Y ended at 12")
+        n = len(chain.writes)
+        job = run_job(svc)
+        assert job.ok, job.message
+        w = writes_after(chain, n)
+        to = tm.REHOME_APPROACH_TO_COUNTS
+        ax_, ay_ = w.index(tp.move_target("X", to)), w.index(tp.move_target("Y", to))
+        hx, hy = w.index(tp.XY_HOME_FRAMES["X"]), w.index(tp.XY_HOME_FRAMES["Y"])
+        assert ax_ < ay_ < hx < hy  # X approach, Y approach (never together), then the homes
+        assert job.record["approach"] == {"X": {"from": X0, "to": to, "ok": True, "message": ""},
+                                          "Y": {"from": Y0, "to": to, "ok": True, "message": ""}}
+        assert (chain.values[("X", "APOS")], chain.values[("Y", "APOS")]) == (X0, Y0)  # and back afterwards
+    finally:
+        svc.stop()
+
+
+def test_an_axis_already_near_home_is_not_approached():
+    chain = locked_chain({("X", "APOS"): 2000, ("X", "CPOS"): 2000, ("Y", "APOS"): 500, ("Y", "CPOS"): 500})
+    svc = service(chain)
+    try:
+        svc.monitor.trip("landing_error", "Y", "test")
+        n = len(chain.writes)
+        job = run_job(svc)
+        assert job.ok, job.message
+        w = writes_after(chain, n)
+        assert "approach" not in job.record
+        assert not any(f in w[:w.index(tp.XY_HOME_FRAMES["X"])] for f in (tp.move_request("X"), tp.move_request("Y")))
+    finally:
+        svc.stop()
+
+
+def test_a_knock_during_the_approach_stops_and_keeps_the_lock():
+    chain = locked_chain()
+    svc = service(chain)
+    try:
+        svc.monitor.trip("landing_error", "Y", "test")
+        chain.knock = {"Y": -(sm.CROSS_AXIS_TOLERANCE_COUNTS + 5)}  # Y jumps as X approaches
+        n = len(chain.writes)
+        job = run_job(svc)
+        assert not job.ok and job.stage == "failed" and "approach" in job.message and svc.monitor.latched
+        assert not any(f in writes_after(chain, n) for f in tp.XY_HOME_FRAMES.values())  # no homing after it
     finally:
         svc.stop()
 
@@ -164,6 +222,7 @@ def test_return_outside_limits_leaves_the_stage_home():
         job = run_job(svc)
         assert job.homed and not job.ok and job.stage == "homed, not returned"
         assert not svc.monitor.latched
-        assert tp.move_request("X") not in chain.writes
+        w = chain.writes
+        assert tp.move_request("X") not in w[w.index(tp.XY_HOME_FRAMES["Y"]):]  # no return move after homing
     finally:
         svc.stop()

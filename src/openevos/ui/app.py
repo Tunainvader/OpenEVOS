@@ -181,6 +181,15 @@ def main(argv: list[str] | None = None) -> int:
                 fault_log.write("launch", step=what, message=text)
         except OSError as exc:
             print(f"session fault log unavailable: {exc}", file=sys.stderr, flush=True)
+    telemetry_log = None
+    if settings_path is not None and not args.screenshot_dir:
+        from openevos.acquisition.telemetry_log import TelemetryLog
+
+        try:  # always on: every device's position and state (operator, 2026-11-19)
+            telemetry_log = TelemetryLog(session.core.bus, session.core.store, settings_path.with_name("Logs"))
+            print(f"telemetry log: {telemetry_log.path}", file=sys.stderr, flush=True)
+        except OSError as exc:
+            print(f"telemetry log unavailable: {exc}", file=sys.stderr, flush=True)
     mcp_link = None
     if args.mcp is not None and not args.screenshot_dir:
         from openevos.mcp_link.cli import start_for_session
@@ -212,6 +221,8 @@ def main(argv: list[str] | None = None) -> int:
             mcp_link[0].stop()
             mcp_link[1].close()
         session.shutdown()
+        if telemetry_log is not None:
+            telemetry_log.close()  # after shutdown: the devices disconnecting is on record too
         if fault_log is not None:
             fault_log.close()
         if instance_lock is not None:

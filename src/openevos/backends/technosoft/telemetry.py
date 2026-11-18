@@ -266,6 +266,8 @@ class _Leg:
     extra: Iterator[str] = field(default_factory=lambda: itertools.cycle(("POSERR", "IQ")))  # watchdog reads
     deadline: float = 0.0
     last_report: float = 0.0
+    #: a software re-home's approach to home (ADR-0058): runs with the monitor latched, guarding the still axis itself
+    under_lock: bool = False
 
 
 @dataclass
@@ -349,6 +351,11 @@ REHOME_START_S = 5.0
 REHOME_AXIS_TIMEOUT_S = 120.0
 REHOME_POLL_S = 0.2
 REHOME_Z_BAND = 5  # Z must be at home (counts), as Gate 20
+#: before its home request, a powered axis further out than FROM is first moved to TO with a verified leg, so the
+#: drive's homing starts near the stop (2026-11-19: homing from mid-travel hits the stop at 5.6 mm/s). TO is below Y's
+#: tight spot (~4,300 counts, 1.9 mm, seen in every homing) and inside both axes' calibrated limits
+REHOME_APPROACH_FROM_COUNTS = 3000
+REHOME_APPROACH_TO_COUNTS = 1000
 REHOME_PRE_READS = ("ESTATEV", "IINITONCEDONE", "SRH", "SRL", "MER", "ISTATUSFLAGS", "APOS", "CPOS", "HOMEDONE")
 
 
@@ -1055,6 +1062,10 @@ class TelemetryService:
             return
         job.remembered = {ax: pre[ax]["APOS"] for ax in tp.MOTION_AXES}
         self.monitor.note("software re-home: remembered X {X}, Y {Y} (counts)".format(**job.remembered))
+        why = self._rehome_approach(link, job, pre)
+        if why:
+            job.stage, job.message = "failed", f"{why}. Nothing more was sent; the lock stays: {RECOVERY}"
+            return
         for ax in tp.MOTION_AXES:
             if self._stop_request.is_set():
                 self._send_stop(link)
@@ -1084,6 +1095,34 @@ class TelemetryService:
             self._publish(values)
             self._maybe_reload_limits(link, values)
         self._rehome_return(link, job)
+
+    def _rehome_approach(self, link: DriveLink, job: _RehomeJob, pre: dict) -> str:
+        """Bring each powered axis close to home with an ordinary verified leg (X, then Y) before its home request, so
+        the drive's homing starts near its hard stop, as a power-up from home does. Homing from mid-travel reaches
+        5.6 mm/s before it hits the stop (operator 2026-11-19: "when y is halfway and we do homing, the axis jerks
+        towards the home ... a screech"); from near home it touches at about 2.6 mm/s. An axis already near home, or
+        switched off by its drive (an over-current trip), is homed from where it is. '' = done; else why it stopped."""
+        for ax in tp.MOTION_AXES:
+            apos, srl = pre[ax]["APOS"], pre[ax]["SRL"]
+            if apos <= REHOME_APPROACH_FROM_COUNTS:
+                continue
+            if not srl & 0x8000:
+                self.monitor.note(f"software re-home: {ax} is switched off (SRL 0x{srl:04X}); homed from {apos}")
+                continue
+            target = max(REHOME_APPROACH_TO_COUNTS, link.read(tp.VARS[ax]["LPOSMIN"]))
+            job.stage = f"bringing {ax} near home"
+            self.monitor.note(f"software re-home: {ax} {apos} -> {target} before homing (approach)")
+            ctx = _ReturnCtx()
+            now = {a: {"CSPDCMD": link.read(tp.VARS[a]["CSPDCMD"])} for a in tp.MOTION_AXES}
+            start = {a: link.read(tp.VARS[a]["APOS"]) for a in tp.MOTION_AXES}
+            move = _MoveJob(f"rehome-approach-{ax}", ctx, {**start, ax: target}, (0.0, 0.0))
+            ok = self._move_leg(link, move, [ax], now, start, under_lock=True)
+            job.record.setdefault("approach", {})[ax] = {"from": apos, "to": target, "ok": ok and ctx.ok is not False,
+                                                         "message": ctx.message}
+            if not ok:
+                return f"{ax} did not reach its approach position ({ctx.message or 'stopped'})"
+            self._settle_between_legs(link, ctx)
+        return ""
 
     def _rehome_axis(self, link: DriveLink, job: _RehomeJob, ax: str) -> tuple[bool, str]:
         """One home request and its follow-up: started (ESTATEV 19 or HOMEDONE cleared), then done (ESTATEV 0 with
@@ -1255,14 +1294,15 @@ class TelemetryService:
             if not lo <= via <= hi:
                 via = 2 * target - via  # the other side
             self.monitor.note(f"putting {ax} back: {off:+d} counts off its target {target} after the move (via {via})")
+            ctx: Any = job.ctx
             for step in (via, target):
-                self._settle_between_legs(link, job.ctx)
-                if self._stop_request.is_set() or getattr(job.ctx, "cancel_requested", False):
+                self._settle_between_legs(link, ctx)
+                if self._stop_request.is_set() or getattr(ctx, "cancel_requested", False):
                     self._send_stop(link)
-                    job.ctx.mark_cancelled(self._position_now(link))
+                    ctx.mark_cancelled(self._position_now(link))
                     return False
                 if self.monitor.latched:
-                    job.ctx.fail(f"{ax} not put back: {self.monitor.refusal()}", error_code="stage_latched")
+                    ctx.fail(f"{ax} not put back: {self.monitor.refusal()}", error_code="stage_latched")
                     return False
                 start = {a: link.read(tp.VARS[a]["APOS"]) for a in tp.MOTION_AXES}
                 fix = _MoveJob(f"{job.command_id}-put-back-{ax}", job.ctx, {**start, ax: step}, job.target_um)
@@ -1603,7 +1643,8 @@ class TelemetryService:
             if time.monotonic() - self._last_fast >= FAST_PERIOD_S:
                 self._fast_sample(link)
 
-    def _move_leg(self, link: DriveLink, job: _MoveJob, leg: list[str], now: dict, start: dict) -> bool:
+    def _move_leg(self, link: DriveLink, job: _MoveJob, leg: list[str], now: dict, start: dict,
+                  under_lock: bool = False) -> bool:
         """Move the axes in `leg` (one, under SEQUENTIAL_XY) to their targets. True when done and verified; else the
         command has been failed or cancelled and False is returned. Steps (audit APP-16): speed, target, start,
         supervise to motion complete, the drive's flags, the still axis' encoder, the landing, the stop at rest."""
@@ -1615,7 +1656,8 @@ class TelemetryService:
         # runaway watchdog, shadow mode (ADR-0047): watches and records, never acts
         label = preset if preset is not None else "fast"  # the power-up speed is the fast preset (ADR-0032)
         run = _Leg(job.ctx, leg, job.targets, start, speed,
-                   {ax: watchdog.LegWatch(ax, start[ax], job.targets[ax], label, time.monotonic()) for ax in leg})
+                   {ax: watchdog.LegWatch(ax, start[ax], job.targets[ax], label, time.monotonic()) for ax in leg},
+                   under_lock=under_lock)
         try:
             for ax in leg:
                 link.write(tp.move_request(ax))
@@ -1671,7 +1713,16 @@ class TelemetryService:
             ctx.mark_cancelled(self._position_now(link))
             return False
         run.live["X"], run.live["Y"] = self._fast_sample(link)  # both encoders, every tick (~20 Hz)
-        if self.monitor.latched:  # the still axis changed while this leg moved (or anything else tripped)
+        if run.under_lock:  # a re-home's approach (ADR-0058): the monitor is latched, so watch the still axis here
+            for other in tp.MOTION_AXES:
+                d = run.live[other] - run.start[other]
+                if other not in run.axes and abs(d) > sm.CROSS_AXIS_TOLERANCE_COUNTS:
+                    run.outcome = "still axis moved"
+                    self._stop_axes(link, run.axes)
+                    ctx.fail(f"{other} changed {d:+d} counts while {'+'.join(run.axes)} approached home; controlled "
+                             "stop sent", error_code="cross_axis_encoder_drift")
+                    return False
+        elif self.monitor.latched:  # the still axis changed while this leg moved (or anything else tripped)
             run.outcome = "stopped by the drift monitor"
             self._stop_axes(link, run.axes)
             rule = self.monitor.latch.rule if self.monitor.latch else "stage_latched"

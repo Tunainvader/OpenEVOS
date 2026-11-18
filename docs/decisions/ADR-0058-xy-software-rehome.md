@@ -57,6 +57,21 @@
 - **Evidence:** `stage-rehome-<time>-<outcome>.json` with the lock, before/after reads, each axis' homing trace and the
   return.
 
+## Amendment (2026-11-19): approach home before homing
+- **Why:** the operator reports that homing with Y halfway yanks it toward home with a screech. The stage logs show
+  the cause. Homing from mid-travel reaches the drive's full homing speed (5.6 mm/s) before it hits the hard stop;
+  from near home it touches at about 2.6 mm/s. Every recorded homing also slows sharply on its fast back-off at the
+  same place, about 1.9 mm above home, and on 2026-11-18 18:58 it stalled there, went over current and aborted.
+- **Change (`_rehome_approach`, step 2a):** before the home requests, each powered axis further out than 3,000 counts
+  (1.3 mm) is brought to 1,000 counts with an ordinary verified leg, X then Y. Homing then starts near the stop, as a
+  power-up from home does.
+  - These legs run with the monitor latched, so they guard the still axis themselves on every poll and stop if it
+    changes by more than `CROSS_AXIS_TOLERANCE_COUNTS` (10, ADR-0059). The leg's wrong-way guard, drive-flag check,
+    timeout and landing check also apply.
+  - Any failure stops the re-home before homing, with the lock kept.
+  - An axis switched off by its drive (an over-current trip) is homed from where it is, as before.
+- **Recorded:** `approach` in the `stage-rehome-*.json` record.
+
 ## Consequences
 - A software re-home does not clear latched drive faults (`MER`) and is not a reboot; those still need a power cycle.
 - The stage ends at home (0, 0), where the turret collides with the stage: no turret change until it is centred.
