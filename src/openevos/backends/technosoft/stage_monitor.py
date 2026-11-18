@@ -52,8 +52,8 @@ LATCH_FILE = "stage-latch.json"
 CSV_COLUMNS = ("t", "x_apos", "y_apos", "x_cpos", "y_cpos", "x_cmd", "y_cmd")
 THRESHOLDS = {"idle_drift_max_counts": IDLE_DRIFT_MAX_COUNTS, "move_drift_max_counts": MOVE_DRIFT_MAX_COUNTS,
               "settle_s": SETTLE_S, "fast_period_s": FAST_PERIOD_S, "ring_s": RING_S, "post_event_s": POST_EVENT_S}
-RECOVERY = ("power-cycle the microscope while OpenEVOS stays running and connected: it watches X and Y re-home, "
-            "then clears the lock")
+RECOVERY = ("power-cycle the microscope: with OpenEVOS running it watches X and Y re-home and clears the lock; with "
+            "OpenEVOS closed, the next launch clears it when it finds the drives freshly powered up and homed")
 #: Operator release without a power cycle (ADR-0057, amends ADR-0040; operator 2026-11-18: "can't we manually control
 #: the stage even after lock"). Only drift-type latches, only a small recorded drift (well under the ~14-count
 #: commutation reversal), and only when fresh reads show both axes homed, idle, fault-free, powered and within
@@ -104,6 +104,7 @@ class StageMonitor:
         self._evidence_due: float | None = None
         self._record = None
         self.record_path: Path | None = None
+        self.carried_over = False  # the latch came from the latch file (an earlier session), not from this one
         self._load_latch()
         if record and self.evidence_dir is not None:
             self._open_record()
@@ -443,7 +444,22 @@ class StageMonitor:
                                values=d.get("values", {}), evidence=d.get("evidence", ""))
         except (OSError, ValueError, KeyError, TypeError) as exc:  # fail closed
             self.latch = Latch("latch_file_unreadable", "XY", f"{p} could not be read ({exc})", _utc())
+        self.carried_over = True
         self.commands.append((0.0, f"latch carried over from an earlier session: {self.latch.rule} on {self.latch.axis}"))  # noqa: E501
+
+    def power_cycle_seen(self, evidence: str) -> bool:
+        """The launch found the drives freshly powered up and homed (Motor Gate 7 wrote the calibrated limits over the
+        power-up ones, which it does only with X and Y at home; a drive keeps those limits until it loses power). That
+        is the same proof as watching X and Y re-home (RECOVERY), taken while OpenEVOS was closed (operator 2026-11-18:
+        power cycles happened with the app closed and the lock carried over). Clears only a latch carried over from an
+        earlier session; a latch set in this session needs the live re-home. The drive-flag rules still run on every
+        status poll, so a fault that survived the power cycle locks the stage again. True when cleared."""
+        with self._lock:
+            if self.latch is None or not self.carried_over:
+                return False
+            self._clear(f"power cycle found at launch ({evidence})")
+            self.carried_over = False
+            return True
 
     def _open_record(self) -> None:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")

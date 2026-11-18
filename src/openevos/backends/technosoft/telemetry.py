@@ -1144,16 +1144,22 @@ class TelemetryService:
         t0 = time.monotonic()
         deadline = t0 + len(path) * TURRET_STEP_S_MAX + 5.0
         seen, done_polls = [cur], 0
+        self._turret_trace: list[tuple[float, dict]] = [(0.0, {"ICURRENTPOSHF": cur})]  # every poll, for evidence
         self._report_o(cur, moving=True)
         while True:
             self._sleep(MOVE_POLL_S)
             if self._stop_requested(ctx):
                 return "stopped"
             s = {k: link.read(o[k]) for k in ("ESTATEV", "ICURRENTPOSHF", "ISTATUSFLAGS", "IPENDINGMOVES", "SRL")}
+            self._turret_trace.append((round(time.monotonic() - t0, 3), s))
             pos = s["ICURRENTPOSHF"]
             if pos in tp.O_POSITIONS and pos != seen[-1]:
                 if self._turret_off_path(pos, seen[-1], path):
-                    return f"turret reached position {pos}, not next on its path {cur} -> {path}"
+                    # the whole sensor sequence (2026-11-18 18:49: only the last reading was kept, so a sensor bounce
+                    # could not be told from a turn going backwards)
+                    seq = " -> ".join(str(p) for p in [*seen, pos])
+                    return (f"turret reached position {pos}, not next on its path {cur} -> {path} "
+                            f"(sensor sequence {seq})")
                 seen.append(pos)
                 self._report_o(pos, moving=True)
             if s["ISTATUSFLAGS"] & TURRET_STUCK_FLAG:
@@ -1167,11 +1173,27 @@ class TelemetryService:
             if time.monotonic() > deadline:
                 return f"turret did not settle at position {n} in time (sensor {pos})"
 
+    def _write_turret_trace(self, why: str) -> str:
+        """The aborted turn's every poll (time, sensor, state, flags) as evidence next to the stage monitor's; returns
+        `why`, naming the file when one was written. Read-only bookkeeping: nothing goes to the drives."""
+        trace = getattr(self, "_turret_trace", None)
+        folder = getattr(self.monitor, "evidence_dir", None)
+        if not trace or folder is None or why == "stopped":
+            return why
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            p = folder / f"turret-trace-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}.json"
+            p.write_text(json.dumps({"why": why, "poll_s": MOVE_POLL_S, "polls": trace}, indent=1), encoding="utf-8")
+            return f"{why}; trace: {p.name}"
+        except OSError:
+            return why
+
     def _turret_abort(self, link: DriveLink, ctx, why: str) -> None:
         """The vendor's AXISOFF, once (and the X/Y stop on an operator STOP); then cancel or fail the command."""
         link.write(tp.O_AXISOFF_FRAME)
         if why == "stopped" and self._stop_request.is_set():
             self._send_stop(link)
+        why = self._write_turret_trace(why)
         pos = self._report_o(link.read(tp.VARS["O"]["ICURRENTPOSHF"]))
         if why == "stopped":
             ctx.mark_cancelled(pos)
@@ -1524,12 +1546,16 @@ def create_telemetry(options: dict) -> TelemetryService:
     """TELEMETRY factory. options: {"port": "COM3" | "auto" | "sim", "poll_interval_s": float,
     "motion": bool (ADR-0024: X/Y stage control; default False = read-only),
     "monitor_dir": folder for the drift monitor's latch and evidence (ADR-0040; None = memory only),
-    "stage_log": bool (also record every fast X/Y sample to a CSV there), "fast_log": bool (default = motion)}."""
+    "stage_log": bool (also record every fast X/Y sample to a CSV there), "fast_log": bool (default = motion),
+    "power_cycled": evidence str when the launch found the drives freshly powered up and homed (clears a latch carried
+    over from an earlier session, StageMonitor.power_cycle_seen)}."""
     port = str(options.get("port", "auto"))
     interval = float(options.get("poll_interval_s", POLL_INTERVAL_S))
     motion = bool(options.get("motion", False))
     box, why = (calibrated_travel_box(options["calibration"]) if options.get("calibration") else (None, ""))
     monitor = StageMonitor(options.get("monitor_dir"), record=bool(options.get("stage_log")))
+    if options.get("power_cycled") and port.lower() != "sim":
+        monitor.power_cycle_seen(str(options["power_cycled"]))
     kw = {"poll_interval_s": interval, "motion": motion, "travel_box_um": box, "monitor": monitor,
           "fast_log": bool(options.get("fast_log", motion))}
     locked = [str(a).upper() for a in options.get("locked_axes") or ()]

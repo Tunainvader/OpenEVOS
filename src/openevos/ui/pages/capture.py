@@ -36,6 +36,8 @@ from PySide6.QtWidgets import (
 )
 
 from openevos.acquisition.capture import CaptureRejected
+from openevos.acquisition.controller import TURRET_TIMEOUT_S
+from openevos.acquisition.turret_safety import TURRET_CENTRE_MM, outside_turret_box
 from openevos.core.models import Activity, BackendKind, Connection, Health
 from openevos.imaging.composite import (
     Layer,
@@ -98,6 +100,10 @@ def tool_button(text: str, ic: str, *, checkable: bool = False, tip: str = "") -
     b.setAccessibleName(text)
     b.setProperty("icon_name", ic)
     return b
+
+
+#: an axis this close outside its range (a count or two after power-up homing) is held at the edge, not refused
+HOME_SLACK_UM = 5.0
 
 
 def joystick_direction(vx: float, vy: float) -> tuple[int, int] | None:
@@ -913,7 +919,55 @@ class CapturePage(QWidget):
                 pc._phys_hold_end()
 
     def _objective(self, slot: int) -> None:
+        if getattr(self.session, "physical_stage", False) and outside_turret_box(self.ctl.stage_xy()):
+            self._centre_then_objective(slot)
+            return
         self.coalesce.request("turret", lambda: self.session.change_objective(slot))
+
+    def _in_range(self, axis: str, v: float) -> float:
+        lim = self.ctl.axis_limits(self.profile.stage_device, axis)
+        if lim is None:
+            return v
+        lo, hi = lim
+        return lo if lo - HOME_SLACK_UM <= v < lo else hi if hi < v <= hi + HOME_SLACK_UM else v
+
+    def _centre_then_objective(self, slot: int) -> None:
+        """The turret turns only with the stage over its opening (Gate 19: with Z at 0 and the stage at 0, 0 an
+        objective struck the stage). So: centre the stage (X, then Y; never together, ADR-0040), turn, and take the
+        stage back to where it was (Y, then X). Only the swing needs the centre; the turned objective sits in the light
+        path like any other. Z stays where the turret left it (retracted): going back up under a different objective
+        could reach the vessel. Operator 2026-11-19: "auto center and change, then again reach my last position".
+
+        The stage goes back ONLY after a verified turn. A failed, refused or timed-out turn leaves the stage centred:
+        the turret may still be swinging (2026-11-18 18:33: a 15 s timeout ended the command mid-turn and the old
+        code moved the stage back 5 s later)."""
+        x, y = self.ctl.stage_xy() or (0.0, 0.0)
+        # right after power-up homing an axis reads a count or so below 0 (2026-11-18: Y -0.44 µm), which the range
+        # check refuses as a target; hold such an axis at the edge instead (more than HOME_SLACK_UM out: refused)
+        x, y = self._in_range("x", x), self._in_range("y", y)
+        cx, cy = TURRET_CENTRE_MM["X"] * 1000.0, TURRET_CENTRE_MM["Y"] * 1000.0
+        o = self.profile.objective(slot)
+        name = o.label if o and o.label else f"slot {slot}"
+        ctl, session, log = self.ctl, self.session, self.model.add_log
+
+        def go() -> str:
+            ctl.run(ctl.move_stage(cx, y, timeout_s=30.0), timeout=40.0)  # X alone
+            ctl.run(ctl.move_stage(cx, cy, timeout_s=30.0), timeout=40.0)  # then Y alone
+            try:
+                ctl.run(session.change_objective(slot), timeout=TURRET_TIMEOUT_S + 30.0)
+            except Exception as exc:
+                raise RuntimeError(f"{exc}; the stage stays centred (the turret may not be at rest)") from exc
+            if ctl.objective_slot() != slot:
+                raise RuntimeError(f"the turret reads slot {ctl.objective_slot()}, not {slot}; the stage stays centred")
+            ctl.run(ctl.move_stage(cx, y, timeout_s=30.0), timeout=40.0)  # back: Y alone
+            ctl.run(ctl.move_stage(x, y, timeout_s=30.0), timeout=40.0)  # then X alone
+            return name
+
+        log("info", f"{name}: centring the stage for the turret (X {cx / 1000:g}, then Y {cy / 1000:g} mm); it returns "
+                    f"to X {x / 1000:.1f}, Y {y / 1000:.1f} mm after the turn")
+        self._run(f"Change to {name}", go,
+                  on_done=lambda n: log("info", f"{n} in place; stage back at X {x / 1000:.1f}, Y {y / 1000:.1f} mm "
+                                                "(Z retracted: refocus)"))
 
     def _move_z(self, z: float, *, confirmed: bool = False) -> None:
         self.coalesce.request("focus", lambda: self.ctl.move_focus(z, confirmed=confirmed))

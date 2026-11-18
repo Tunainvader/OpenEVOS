@@ -31,6 +31,9 @@ from openevos.core.models import (
 from openevos.instrument.profile import CameraRole, InstrumentProfile
 from openevos.safety.interlocks import claim_for_acquisition
 
+#: turret command deadline: 4 steps x 10 s (telemetry TURRET_STEP_S_MAX) + the service's 5 s + Z retract margin
+TURRET_TIMEOUT_S = 60.0
+
 
 class CommandError(RuntimeError):
     def __init__(self, kind: str, status: CommandStatus, message: str | None):
@@ -224,8 +227,11 @@ class InstrumentController:
         retract = safe is not None and z is not None and z > safe and self.objective_slot() != slot
         if retract:
             self.move_focus(safe).wait(30)  # the interlock then decides from the observed Z
+        # the longest turn is 4 Geneva steps (positions decrease: 1->5->4->3->2) of up to 10 s each, plus Z's retract;
+        # the drive service's own deadline is steps x 10 s + 5 s. 15 s timed a real 1->4 turn out mid-swing
+        # (2026-11-18 18:33): the turret finished, but the command ended "state uncertain"
         ticket = self.core.router.submit(SetTurretPosition(device_id=self.profile.turret_device, origin=self.origin,
-                                                           position=slot, timeout_s=15.0))
+                                                           position=slot, timeout_s=TURRET_TIMEOUT_S))
         if retract and ticket.wait(30) is CommandStatus.SUCCEEDED:
             # Z back where it was before the turn, so every caller (calibration, scans, time-lapse, review) continues
             # at its focus height; only a turret that does not lower Z itself takes this path (the simulator)

@@ -833,6 +833,9 @@ class ZFocusPanel(QWidget):
         self.act_limit_set.triggered.connect(self.limit_set_requested)
         self.act_limit_clear.triggered.connect(self.limit_clear_requested)
         row.addWidget(self.btn_limit)
+        # set/clear lives in Settings › Interface › Objective safe heights (operator 2026-11-18: not on the focus
+        # panel); the tape's amber band and the readout still warn above the safe height
+        self.btn_limit.hide()
         lay.addLayout(row)
         # autofocus
         af = QHBoxLayout()

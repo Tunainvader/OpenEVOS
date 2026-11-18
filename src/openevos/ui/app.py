@@ -109,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
                  + (f" (evidence: {', '.join(r.evidence)})" if r.evidence else ""))
         except Exception as exc:  # noqa: BLE001 - the app still starts; the precheck reports the light
             note("led_autostart", f"LED board auto-start failed: {exc}")
+    power_cycled = None  # evidence that the drives were freshly powered up and homed (clears a carried-over lock)
     if (args.motor_control and args.motor_telemetry and str(args.motor_telemetry).lower() != "sim"
             and not args.no_limits_autoload and args.screenshot_dir is None and sys.platform == "win32"):
         from openevos.maintenance.motor_autolimits import autoload
@@ -116,6 +117,8 @@ def main(argv: list[str] | None = None) -> int:
         try:  # before the session opens the motor port
             r = autoload(scans=args.scans_dir)
             note("limits_autoload", f"Stage limits: {r.message}" + (f" (evidence: {r.evidence})" if r.evidence else ""))
+            if r.outcome == "pass":  # Gate 7 wrote over the power-up limits, with X and Y at home
+                power_cycled = f"drives on their power-up limits, X and Y at home; {r.evidence or 'Motor Gate 7'}"
         except Exception as exc:  # noqa: BLE001 - the app still starts; the precheck reports power-up limits
             note("limits_autoload", f"Stage limits auto-load failed: {exc}")
     illumination = _resolve_illumination(args.illumination, screenshots=args.screenshot_dir is not None)
@@ -136,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
                                 # stage must never lock (or unlock) the real one
                                 "monitor_dir": None if str(args.motor_telemetry).lower() == "sim"
                                 else str(args.scans_dir / "stage-monitor"),
-                                "stage_log": bool(args.stage_log)}} \
+                                "stage_log": bool(args.stage_log), "power_cycled": power_cycled}} \
         if args.motor_telemetry else None
 
     import os

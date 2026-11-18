@@ -919,6 +919,11 @@ class SettingsPage(QWidget):
                                     "B light, X snap to last, Y fine/coarse, Back stop")
         self.chk_gamepad.toggled.connect(lambda v: setattr(b, "gamepad_enabled", v))
         form.addRow("", self.chk_gamepad)
+        self.btn_safe_heights = QPushButton("Objective safe heights…")
+        self.btn_safe_heights.setToolTip("Per objective: the Z where it nears the vessel. Above it the focus readout "
+                                         "turns amber and a held focus move stops. Go to, set here or clear each one")
+        self.btn_safe_heights.clicked.connect(lambda: getattr(self.window(), "open_safe_heights", lambda: None)())
+        form.addRow("Focus", self.btn_safe_heights)
         form.addRow(label("Auto fine adjustment, capture focus nominal and vessel alignment are in Calibration; gas "
                           "connections and temperature offset are in Environment.", "caption", wrap=True))
         return w
