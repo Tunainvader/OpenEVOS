@@ -122,6 +122,31 @@ def test_a_stage_just_below_zero_after_homing_still_centres(app, window, monkeyp
     assert "failed" not in cap.lbl_task.text()
 
 
+def test_nothing_moves_when_the_turret_is_off_its_positions(app, window, monkeypatch):
+    """2026-11-18 18:56: after a power cycle the turret sensor read 42214 and the centring moved X anyway."""
+    cap, ctl = window.pages["capture"], window.session.controller
+    ctl.run(ctl.move_stage(10_000.0, 8_000.0))
+    monkeypatch.setattr(ctl, "objective_slot", lambda: 42214)
+    moves = _record_moves(ctl, monkeypatch)
+    cap._objective(2)
+    _wait(app, lambda: False, 0.3)
+    assert moves == []
+
+
+def test_nothing_moves_when_the_stage_is_not_ready(app, window, monkeypatch):
+    from openevos.core.models import Health
+
+    cap, s = window.pages["capture"], window.session
+    ctl = s.controller
+    ctl.run(ctl.move_stage(10_000.0, 8_000.0))
+    snap = s.core.store.get(s.profile.stage_device)
+    monkeypatch.setattr(s.core.store, "get", lambda _d: snap.model_copy(update={"health": Health.WARNING}))
+    moves = _record_moves(ctl, monkeypatch)
+    cap._objective(2)
+    _wait(app, lambda: False, 0.3)
+    assert moves == []
+
+
 def test_inside_the_box_turns_without_moving_the_stage(app, window, monkeypatch):
     cap, ctl = window.pages["capture"], window.session.controller
     ctl.run(ctl.move_stage(45_000.0, 30_000.0))

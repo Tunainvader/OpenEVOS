@@ -941,6 +941,19 @@ class CapturePage(QWidget):
         The stage goes back ONLY after a verified turn. A failed, refused or timed-out turn leaves the stage centred:
         the turret may still be swinging (2026-11-18 18:33: a 15 s timeout ended the command mid-turn and the old
         code moved the stage back 5 s later)."""
+        # nothing moves unless the turn can happen: a turret off its positions (2026-11-18 18:56: the sensor read
+        # 42214 after a power cycle) or a locked stage would leave the stage parked part-way for nothing
+        cur = self.ctl.objective_slot()
+        if cur is None or self.profile.objective(int(cur)) is None:
+            self.model.add_log("warn", f"Objective change refused: the turret reads position {cur}, not an objective "
+                                       "(its power-up homing may not have finished); the stage was not moved")
+            return
+        snap = self.session.core.store.get(self.profile.stage_device)
+        if snap is not None and snap.health.value != "normal":
+            why = snap.attr("drift_lock_reason") or snap.health.value
+            self.model.add_log("warn", f"Objective change refused: the stage is not ready ({why}); the stage was not "
+                                       "moved")
+            return
         x, y = self.ctl.stage_xy() or (0.0, 0.0)
         # right after power-up homing an axis reads a count or so below 0 (2026-11-18: Y -0.44 µm), which the range
         # check refuses as a target; hold such an axis at the edge instead (more than HOME_SLACK_UM out: refused)
