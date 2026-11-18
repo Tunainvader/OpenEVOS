@@ -147,6 +147,36 @@ def test_nothing_moves_when_the_stage_is_not_ready(app, window, monkeypatch):
     assert moves == []
 
 
+def test_between_positions_asks_then_turns_without_moving_the_stage(app, window, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    cap, ctl = window.pages["capture"], window.session.controller
+    ctl.run(ctl.move_stage(45_000.0, 30_000.0))  # inside the box
+    monkeypatch.setattr(ctl, "objective_slot", lambda: 0)
+    asked, sent = [], []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(a[2]) or QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(window.session, "change_objective", lambda slot: sent.append(slot) or ctl.set_objective(slot))
+    moves = _record_moves(ctl, monkeypatch)
+    cap._objective(2)
+    assert _wait(app, lambda: sent == [2] and not cap.coalesce.pending())
+    assert asked and "between objectives" in asked[0] and moves == []
+
+
+def test_between_positions_off_centre_explains_and_sends_nothing(app, window, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    cap, ctl = window.pages["capture"], window.session.controller
+    ctl.run(ctl.move_stage(10_000.0, 8_000.0))
+    monkeypatch.setattr(ctl, "objective_slot", lambda: 0)
+    told, sent = [], []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: told.append(a[2]))
+    monkeypatch.setattr(window.session, "change_objective", lambda slot: sent.append(slot))
+    moves = _record_moves(ctl, monkeypatch)
+    cap._objective(2)
+    _wait(app, lambda: False, 0.3)
+    assert told and "jog the stage" in told[0] and sent == [] and moves == []
+
+
 def test_inside_the_box_turns_without_moving_the_stage(app, window, monkeypatch):
     cap, ctl = window.pages["capture"], window.session.controller
     ctl.run(ctl.move_stage(45_000.0, 30_000.0))

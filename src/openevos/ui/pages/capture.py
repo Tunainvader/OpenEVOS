@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 
 from openevos.acquisition.capture import CaptureRejected
 from openevos.acquisition.controller import TURRET_TIMEOUT_S
-from openevos.acquisition.turret_safety import TURRET_CENTRE_MM, outside_turret_box
+from openevos.acquisition.turret_safety import TURRET_CENTRE_MM, TURRET_STAGE_BOX_MM, outside_turret_box
 from openevos.core.models import Activity, BackendKind, Connection, Health
 from openevos.imaging.composite import (
     Layer,
@@ -919,9 +919,39 @@ class CapturePage(QWidget):
                 pc._phys_hold_end()
 
     def _objective(self, slot: int) -> None:
+        if getattr(self.session, "physical_stage", False) and self.ctl.objective_slot() == 0:
+            self._recover_turret(slot)
+            return
         if getattr(self.session, "physical_stage", False) and outside_turret_box(self.ctl.stage_xy()):
             self._centre_then_objective(slot)
             return
+        self.coalesce.request("turret", lambda: self.session.change_objective(slot))
+
+    def _recover_turret(self, slot: int) -> None:
+        """The turret reads 0, between positions (a stalled or stopped turn). The drive's own GOTO_POS turns it one way
+        until its sensor shows `slot` and switches it off by itself if the sensor stops changing; the service retracts
+        Z to 0 first and refuses unless the program is idle and the stage is centred. The stage is not moved here: with
+        an objective part-way through its swing, the operator jogs it into the centre first (operator 2026-11-19:
+        "rotate the motor at the pos")."""
+        from PySide6.QtWidgets import QMessageBox
+
+        o = self.profile.objective(slot)
+        name = o.label if o and o.label else f"slot {slot}"
+        (xlo, xhi), (ylo, yhi) = TURRET_STAGE_BOX_MM["X"], TURRET_STAGE_BOX_MM["Y"]
+        if outside_turret_box(self.ctl.stage_xy()):
+            x, y = self.ctl.stage_xy() or (0.0, 0.0)
+            QMessageBox.information(self, "Turret between positions",
+                                    f"The turret is between objectives. To turn it onto {name}, first jog the stage "
+                                    f"into the turret's clear area (X {xlo:g}–{xhi:g}, Y {ylo:g}–{yhi:g} mm; it is at "
+                                    f"X {x / 1000:.1f}, Y {y / 1000:.1f} mm), slowly and watching the objectives.")
+            return
+        if QMessageBox.question(
+                self, "Turret between positions",
+                f"The turret is between objectives. Turn it onto {name}?\n\nZ retracts to 0 first. The turret turns "
+                "one way (position numbers go down) until its sensor shows the objective, up to one full turn. If it "
+                "stalls, the drive switches the motor off by itself.") != QMessageBox.StandardButton.Yes:
+            return
+        self.model.add_log("warn", f"Turret recovery: turning from between positions onto {name}")
         self.coalesce.request("turret", lambda: self.session.change_objective(slot))
 
     def _in_range(self, axis: str, v: float) -> float:

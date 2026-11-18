@@ -1120,8 +1120,11 @@ class TelemetryService:
                             "power-cycle the instrument")
         if st["SRL"] & 0x8000:
             problems.append("turret motor is on at rest")
-        if cur not in tp.O_POSITIONS:
+        if cur not in tp.O_POSITIONS and cur != 0:
             problems.append(f"turret position unknown (sensor {cur}); turn it onto an objective by hand")
+        # cur == 0: between positions (a stalled or aborted turn, 2026-11-18). The drive's own GOTO_POS turns one way
+        # until the sensor shows the target and stops itself if the sensor does not change (stuck flag); with the
+        # program idle and the checks above, that is the recovery turn (operator: "rotate the motor at the pos")
         return cur, problems
 
     @staticmethod
@@ -1138,11 +1141,12 @@ class TelemetryService:
         """Start the turn from `cur` to `n` and poll it. '' = settled at n; otherwise why it was stopped."""
         o = tp.VARS["O"]
         z0 = link.read(tp.VARS["Z"]["APOS"])
-        path = self._turret_path(cur, n)
+        # from between positions (cur 0) the path starts at the first position the sensor shows; allow a full turn
+        path = self._turret_path(cur, n) if cur else []
         link.write(tp.o_target(n))
         link.write(tp.O_GOTO_FRAME)
         t0 = time.monotonic()
-        deadline = t0 + len(path) * TURRET_STEP_S_MAX + 5.0
+        deadline = t0 + (len(path) if cur else len(tp.O_POSITIONS)) * TURRET_STEP_S_MAX + 5.0
         seen, done_polls = [cur], 0
         self._turret_trace: list[tuple[float, dict]] = [(0.0, {"ICURRENTPOSHF": cur})]  # every poll, for evidence
         self._report_o(cur, moving=True)
@@ -1153,6 +1157,9 @@ class TelemetryService:
             s = {k: link.read(o[k]) for k in ("ESTATEV", "ICURRENTPOSHF", "ISTATUSFLAGS", "IPENDINGMOVES", "SRL")}
             self._turret_trace.append((round(time.monotonic() - t0, 3), s))
             pos = s["ICURRENTPOSHF"]
+            if pos in tp.O_POSITIONS and pos != seen[-1] and seen[-1] == 0 and not path:
+                # the first position seen after starting between positions: the path runs from here
+                path = [pos, *self._turret_path(pos, n)] if pos != n else [n]
             if pos in tp.O_POSITIONS and pos != seen[-1]:
                 if self._turret_off_path(pos, seen[-1], path):
                     # the whole sensor sequence (2026-11-18 18:49: only the last reading was kept, so a sensor bounce

@@ -141,6 +141,35 @@ def test_turret_refused_unless_the_stage_is_centred():
         svc.stop()
 
 
+def test_turret_turns_from_between_positions_onto_the_target():
+    """2026-11-18: a stalled turn left the turret at sensor 0. The drive's GOTO_POS from 0 turns the decreasing way
+    until the sensor shows the target; the path is checked from the first position the sensor shows."""
+    chain = SimulatedDriveChain(CENTRE | {("O", "ICURRENTPOSHF"): 0, ("O", "IHF"): 14}, allow_motion=True)
+    chain.o_steps_per_read = 2
+    svc = _service(chain)
+    try:
+        ctx = _run(svc, "motor.objective_turret", SetTurretPosition(device_id="motor.objective_turret", origin="test",
+                                                                    position=2))
+        assert ctx.status == "ok", ctx.message
+        assert chain.values[("O", "ICURRENTPOSHF")] == 2  # 0 -> 4 -> 3 -> 2 on the simulator
+        assert _writes(chain, tp.O_ID) == [tp.o_target(2), tp.O_GOTO_FRAME]
+    finally:
+        svc.stop()
+
+
+def test_turret_with_a_junk_program_state_is_refused():
+    """2026-11-18: after the stall the turret drive read ESTATEV 0x54D6 / 0xD4D6 (its program not running)."""
+    chain = SimulatedDriveChain(CENTRE | {("O", "ICURRENTPOSHF"): 0, ("O", "ESTATEV"): 0xD4D6}, allow_motion=True)
+    svc = _service(chain)
+    try:
+        ctx = _run(svc, "motor.objective_turret", SetTurretPosition(device_id="motor.objective_turret", origin="test",
+                                                                    position=2))
+        assert ctx.status == "failed" and "not idle" in ctx.message and ctx.code == "turret_precondition"
+        assert _writes(chain, tp.O_ID) == [] and _writes(chain, tp.Z_ID) == []
+    finally:
+        svc.stop()
+
+
 def test_stuck_turret_gets_axisoff():
     chain = SimulatedDriveChain(CENTRE, allow_motion=True)
     chain.o_stuck = True
