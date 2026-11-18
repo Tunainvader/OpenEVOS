@@ -429,6 +429,7 @@ class CapturePage(QWidget):
         self.chk_actual.toggled.connect(self._set_actual)
         self.btn_lc.clicked.connect(self._light_camera)
         self.focus.step_requested.connect(self._focus_step)
+        self.focus.hold_released.connect(self._focus_hold_end)
         self.focus.limit_set_requested.connect(self._set_focus_limit)
         self.focus.limit_clear_requested.connect(self._clear_focus_limit)
         self.btn_snap.clicked.connect(self._snap)
@@ -888,6 +889,18 @@ class CapturePage(QWidget):
 
     def _move_z(self, z: float) -> None:
         self.coalesce.request("focus", lambda: self.ctl.move_focus(z))
+
+    def _focus_hold_end(self) -> None:
+        """The operator let go of a held pad half or arrow key: drop the queued step and cancel the running Z move.
+        The drive's own stop (Gate 18's ESTATE 6) halts Z where it is, instead of finishing the steps queued during
+        the hold (operator, 2026-11-18: "I keep stuck even after I leave the button")."""
+        self.coalesce.drop("focus")
+        if self.coalesce.cancel("focus"):
+            self.model.add_log("info", "Focus hold released: Z stopped")
+        self._z_goal = None
+        self._hold_at_limit = False
+        self.focus.pad.set_moving(None)
+        self._refresh_focus()
 
     def _focus_step(self, delta_um: float, held: bool = False) -> None:
         """One pad step: from the in-flight target (rapid clicks add up) or else the readback, through

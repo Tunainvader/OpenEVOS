@@ -131,6 +131,26 @@ def _frames(session) -> Check | None:
     return Check("frames", title, "ok", f"frames arriving from {frame.metadata.device_id}")
 
 
+#: the X/Y drives' power-up LPOSMAX: still in place = the calibrated limits (Gate 7) were not loaded since power-on
+POWER_UP_LPOSMAX = 50000
+
+
+def stage_limits(session) -> Check | None:
+    if not session.physical_stage:
+        return None
+    s = session.core.store.get(session.profile.stage_device)
+    lim = dict(s.attributes).get("limits_counts") if s is not None else None
+    if not lim:
+        return None
+    if any(hi == POWER_UP_LPOSMAX for _lo, hi in lim):
+        return Check("stage_limits", "Stage travel limits", "fault",
+                     "the drives hold their power-up limits (0–22 mm): the stage cannot reach the centre and "
+                     "objective changes are refused",
+                     "Jog the stage back to its home corner (X 0, Y 0), then close and restart the app: it loads "
+                     "the calibrated limits at launch (Gate 7, ADR-0056)")
+    return Check("stage_limits", "Stage travel limits", "ok", "calibrated limits loaded")
+
+
 def stage_box(session) -> Check | None:
     if not session.physical_stage or not session.profile.turret_device:
         return None
@@ -174,7 +194,7 @@ def run_precheck(session) -> list[Check]:
     """Every check, in the order they are shown. Reads only."""
     checks = [_device(session, title, did) for title, did in _mapped(session)]
     checks += _monitor(session)
-    for c in (_frames(session), stage_box(session)):
+    for c in (_frames(session), stage_limits(session), stage_box(session)):
         if c is not None:
             checks.append(c)
     checks += _safe_heights(session)

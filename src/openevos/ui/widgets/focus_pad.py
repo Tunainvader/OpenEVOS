@@ -401,8 +401,18 @@ class _Half(QAbstractButton):
         self.pad.update()
         super().focusOutEvent(e)
 
+    def keyReleaseEvent(self, e):
+        if e.key() in (Qt.Key_Up, Qt.Key_Down) and not e.isAutoRepeat():
+            if getattr(self, "_key_repeated", False):
+                self._key_repeated = False
+                self.pad.hold_released.emit()  # a held arrow key let go: stop Z now
+            return
+        super().keyReleaseEvent(e)
+
     def keyPressEvent(self, e):
         k = e.key()
+        if k in (Qt.Key_Up, Qt.Key_Down) and e.isAutoRepeat():
+            self._key_repeated = True
         if k == Qt.Key_Space and not e.isAutoRepeat():
             self.repeated = False
         if k in (Qt.Key_Return, Qt.Key_Enter):
@@ -423,6 +433,8 @@ class FocusPad(QWidget):
     #: (direction +1 / -1, multiplier, held): one step of the panel's current size; held = a repeat while the pad half
     #: or arrow key is held down (the page keeps a held move close behind the drive and stops it at the limit)
     stepped = Signal(int, int, bool)
+    #: a hold (pad half or arrow key) was let go: the page cancels the running Z move so Z stops where it is
+    hold_released = Signal()
 
     # design units (handoff: 340 x 370 pad area); the captions above and below keep a fixed 16 px band
     DW, DH = 340.0, 370.0
@@ -445,6 +457,7 @@ class FocusPad(QWidget):
         for h in (self.up, self.down):
             h.pressed.connect(self._sync)
             h.released.connect(self._sync)
+            h.released.connect(lambda h=h: self._released(h))
         self.up.clicked.connect(lambda: self._clicked(self.up, 1))
         self.down.clicked.connect(lambda: self._clicked(self.down, -1))
         self.setMinimumSize(170, 200)
@@ -534,6 +547,12 @@ class FocusPad(QWidget):
     def _set_off(self, v) -> None:
         self._off = float(v)
         self.update()
+
+    def _released(self, half: _Half) -> None:
+        """Qt emits released during every auto-repeat too (the half is still down then). Released and no longer down
+        after it repeated = the operator let go (or slid off the pad): end the hold."""
+        if not half.isDown() and half.repeated:
+            self.hold_released.emit()
 
     def _clicked(self, half: _Half, direction: int) -> None:
         """Qt emits clicked for each auto-repeat (the half is still down) and once more on release. A press that
@@ -732,6 +751,8 @@ class ZFocusPanel(QWidget):
 
     #: (signed step in µm, held): the page turns it into a readback-based target, or refuses it
     step_requested = Signal(float, bool)
+    #: the pad or arrow key hold was let go (stop Z now)
+    hold_released = Signal()
     #: Set limit here / Clear limit for the objective in the light path
     limit_set_requested = Signal()
     limit_clear_requested = Signal()
@@ -837,6 +858,7 @@ class ZFocusPanel(QWidget):
         self.seg_mode.activated.connect(self.set_mode)
         self.cmb_step.activated.connect(self._step_picked)
         self.pad.stepped.connect(self._stepped)
+        self.pad.hold_released.connect(self.hold_released)
         self._fill_steps()
 
     # ---------------------------------------------------------------- mode / step

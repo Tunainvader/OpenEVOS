@@ -52,6 +52,19 @@ def test_motor_chain_devices_monitor_stage_box_and_safe_heights():
         for did in ("motor.stage", "motor.focus", "motor.objective_turret", "motor.cube_carriage"):
             assert k[f"device.{did}"].status == "ok", k[f"device.{did}"]
         assert k["monitor"].status == "ok"
+        assert "stage_limits" in k
+        snap = s.core.store.get("motor.stage")
+        for lim, want in ((((0, 50000), (0, 50000)), "fault"), (((-3996, 265640), (-3996, 172744)), "ok")):
+            attrs = tuple((a, lim if a == "limits_counts" else v) for a, v in dict(snap.attributes).items())
+            if "limits_counts" not in dict(snap.attributes):
+                attrs += (("limits_counts", lim),)
+            fake_snap = snap.model_copy(update={"attributes": attrs})
+            fake = SimpleNamespace(physical_stage=True, profile=s.profile,
+                                   core=SimpleNamespace(store=SimpleNamespace(get=lambda _d, fs=fake_snap: fs)))
+            c = pc.stage_limits(fake)
+            assert c.status == want, (lim, c)
+            if want == "fault":
+                assert "Gate 7" in c.fix and "home corner" in c.fix
         assert k["stage_box"].status == "info" and "centred" in k["stage_box"].fix  # homed corner 0, 0
         assert k["safe_heights"].status == "warn" and "0 of 5" in k["safe_heights"].detail
         for o in s.profile.objectives:

@@ -64,17 +64,36 @@ def main(argv: list[str] | None = None) -> int:
                     help="do not start the LED board application at launch. By default, a board found in its "
                          "bootloader (0DAD:0057, its power-up state) is started with the reviewed version query + "
                          "StartApp steps, as the vendor software does every session (ADR-0055)")
+    ap.add_argument("--no-limits-autoload", action="store_true",
+                    help="with --motor-control: do not load the calibrated X/Y limits at launch. By default, drives "
+                         "still on their power-up limits (0-22 mm) get Motor Gate 7's reviewed limit writes, no motion "
+                         "(ADR-0056)")
     args = ap.parse_args(argv)
+    launch_notes: list[tuple[str, str]] = []  # also written to the session fault log once it is open
+
+    def note(step: str, text: str) -> None:
+        launch_notes.append((step, text))
+        print(text, file=sys.stderr, flush=True)
+
     if (args.illumination != "sim" and not args.no_led_autostart and args.screenshot_dir is None
             and sys.platform == "win32"):
         from openevos.maintenance.led_autostart import autostart
 
         try:
             r = autostart(evidence_dir=args.scans_dir)
-            print(f"LED board: {r.message}" + (f" (evidence: {', '.join(r.evidence)})" if r.evidence else ""),
-                  file=sys.stderr, flush=True)
+            note("led_autostart", f"LED board: {r.message}"
+                 + (f" (evidence: {', '.join(r.evidence)})" if r.evidence else ""))
         except Exception as exc:  # noqa: BLE001 - the app still starts; the precheck reports the light
-            print(f"LED board auto-start failed: {exc}", file=sys.stderr, flush=True)
+            note("led_autostart", f"LED board auto-start failed: {exc}")
+    if (args.motor_control and args.motor_telemetry and str(args.motor_telemetry).lower() != "sim"
+            and not args.no_limits_autoload and args.screenshot_dir is None and sys.platform == "win32"):
+        from openevos.maintenance.motor_autolimits import autoload
+
+        try:  # before the session opens the motor port
+            r = autoload(scans=args.scans_dir)
+            note("limits_autoload", f"Stage limits: {r.message}" + (f" (evidence: {r.evidence})" if r.evidence else ""))
+        except Exception as exc:  # noqa: BLE001 - the app still starts; the precheck reports power-up limits
+            note("limits_autoload", f"Stage limits auto-load failed: {exc}")
     illumination = _resolve_illumination(args.illumination, screenshots=args.screenshot_dir is not None)
     mono_camera =_resolve_mono_camera(args.mono_camera, screenshots=args.screenshot_dir is not None)
     colour_camera = _resolve_colour_camera(args.colour_camera, screenshots=args.screenshot_dir is not None)
@@ -125,6 +144,16 @@ def main(argv: list[str] | None = None) -> int:
         session.settings.basic.theme = args.theme
     name = session.settings.basic.theme
     theme.apply_theme(("dark" if theme.system_prefers_dark(app) else "light") if name == "system" else name, app)
+    fault_log = None
+    if settings_path is not None and not args.screenshot_dir:
+        from openevos.acquisition.session_log import SessionLog
+
+        try:
+            fault_log = SessionLog(session.core.bus, settings_path.with_name("Logs"))
+            for what, text in launch_notes:
+                fault_log.write("launch", step=what, message=text)
+        except OSError as exc:
+            print(f"session fault log unavailable: {exc}", file=sys.stderr, flush=True)
     mcp_link = None
     if args.mcp is not None and not args.screenshot_dir:
         from openevos.mcp_link.cli import start_for_session
@@ -150,6 +179,8 @@ def main(argv: list[str] | None = None) -> int:
             mcp_link[0].stop()
             mcp_link[1].close()
         session.shutdown()
+        if fault_log is not None:
+            fault_log.close()
 
 
 def _resolve_mono_camera(choice: str, *, screenshots: bool = False, probe=None) -> str | None:

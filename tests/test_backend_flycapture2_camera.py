@@ -115,6 +115,42 @@ def test_incomplete_frames_skipped_and_counted():
     assert dev.incomplete_frames == 2
 
 
+def test_retrieval_error_restarts_capture_in_place_and_recovers(monkeypatch):
+    """More than MAX_CONSECUTIVE_INCOMPLETE bad frames used to end the stream for good (live view froze with a
+    fault). Now capture restarts in place (stop, start) and the stream carries on."""
+    monkeypatch.setattr(fcam, "RESTART_PAUSE_S", 0.0)
+    t = Transport()
+    cam = FakeChameleon()
+    dev, _, reports = make(cam, t)
+    dev.connect()
+    cam.consistency_errors = fcam.MAX_CONSECUTIVE_INCOMPLETE + 3
+    dev.start_stream(n_frames=1)
+    assert t.got.wait(5.0)
+    assert dev.stream_restarts == 1 and cam.calls.count("fc2StartCapture") == 2
+    healths = [r.get("health") for r in reports if r.get("health") is not None]
+    assert healths[-2:] == [fcam.Health.WARNING, fcam.Health.NORMAL]
+    assert "restarted" in next(r["reason"] for r in reports if r.get("health") is fcam.Health.WARNING)
+
+
+def test_persistent_retrieval_error_faults_after_the_restart_budget(monkeypatch):
+    monkeypatch.setattr(fcam, "RESTART_PAUSE_S", 0.0)
+
+    class Broken(FakeChameleon):
+        def _fc2RetrieveBuffer(self, ctx, p):
+            return 33  # not an image-consistency error: e.g. a timeout
+
+    t = Transport()
+    dev, _cam, reports = make(Broken(), t)
+    dev.connect()
+    dev.start_stream()
+    deadline = time.monotonic() + 5
+    while dev.streaming and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert not dev.streaming and dev.stream_restarts == fcam.MAX_STREAM_RESTARTS
+    fault = [r for r in reports if r.get("health") is fcam.Health.FAULT]
+    assert fault and "after 3 restart(s)" in fault[-1]["fault"]
+
+
 def test_exposure_and_gain_commands_read_back():
     dev, cam, _ = make()
     dev.connect()

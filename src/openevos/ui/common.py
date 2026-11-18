@@ -199,6 +199,17 @@ class Coalescer(QObject):
         """True while a request for `key` is queued behind the running command of its group."""
         return key in self._want
 
+    def drop(self, key: str) -> bool:
+        """Forget a queued request for `key` (it was never submitted). True if one was queued."""
+        return self._want.pop(key, None) is not None
+
+    def cancel(self, group: str) -> bool:
+        """Ask the router to cancel the running command of `group` (the backend stops the device). True if asked."""
+        t = self._inflight.get(group)
+        if t is None or t.status.is_terminal:
+            return False
+        return bool(t.cancel())
+
     def _pump(self) -> None:
         for key in list(self._want):
             group, fn = self._want[key]

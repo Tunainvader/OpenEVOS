@@ -224,15 +224,41 @@ def test_hold_keeps_moving_and_stops_on_release(app, window):
     f.set_step(1.0)
     z0 = cap.ctl.focus_z()
     half = f.pad.up
+    ended = []
+    f.hold_released.connect(lambda: ended.append(cap.ctl.focus_z()))
     QTest.mousePress(half, Qt.LeftButton, pos=QPoint(half.width() // 2, half.height() // 2))
     pump(app, 1.3)  # 400 ms delay, then a step every 100 ms
-    assert half.repeated
+    assert half.repeated and not ended
     QTest.mouseRelease(half, Qt.LeftButton, pos=QPoint(half.width() // 2, half.height() // 2))
-    goal_at_release = cap._z_goal
+    assert len(ended) == 1  # the release ends the hold once
+    assert not cap.coalesce.waiting("focus") and cap._z_goal is None  # nothing left queued
     assert _idle(app, cap)
-    moved = cap.ctl.focus_z() - z0
-    assert moved >= 4.0  # kept moving while held
-    assert abs(cap.ctl.focus_z() - goal_at_release) < 1e-6  # the release added no step
+    z_end = cap.ctl.focus_z()
+    assert z_end - z0 >= 4.0  # kept moving while held
+    pump(app, 0.4)
+    assert cap.ctl.focus_z() == z_end  # and stopped: no step after the release
+
+
+def test_hold_release_drops_the_queued_step_and_cancels_the_running_move(app, window):
+    cap = window.pages["capture"]
+
+    class Ticket:
+        def __init__(self):
+            self.status = type("S", (), {"is_terminal": False})()
+            self.cancelled = 0
+
+        def cancel(self):
+            self.cancelled += 1
+            return True
+
+    t = Ticket()
+    cap.coalesce._inflight["focus"] = t
+    cap.coalesce._want["focus"] = ("focus", lambda: None)
+    cap._z_goal = 123.0
+    cap._focus_hold_end()
+    assert t.cancelled == 1 and not cap.coalesce.waiting("focus") and cap._z_goal is None
+    assert any("Z stopped" in e[2] for e in window.model.log)
+    cap.coalesce._inflight.pop("focus", None)
 
 
 def test_objective_safe_height_warns_and_stops_a_hold(app, window):

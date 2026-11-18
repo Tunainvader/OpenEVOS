@@ -21,6 +21,7 @@ from __future__ import annotations
 import ctypes as C
 import itertools
 import threading
+import time
 from collections.abc import Callable
 
 import numpy as np
@@ -52,6 +53,12 @@ DEFAULT_EXPOSURE_MS = 20.0
 DEFAULT_GAIN_DB = 0.0
 RETRIEVE_TIMEOUT_S = 5.0
 MAX_CONSECUTIVE_INCOMPLETE = 5
+#: a retrieval error that is not a stop: restart capture in place (stop, short pause, start) up to this many times per
+#: window before declaring the stream failed (operator, 2026-11-18: "again mono camera fault"; live view froze until
+#: the app was restarted). Only fc2StopCapture / fc2StartCapture, the calls start_stream / stop_stream already make.
+MAX_STREAM_RESTARTS = 3
+RESTART_WINDOW_S = 60.0
+RESTART_PAUSE_S = 0.3
 BIT_SHIFT = 4  # 12-bit data left-aligned in 16 bits
 STALE_FRAMES_AFTER_LIGHT = 1  # lag check 2026-11-16: first snap after LED ON was dark, after OFF part-lit
 
@@ -67,6 +74,9 @@ class FlyCapture2MonoCamera:
         self.physical_id = "flycapture2:1E10:2005"
         self._sdk = sdk or fc.FlyCapture2SettingsBackend()
         self._channel_fn, self._extra_fn = channel_fn, extra_fn
+        self._restarts: list[float] = []  # monotonic times of in-place capture restarts (last RESTART_WINDOW_S)
+        self._degraded = False
+        self.stream_restarts = 0
         self.width, self.height = fc.F7_WIDTH, fc.F7_HEIGHT
         self.exposure_ms, self.gain_db = DEFAULT_EXPOSURE_MS, DEFAULT_GAIN_DB
         self.exposure_range_ms: tuple[float, float] | None = None
@@ -301,7 +311,13 @@ class FlyCapture2MonoCamera:
                         consecutive_bad += 1
                         self.incomplete_frames += 1
                         continue
-                    self._fail_stream(f"frame retrieval failed: {exc}")
+                    if self._restart_capture(str(exc)):
+                        consecutive_bad = 0
+                        continue
+                    if self._stop.is_set():
+                        return
+                    self._fail_stream(f"frame retrieval failed: {exc} (after {len(self._restarts)} restart(s) in "
+                                      f"{RESTART_WINDOW_S:.0f} s)")
                     return
                 consecutive_bad = 0
                 with self._io:
@@ -333,12 +349,37 @@ class FlyCapture2MonoCamera:
                            extra=extra)
         accepted = self.transport.push(px, md, owned=True)
         self.frames_produced += 1
+        if self._degraded:  # first good frame after a restart
+            self._degraded = False
+            self._obs(health=Health.NORMAL, reason="camera stream recovered")
         if not accepted:
             threading.Thread(target=self.stop_stream, args=(f"frame {idx} refused by storage path",), daemon=True).start()
             return
         if s["n"] is not None and s["i"] >= s["n"]:
             threading.Thread(target=self.stop_stream, args=("requested frame count reached",), daemon=True).start()
             self._stop.set()
+
+    def _restart_capture(self, why: str) -> bool:
+        """Restart capture in place after a retrieval error (see MAX_STREAM_RESTARTS). True = streaming again."""
+        now = time.monotonic()
+        self._restarts = [t for t in self._restarts if now - t < RESTART_WINDOW_S]
+        if len(self._restarts) >= MAX_STREAM_RESTARTS or self._stop.is_set():
+            return False
+        self._restarts.append(now)
+        self.stream_restarts += 1
+        self._obs(health=Health.WARNING, reason=f"camera stream restarted after: {why}")
+        try:
+            with self._io:
+                self._sdk._stop_capture()
+            if self._stop.wait(RESTART_PAUSE_S):
+                return False  # stop requested meanwhile
+            with self._io:
+                self._sdk._call("fc2StartCapture", self._sdk._ctx)
+                self._sdk._capturing = True
+        except Exception:  # noqa: BLE001 - the caller declares the stream failed
+            return False
+        self._degraded = True
+        return True
 
     def _fail_stream(self, message: str) -> None:
         self._obs(health=Health.FAULT, reason="camera stream failed", fault=message)
