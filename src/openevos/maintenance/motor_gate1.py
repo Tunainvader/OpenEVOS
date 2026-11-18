@@ -238,8 +238,8 @@ def inspect_phrase(device: str) -> str:
 def run(*, send: bool = False, inspect_only: bool = False, confirm: str = "", on_for_2_min: bool = False,
         find_ports: Callable[[], list[PortInfo]] = find_ftdi_ports,
         open_port: Callable[[str], Port] = open_vendor_port,
-        monotonic: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> MotorGate1Result:
-    res = MotorGate1Result("refused", "", datetime.now(timezone.utc).isoformat(timespec="milliseconds"), platform.node())
+        monotonic: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> MotorGate1Result:  # noqa: E501
+    res = MotorGate1Result("refused", "", datetime.now(timezone.utc).isoformat(timespec="milliseconds"), platform.node())  # noqa: E501
     if send and inspect_only:
         res.message = "--send and --inspect-port are separate steps; choose one. Nothing opened"
         return res
@@ -360,7 +360,7 @@ def _exchange_all(port: Port, res: MotorGate1Result, monotonic, sleep) -> None:
             res.outcome, res.message = "stopped", f"line sync lost before {axis} {var}; stopped"
             return
         ex = _request(port, res, frame, f"{axis} {var}", monotonic, sleep)
-        value, why = parse_read_reply(bytes.fromhex(ex.reply_hex), aid, addr, bits) if ex.reply_hex else (None, ex.problem)
+        value, why = parse_read_reply(bytes.fromhex(ex.reply_hex), aid, addr, bits) if ex.reply_hex else (None, ex.problem)  # noqa: E501
         if value is None:
             ex.problem = why
             res.outcome, res.message = "stopped", f"{axis} {var}: {why}. Not retried"
@@ -368,10 +368,10 @@ def _exchange_all(port: Port, res: MotorGate1Result, monotonic, sleep) -> None:
         ex.value = decode(value, bits)
         res.axes.setdefault(axis, {"id": aid})[var] = ex.value
         if var == "ESTATEV" and ex.value["u16"] != 0:
-            res.outcome, res.message = "not_idle", f"{axis} state is {ex.value['u16']}, not idle: wait for power-up homing to finish"
+            res.outcome, res.message = "not_idle", f"{axis} state is {ex.value['u16']}, not idle: wait for power-up homing to finish"  # noqa: E501
             return
         if var == "IINITONCEDONE" and ex.value["u16"] != INIT_DONE_MARKER:
-            res.outcome, res.message = "not_idle", f"{axis} has not finished power-up initialisation (marker {ex.value['u16']})"
+            res.outcome, res.message = "not_idle", f"{axis} has not finished power-up initialisation (marker {ex.value['u16']})"  # noqa: E501
             return
     for axis, info in res.axes.items():
         info["ini_version"] = MOTOR_FIRMWARE_INI[axis]
@@ -400,8 +400,8 @@ def main(argv: list[str] | None = None, **seams) -> int:
                                             "drives. Dry run by default.")
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--inspect-port", action="store_true",
-                      help="open the port, read back its settings, close; nothing written (phrase: INSPECT MOTOR PORT COMn)")
-    mode.add_argument("--send", action="store_true", help="run the full read sequence (phrase: READ MOTOR DRIVES ON COMn)")
+                      help="open the port, read back its settings, close; nothing written (phrase: INSPECT MOTOR PORT COMn)")  # noqa: E501
+    mode.add_argument("--send", action="store_true", help="run the full read sequence (phrase: READ MOTOR DRIVES ON COMn)")  # noqa: E501
     p.add_argument("--instrument-on-2min", action="store_true",
                    help="operator confirms the EVOS has been powered on for at least 2 minutes (--send only)")
     p.add_argument("--confirm", default="", help="the exact phrase for the chosen mode")

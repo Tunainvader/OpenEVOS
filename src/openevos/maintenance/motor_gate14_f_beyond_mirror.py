@@ -8,7 +8,7 @@ move (128,000 -> 124,000 -> 128,000) sets the peak-current threshold. Stop on: t
 drive's over-current / position-error ISRs, which CLEAR their MER bits), MER, SRH LSP, peak |IQ| > 2x reference,
 wrong-way or drift. Always restore LPOSMAX = 128,000 (read back); after a pass F returns to 128,000 first.
 Dry run by default.
-"""
+"""  # noqa: E501
 
 from __future__ import annotations
 

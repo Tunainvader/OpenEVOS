@@ -178,7 +178,7 @@ def run(*, n: int, send: bool = False, confirm: str = "", on_for_2_min: bool = F
                          Exchange("O AXISOFF (fault / Ctrl+C only)", O_AXISOFF.hex(" "))]
         return res
     if not on_for_2_min:
-        res.message = "operator has not confirmed the instrument has been on (and homed) for >= 2 minutes; nothing opened"
+        res.message = "operator has not confirmed the instrument has been on (and homed) for >= 2 minutes; nothing opened"  # noqa: E501
         return res
     if not stage_empty_z_down:
         res.message = ("operator has not confirmed an empty stage, hands clear of the turret, no immersion oil on any "
@@ -300,7 +300,7 @@ def _procedure(link, res, n: int, from_between: int | None = None) -> None:
     failed = [k for k, v in checks.items() if not v]
     res.outcome = "fail" if failed else "pass"
     res.message = (f"turret {start}{' (between)' if from_between else ''} -> {n} ({OBJECTIVES[n]}) in "
-                   f"{res.legs['turn']['seconds']} s, passing {seen}; O off and idle, not stuck, MER clear; Z unchanged "
+                   f"{res.legs['turn']['seconds']} s, passing {seen}; O off and idle, not stuck, MER clear; Z unchanged "  # noqa: E501
                    f"at {fz['APOS']}; all axes idle" if not failed else "FAILED final checks: " + ", ".join(failed))
 
 

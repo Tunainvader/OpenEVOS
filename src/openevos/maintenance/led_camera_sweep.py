@@ -354,7 +354,7 @@ def write_evidence(result: SweepResult, out_dir: Path) -> Path:
 def main(argv: list[str] | None = None, led: HidBackend | None = None, pnp: g1.PnpEnumerator | None = None,
          cam: FlyCapture2SettingsBackend | None = None) -> int:
     p = argparse.ArgumentParser(prog="python -m openevos.maintenance.led_camera_sweep",
-                                description="Measure relative LED output vs level with the mono camera. Dry run by default.")
+                                description="Measure relative LED output vs level with the mono camera. Dry run by default.")  # noqa: E501
     p.add_argument("--light", choices=sorted(MAX_LEVEL), required=True)
     p.add_argument("--levels", default=",".join(map(str, DEFAULT_LEVELS)), help="comma-separated, increasing")
     p.add_argument("--shutter-ms", type=float, default=10.0, help=f"one of {SHUTTERS_MS}")

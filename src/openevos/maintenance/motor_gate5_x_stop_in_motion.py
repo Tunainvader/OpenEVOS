@@ -59,7 +59,7 @@ def confirm_phrase(device: str) -> str:
 def run(*, send: bool = False, confirm: str = "", on_for_2_min: bool = False, stage_empty_watching: bool = False,
         find_ports: Callable[[], list[PortInfo]] = find_ftdi_ports,
         open_port: Callable[[str], Port] = open_vendor_port,
-        monotonic: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> g4.MotorGate4Result:
+        monotonic: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> g4.MotorGate4Result:  # noqa: E501
     res = g4.MotorGate4Result("refused", "", datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                               platform.node(), spec=SPEC)
     ports = find_ports()
@@ -219,7 +219,7 @@ def write_evidence(result, out_dir: Path) -> Path:
 
 def main(argv: list[str] | None = None, **seams) -> int:
     p = argparse.ArgumentParser(prog="python -m openevos.maintenance.motor_gate5_x_stop_in_motion",
-                                description="Motor Gate 5: stop X during a 10 mm move, then return. Dry run by default.")
+                                description="Motor Gate 5: stop X during a 10 mm move, then return. Dry run by default.")  # noqa: E501
     p.add_argument("--send", action="store_true", help="run it (phrase: STOP X DURING 10MM MOVE ON COMn)")
     p.add_argument("--instrument-on-2min", action="store_true")
     p.add_argument("--stage-empty-watching", action="store_true",

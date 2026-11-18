@@ -120,7 +120,7 @@ class InstrumentProfile(BaseModel):
         cubes = [c for c in self.channels if c.slot.startswith("cube")]
         if len(cubes) > 4:
             raise ValueError("the FL Auto accepts at most four light cubes")
-        if sorted(o.slot for o in self.objectives) != list(range(1, len(self.objectives) + 1)) or len(self.objectives) > 5:
+        if sorted(o.slot for o in self.objectives) != list(range(1, len(self.objectives) + 1)) or len(self.objectives) > 5:  # noqa: E501
             raise ValueError("objective slots must be 1..n with n <= 5")
         if len({c.role for c in self.cameras}) != len(self.cameras):
             raise ValueError("at most one camera per role")

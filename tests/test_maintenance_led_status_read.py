@@ -169,7 +169,7 @@ def test_enum_names_decode_the_instruments_2026_11_13_reply():
     p[23:27] = bytes([5, 1, 3, 4])
     f = st.parse_reply(0x47, framed(0xC7, bytes(p))).fields
     assert f["cube_name_by_position"] == ["RFP", "NONE", "DAPI", "GFP"]
-    assert f["filter_cube_in_path_name"] == "RFP" and f["objective_name"] == "4X" and f["phase_ring_name"] == "DISENGAGED"
+    assert f["filter_cube_in_path_name"] == "RFP" and f["objective_name"] == "4X" and f["phase_ring_name"] == "DISENGAGED"  # noqa: E501
     e = bytearray(62)
     e[5:7] = b"\xff\xfd"
     assert st.parse_reply(0x4A, framed(0xCA, bytes(e))).fields["epi_current_mode_name"] == "DIGIPOT"

@@ -37,7 +37,7 @@ class MiniPlot(QWidget):
         f.setPixelSize(10)
         p.setFont(f)
         p.setPen(QColor(theme.TEXT_2))
-        p.drawText(QRectF(r.left(), 2, r.width(), 14), Qt.AlignLeft | Qt.AlignVCenter, self.title or "Select a line or ROI")
+        p.drawText(QRectF(r.left(), 2, r.width(), 14), Qt.AlignLeft | Qt.AlignVCenter, self.title or "Select a line or ROI")  # noqa: E501
         p.drawText(QRectF(r.left(), r.bottom() + 3, r.width(), 14), Qt.AlignRight | Qt.AlignVCenter, self.xlabel)
         if not self.series:
             return

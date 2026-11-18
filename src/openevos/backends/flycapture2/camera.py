@@ -106,7 +106,7 @@ class FlyCapture2MonoCamera:
             self._report(seq=next(self._seq), **fields)
 
     def connect(self) -> None:
-        self._obs(connection=Connection.CONNECTING, activity=Activity.INITIALIZING, reason="opening Chameleon (FlyCapture2)")
+        self._obs(connection=Connection.CONNECTING, activity=Activity.INITIALIZING, reason="opening Chameleon (FlyCapture2)")  # noqa: E501
         try:
             with self._io:
                 if not self._sdk.sdk_available():
@@ -128,7 +128,7 @@ class FlyCapture2MonoCamera:
             return
         # ADR-0009: the SDK identified the camera running its application firmware (Gate 1: 1.17.3.0)
         self._obs(connection=Connection.CONNECTED, health=Health.NORMAL, activity=Activity.IDLE,
-                  firmware_mode=FirmwareMode.APPLICATION, attributes={"model": self.identity.get("model"), "fw": self.identity.get("fw_version"),
+                  firmware_mode=FirmwareMode.APPLICATION, attributes={"model": self.identity.get("model"), "fw": self.identity.get("fw_version"),  # noqa: E501
                               "exposure_ms": self.exposure_ms, "gain_db": self.gain_db},
                   reason="Chameleon connected (16-bit full sensor, manual exposure and gain)")
 
@@ -224,7 +224,7 @@ class FlyCapture2MonoCamera:
         ctx.complete(None)
 
     def verify_result(self, command: Command) -> tuple[bool, str]:
-        if isinstance(command, SetCameraExposure) and abs(self.exposure_ms - command.exposure_ms) > fc.TOL["shutter"](command.exposure_ms):
+        if isinstance(command, SetCameraExposure) and abs(self.exposure_ms - command.exposure_ms) > fc.TOL["shutter"](command.exposure_ms):  # noqa: E501
             return False, f"exposure reads {self.exposure_ms:.4g} ms, commanded {command.exposure_ms} ms"
         if isinstance(command, SetCameraGain) and abs(self.gain_db - command.gain_db) > fc.TOL["gain"](command.gain_db):
             return False, f"gain reads {self.gain_db:.4g} dB, commanded {command.gain_db:.4g} dB"
@@ -353,7 +353,7 @@ class FlyCapture2MonoCamera:
             self._degraded = False
             self._obs(health=Health.NORMAL, reason="camera stream recovered")
         if not accepted:
-            threading.Thread(target=self.stop_stream, args=(f"frame {idx} refused by storage path",), daemon=True).start()
+            threading.Thread(target=self.stop_stream, args=(f"frame {idx} refused by storage path",), daemon=True).start()  # noqa: E501
             return
         if s["n"] is not None and s["i"] >= s["n"]:
             threading.Thread(target=self.stop_stream, args=("requested frame count reached",), daemon=True).start()

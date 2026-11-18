@@ -71,7 +71,7 @@ class SimCamera:
 
     def connect(self) -> None:
         self._obs(connection=Connection.CONNECTING, activity=Activity.INITIALIZING, reason="simulator connecting")
-        self._obs(connection=Connection.CONNECTED, health=Health.NORMAL, activity=Activity.IDLE, reason="simulator connected")
+        self._obs(connection=Connection.CONNECTED, health=Health.NORMAL, activity=Activity.IDLE, reason="simulator connected")  # noqa: E501
 
     def disconnect(self) -> None:
         self.stop_stream("disconnect")

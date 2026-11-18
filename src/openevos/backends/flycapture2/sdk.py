@@ -290,7 +290,7 @@ class FlyCapture2GateBackend:
                     self._ctx = C.c_void_p()
 
 
-# -- Gate 2 settings path (ADR-0036 spec Â§4), shared with the app backend (ADR-0037) ------------------------------------------------------------------
+# -- Gate 2 settings path (ADR-0036 spec Â§4), shared with the app backend (ADR-0037) ------------------------------------------------------------------  # noqa: E501
 F7_MODE, F7_WIDTH, F7_HEIGHT, F7_FORMAT = 0, 1296, 964, 0x04000000  # MONO16
 BRIGHTNESS_PCT = 2.0
 PACKET_FRACTION = 0.75  # rev 2: below the 3,904 B maximum, to leave USB 2.0 isochronous headroom
@@ -401,7 +401,7 @@ class FlyCapture2SettingsBackend(FlyCapture2GateBackend):
                     raise Gate2Error(f"no frame within {timeout_s} s")
                 if "err" in box:
                     err = box["err"]
-                    if getattr(err, "code", None) == FC2_IMAGE_CONSISTENCY_ERROR and self.skipped < MAX_SKIPPED_PER_EXPOSURE:
+                    if getattr(err, "code", None) == FC2_IMAGE_CONSISTENCY_ERROR and self.skipped < MAX_SKIPPED_PER_EXPOSURE:  # noqa: E501
                         self.skipped += 1
                         continue
                     raise err

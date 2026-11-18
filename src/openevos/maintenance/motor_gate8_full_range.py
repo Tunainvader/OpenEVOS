@@ -114,7 +114,7 @@ def run(*, send: bool = False, confirm: str = "", on_for_2_min: bool = False, st
     if not send:
         res.outcome = "dry_run"
         legs = ", then ".join(f"{ax} to {mm} mm and back" for ax, mm in res.baseline["targets_mm"].items())
-        res.message = (f"dry run: {legs} x {cycles} (~{sum(targets.values()) * cycles / g7.COUNTS_PER_MM * 2 / SPEED_MM_S:.0f} s "
+        res.message = (f"dry run: {legs} x {cycles} (~{sum(targets.values()) * cycles / g7.COUNTS_PER_MM * 2 / SPEED_MM_S:.0f} s "  # noqa: E501
                        "of motion); nothing opened or sent")
         res.exchanges = [Exchange(f"{ax} far target", f.hex(" ")) for ax, f in frames.items()]
         return res
@@ -165,8 +165,8 @@ def _run_return_home(res, dev, send, confirm, on_for_2_min, stage_empty_watching
     if confirm != return_home_phrase(dev):
         res.message = f"confirmation phrase missing or wrong (expected {return_home_phrase(dev)!r}); nothing opened"
         return res
-    allowed = set(home.values()) | {p.move for _a, p in PLANS.values()} | {f for _a, p in PLANS.values() for _n, f in p.stop}
-    reads = {g4.ID_QUERY, *(r.frame for r in g4.READINESS), *(r.frame for _a, p in PLANS.values() for r in p.reads.values()),
+    allowed = set(home.values()) | {p.move for _a, p in PLANS.values()} | {f for _a, p in PLANS.values() for _n, f in p.stop}  # noqa: E501
+    reads = {g4.ID_QUERY, *(r.frame for r in g4.READINESS), *(r.frame for _a, p in PLANS.values() for r in p.reads.values()),  # noqa: E501
              *g9.STATUS_FRAMES}
     try:
         port = open_port(dev)
@@ -190,7 +190,7 @@ def _run_return_home(res, dev, send, confirm, on_for_2_min, stage_empty_watching
         try:
             for r in g4.READINESS:
                 v = link.read(r)
-                if (r.var == "ESTATEV" and v["u16"] != 0) or (r.var == "IINITONCEDONE" and v["u16"] != INIT_DONE_MARKER):
+                if (r.var == "ESTATEV" and v["u16"] != 0) or (r.var == "IINITONCEDONE" and v["u16"] != INIT_DONE_MARKER):  # noqa: E501
                     res.outcome, res.message = "not_idle", f"{r.axis} {r.var} = {v['u16']}; nothing written"
                     return res
             base = {ax: {n: link.read(p.reads[n]) for n in g4.BASELINE} for ax, (_i, p) in PLANS.items()}
@@ -411,7 +411,7 @@ def main(argv: list[str] | None = None, **seams) -> int:
     p.add_argument("--calibration", type=Path, default=None)
     p.add_argument("--cycles", type=int, default=1, help=f"repeat the X then Y out-and-back cycle (1..{MAX_CYCLES})")
     p.add_argument("--return-home", action="store_true",
-                   help="recovery: move X/Y back to position 0 with the verified return leg (phrase RETURN XY TO ZERO ON COMn)")
+                   help="recovery: move X/Y back to position 0 with the verified return leg (phrase RETURN XY TO ZERO ON COMn)")  # noqa: E501
     p.add_argument("--tolerance-counts", type=int, default=None,
                    help=f"measurement runs: landing error tolerated per leg (1..{MAX_TOLERANCE_COUNTS}); default = the "
                         "drive's LCONVERGEBAND")

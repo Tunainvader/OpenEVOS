@@ -7,10 +7,10 @@ from openevos.inspector.pe import parse_pe_bytes
 
 
 @pytest.mark.parametrize("iid,hw,expect", [
-    ("USB\\VID_0403&PID_6001\\A12345BC", ["USB\\VID_0403&PID_6001&REV_0600"], ("0403", "6001", "0600", None, "A12345BC")),
-    ("USB\\VID_046D&PID_C52B&MI_00\\6&2B3C&0&0000", ["USB\\VID_046D&PID_C52B&REV_1211&MI_00"], ("046D", "C52B", "1211", "00", None)),
+    ("USB\\VID_0403&PID_6001\\A12345BC", ["USB\\VID_0403&PID_6001&REV_0600"], ("0403", "6001", "0600", None, "A12345BC")),  # noqa: E501
+    ("USB\\VID_046D&PID_C52B&MI_00\\6&2B3C&0&0000", ["USB\\VID_046D&PID_C52B&REV_1211&MI_00"], ("046D", "C52B", "1211", "00", None)),  # noqa: E501
     ("USB\\VID_046D&PID_C52B\\5&1A2B&0&3", [], ("046D", "C52B", None, None, None)),
-    ("FTDIBUS\\VID_0403+PID_6001+A12345BCA\\0000", ["FTDIBUS\\COMPORT&VID_0403&PID_6001"], ("0403", "6001", None, None, "A12345BCA")),
+    ("FTDIBUS\\VID_0403+PID_6001+A12345BCA\\0000", ["FTDIBUS\\COMPORT&VID_0403&PID_6001"], ("0403", "6001", None, None, "A12345BCA")),  # noqa: E501
     ("USB\\vid_abcd&pid_00ef\\x", [], ("ABCD", "00EF", None, None, "x")),
 ])
 def test_parse_usb_identity(iid, hw, expect):

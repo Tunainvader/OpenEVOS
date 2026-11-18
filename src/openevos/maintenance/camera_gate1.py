@@ -50,7 +50,7 @@ class Role:
 
 
 ROLES = {
-    "mono": Role("mono", 0x1E10, 0x2005, "FlyCapture2_C_v140.dll", ((964, 1296), (960, 1280))),  # Format7 full / IIDC 1280x960
+    "mono": Role("mono", 0x1E10, 0x2005, "FlyCapture2_C_v140.dll", ((964, 1296), (960, 1280))),  # Format7 full / IIDC 1280x960  # noqa: E501
     # uEye UI-146xLE: 1409:1000 is its "uEye boot" state; with the IDS driver it runs as 1409:1465
     "colour": Role("colour", 0x1409, 0x1465, "ueye_api_64.dll", None),
 }

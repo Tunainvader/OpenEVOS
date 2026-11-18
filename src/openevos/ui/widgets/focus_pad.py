@@ -628,7 +628,7 @@ class FocusPad(QWidget):
         cap = QFont(self.font())
         cap.setPixelSize(12)
         p.setFont(cap)
-        for d, y, text in (("up", 0, "Up · toward sample"), ("down", self.height() - self.CAP, "Down · away from sample")):
+        for d, y, text in (("up", 0, "Up · toward sample"), ("down", self.height() - self.CAP, "Down · away from sample")):  # noqa: E501
             p.setPen(QColor(t.acc_tx if lit[d] else t.t3))
             p.drawText(QRectF(0, y, self.width(), self.CAP), Qt.AlignCenter, text)
         # chevrons outside the base
@@ -685,7 +685,7 @@ class FocusPad(QWidget):
         p.setClipPath(well)
         p.setPen(Qt.NoPen)
         rad = btn_r.width() / 2
-        for dy, blur, a in ((4 if pressed else 9, 14, 0.5), (10 if pressed else 19, 8, 0.2), (16 if pressed else 30, 8, 0.35)):
+        for dy, blur, a in ((4 if pressed else 9, 14, 0.5), (10 if pressed else 19, 8, 0.2), (16 if pressed else 30, 8, 0.35)):  # noqa: E501
             # a radial falloff is the cheap equivalent of a blurred circular shadow
             c = QPointF(cen.x(), cen.y() + dy * s)
             outer = rad + blur * s

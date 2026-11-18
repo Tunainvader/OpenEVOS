@@ -239,7 +239,7 @@ def measure_ramp(rows: list, speed_counts_s: float) -> dict:
 
 # ---------------------------------------------------------------------------------- run
 def run(*, run_name: str = "", send: bool = False, confirm: str = "", on_for_2_min: bool = False,
-        power_cycled_gate7_no_move: bool = False, x_travel_clear: bool = False, watching_main_switch_second: bool = False,
+        power_cycled_gate7_no_move: bool = False, x_travel_clear: bool = False, watching_main_switch_second: bool = False,  # noqa: E501
         calibration: Path | None = None, scans: Path = Path("openevos-scans"),
         find_ports: Callable[[], list[PortInfo]] = find_ftdi_ports,
         open_port: Callable[[str], Port] = open_vendor_port,
@@ -274,7 +274,7 @@ def run(*, run_name: str = "", send: bool = False, confirm: str = "", on_for_2_m
     if not send:
         res.outcome = "dry_run"
         res.message = (f"dry run, Run {r.name}: Y AXISOFF (off within 100 ms or stop), X {r.preset} speed and CACCCMD "
-                       f"{r.cacc_raw}, a {r.check_mm:g} mm ramp check, then {r.cycles} x (0 -> {res.plan['x_far_mm']} mm "
+                       f"{r.cacc_raw}, a {r.check_mm:g} mm ramp check, then {r.cycles} x (0 -> {res.plan['x_far_mm']} mm "  # noqa: E501
                        f"-> 0), ~{res.plan['expected_minutes']} min, logging at ~20 Hz; nothing opened or sent")
         res.exchanges = [Exchange(n, f.hex(" ")) for n, f in (
             ("W1 AXISOFF Y", g15.W1_Y_AXISOFF), (f"X CSPDCMD {r.preset}", SPEED[r.preset]),

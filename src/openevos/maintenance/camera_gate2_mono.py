@@ -130,7 +130,7 @@ def run_gate2(pnp: g1.PnpEnumerator, b: FlyCapture2SettingsBackend, *, evidence_
     res = Gate2Result("refused", "", datetime.now(timezone.utc).isoformat(timespec="milliseconds"), platform.node())
     devs = pnp.present(ROLE.vid, ROLE.pid)
     if len(devs) != 1 or devs[0].problem_code != 0:
-        res.message = f"need exactly one {ROLE.vid_pid} with a working driver, found {[asdict(d) for d in devs]}; nothing opened"
+        res.message = f"need exactly one {ROLE.vid_pid} with a working driver, found {[asdict(d) for d in devs]}; nothing opened"  # noqa: E501
         return res
     if not b.sdk_available() or b.count_cameras() != 1:
         res.message = "FlyCapture2 SDK missing or does not see exactly one camera; nothing opened"
@@ -141,7 +141,7 @@ def run_gate2(pnp: g1.PnpEnumerator, b: FlyCapture2SettingsBackend, *, evidence_
     if not send:
         res.outcome = "dry_run"
         res.message = (f"dry run: would set Format7 {F7_WIDTH}x{F7_HEIGHT} MONO16, gain {GAIN_DB} dB, brightness "
-                       f"{BRIGHTNESS_PCT} %, shutter {SHUTTERS_MS} ms x{FRAMES_KEPT} frames, then restore; nothing opened")
+                       f"{BRIGHTNESS_PCT} %, shutter {SHUTTERS_MS} ms x{FRAMES_KEPT} frames, then restore; nothing opened")  # noqa: E501
         return res
     if confirm != CONFIRM_PHRASE:
         res.message = f"confirmation phrase missing or wrong (expected {CONFIRM_PHRASE!r}); nothing opened"
@@ -180,7 +180,7 @@ def run_gate2(pnp: g1.PnpEnumerator, b: FlyCapture2SettingsBackend, *, evidence_
             _check(res, b, "shutter", {"auto": False, "abs_value": ms})
             frames = b.grab_series(FRAMES_DISCARDED, FRAMES_KEPT, GRAB_TIMEOUT_S)
             if any(f.shape != (F7_HEIGHT, F7_WIDTH) or f.dtype != np.uint16 for f in frames):
-                raise Gate2Error(f"frames are {frames[0].shape} {frames[0].dtype}, expected ({F7_HEIGHT}, {F7_WIDTH}) uint16")
+                raise Gate2Error(f"frames are {frames[0].shape} {frames[0].dtype}, expected ({F7_HEIGHT}, {F7_WIDTH}) uint16")  # noqa: E501
             stats = dark_stats(frames)
             stats["incomplete_frames_skipped"] = b.skipped
             res.exposures[f"{ms:g}ms"] = stats
@@ -228,7 +228,7 @@ def run_gate2(pnp: g1.PnpEnumerator, b: FlyCapture2SettingsBackend, *, evidence_
         res.outcome, res.passed = "complete", True
         e = res.exposures
         res.message = ("settings read back, unclipped dark frames, restore verified. "
-                       + ", ".join(f"{k}: mean {s['mean']:.1f}, noise {s.get('temporal_noise', 0):.1f}" for k, s in e.items()))
+                       + ", ".join(f"{k}: mean {s['mean']:.1f}, noise {s.get('temporal_noise', 0):.1f}" for k, s in e.items()))  # noqa: E501
     return res
 
 

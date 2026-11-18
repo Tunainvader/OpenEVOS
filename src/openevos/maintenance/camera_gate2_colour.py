@@ -170,7 +170,7 @@ def run_gate2(pnp: g1.PnpEnumerator, b: UeyeSettingsBackend, *, evidence_dir: Pa
     res = Gate2Result("refused", "", datetime.now(timezone.utc).isoformat(timespec="milliseconds"), platform.node())
     devs = pnp.present(ROLE.vid, ROLE.pid)
     if len(devs) != 1 or devs[0].problem_code != 0:
-        res.message = f"need exactly one {ROLE.vid_pid} with a working driver, found {[asdict(d) for d in devs]}; nothing opened"
+        res.message = f"need exactly one {ROLE.vid_pid} with a working driver, found {[asdict(d) for d in devs]}; nothing opened"  # noqa: E501
         return res
     if not b.sdk_available() or b.count_cameras() != 1:
         res.message = "uEye API missing or does not see exactly one camera; nothing opened"
@@ -179,7 +179,7 @@ def run_gate2(pnp: g1.PnpEnumerator, b: UeyeSettingsBackend, *, evidence_dir: Pa
         res.message = "no colour Camera Gate 1 record in the evidence folder; nothing opened"
         return res
     if busy():
-        res.message = "the OpenEVOS app is running (shared USB 2 hub with the mono camera): close it first; nothing opened"
+        res.message = "the OpenEVOS app is running (shared USB 2 hub with the mono camera): close it first; nothing opened"  # noqa: E501
         return res
     if not send:
         res.outcome = "dry_run"

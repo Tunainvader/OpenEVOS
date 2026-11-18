@@ -199,7 +199,7 @@ def try_decompress(blob: bytes, expected: int) -> tuple[dict[str, object], bytes
 
 def read_section2(backend: HidBackend, *, evidence_dir: Path, send: bool = False, confirm: str = "",
                   header_only: bool = False, monotonic: Callable[[], float] = time.monotonic,
-                  now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> tuple[StepDResult, bytes | None, bytes | None]:
+                  now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> tuple[StepDResult, bytes | None, bytes | None]:  # noqa: E501
     res = StepDResult("refused", "", now().isoformat(timespec="milliseconds"), platform.node())
     apps = backend.find(VID, PID_APPLICATION)
     if len(apps) != 1:
@@ -252,7 +252,7 @@ def read_section2(backend: HidBackend, *, evidence_dir: Path, send: bool = False
             return res, None, None
         if header_only:
             res.outcome = "header_only"
-            res.message = f"header valid: magic 'lico', stored length {n} bytes ({math.ceil(n / CHUNK)} chunks); blob not read"
+            res.message = f"header valid: magic 'lico', stored length {n} bytes ({math.ceil(n / CHUNK)} chunks); blob not read"  # noqa: E501
             return res, None, None
         for k in range(math.ceil(n / CHUNK)):  # type: ignore[operator]
             count = min(CHUNK, n - k * CHUNK)  # type: ignore[operator]

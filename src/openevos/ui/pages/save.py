@@ -264,7 +264,7 @@ class SavePage(QWidget):
             self.lbl_result.setText(f"Not saved: {exc}")
             self.model.add_log("error", f"save: {exc}")
             return
-        self.lbl_result.setText(f"Saved {out.image.name}" + (f" + {len(out.underlying)} channel file(s)" if out.underlying else ""))
+        self.lbl_result.setText(f"Saved {out.image.name}" + (f" + {len(out.underlying)} channel file(s)" if out.underlying else ""))  # noqa: E501
         self.model.add_log("info", f"saved {out.image}")
 
     def quick_save(self) -> None:

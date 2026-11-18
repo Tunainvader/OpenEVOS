@@ -46,7 +46,7 @@ class Ctx:
 
 
 def _service(chain):
-    svc = tm.TelemetryService(lambda: chain, "SIM", poll_interval_s=0.05, motion=True, sleep=lambda s: time.sleep(0.001))
+    svc = tm.TelemetryService(lambda: chain, "SIM", poll_interval_s=0.05, motion=True, sleep=lambda s: time.sleep(0.001))  # noqa: E501
     svc.zo_control = True
     svc.start()
     return svc

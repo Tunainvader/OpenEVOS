@@ -127,7 +127,7 @@ $rows = foreach ($k in $keys) {
                      else { [string]$_.Data } }}
 }
 @($rows) | ConvertTo-Json -Depth 3 -Compress
-"""
+"""  # noqa: E501
 
 _SIGNED_DRIVERS = r"""
 Get-CimInstance -ClassName Win32_PnPSignedDriver -ErrorAction SilentlyContinue |
@@ -151,7 +151,7 @@ $usb  = @(Get-CimInstance -ClassName Win32_USBController | Select-Object Name, M
 [pscustomobject]@{ ComputerSystem = $cs; OperatingSystem = $os; BIOS = $bios; BaseBoard = $bb;
                    Processors = $cpu; VideoControllers = $gpu; DiskDrives = $disk; USBControllers = $usb } |
   ConvertTo-Json -Depth 4 -Compress
-"""
+"""  # noqa: E501
 
 _EVENTS = r"""
 $start = (Get-Date).AddHours(-__HOURS__)
@@ -161,7 +161,7 @@ $cfg = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Kernel-Pn
 @($sys + $cfg) | Where-Object { $_ } | Select-Object -First 2000 `
     @{n='Time';e={ $_.TimeCreated.ToString('o') }}, LogName, ProviderName, Id, LevelDisplayName, Message |
   ConvertTo-Json -Depth 3 -Compress
-"""
+"""  # noqa: E501
 
 _AUTHENTICODE = r"""
 $paths = [Console]::In.ReadToEnd() | ConvertFrom-Json
@@ -187,7 +187,7 @@ QUERIES: dict[str, ReadOnlyQuery] = {
             timeout_s=300,
         ),
         ReadOnlyQuery("signed_drivers", "Drivers bound to devices (Win32_PnPSignedDriver)", _SIGNED_DRIVERS),
-        ReadOnlyQuery("system_info", "OS, board, BIOS, CPU, GPU, disks, USB controllers (CIM)", _SYSTEM_INFO, returns_list=False),
+        ReadOnlyQuery("system_info", "OS, board, BIOS, CPU, GPU, disks, USB controllers (CIM)", _SYSTEM_INFO, returns_list=False),  # noqa: E501
         ReadOnlyQuery(
             "pnp_events",
             "PnP / driver-framework events from the System and Kernel-PnP/Configuration logs",

@@ -214,7 +214,7 @@ def plan_scan(r: ScanRoutine, vessel: Vessel, profile: InstrumentProfile, stage_
     cam = profile.camera(r.camera)
     bpp = 3 if r.camera is CameraRole.COLOR else 2
     est_bytes = len(tiles) * len(r.channels) * (cam.width or 0) * (cam.height or 0) * bpp
-    per_tile = seconds_per_tile + 0.4 * len(r.channels) + (2.5 if r.auto_fine else 0) + (0 if not r.find_sample else 0.3)
+    per_tile = seconds_per_tile + 0.4 * len(r.channels) + (2.5 if r.auto_fine else 0) + (0 if not r.find_sample else 0.3)  # noqa: E501
     est = len(tiles) * per_tile + (12.0 if r.find_sample else 0)
     return ScanPlan(routine=r, fov_mm=fov, step_mm=step, tiles=tuple(tiles), out_of_limits=out,
                     warnings=tuple(warnings), est_seconds=est, est_bytes=est_bytes)

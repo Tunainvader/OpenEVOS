@@ -258,7 +258,7 @@ class AnalysisPage(QWidget):
         self.s_circ = ParamRow("Circularity", 0, 100, 50, unit="%")
         for r in (self.s_bright, self.s_area, self.s_circ):
             lay.addWidget(r)
-        lay.addWidget(label("Toward 100 % = more sensitive (lower threshold), as in the original.", "caption", wrap=True))
+        lay.addWidget(label("Toward 100 % = more sensitive (lower threshold), as in the original.", "caption", wrap=True))  # noqa: E501
         self.invert = QCheckBox("Dark objects on bright background")
         self.split = QCheckBox("Separate touching cells")
         self.split.setChecked(True)
@@ -448,7 +448,7 @@ class AnalysisPage(QWidget):
         self.stats_table.setRowCount(len(stats))
         for r, st in enumerate(stats):
             area = st.get("area_um2") or st.get("area_px") or st.get("length_um") or st.get("length_px")
-            for c, v in enumerate((st["channel"], st.get("mean"), st.get("sd", ""), st.get("min"), st.get("max"), area)):
+            for c, v in enumerate((st["channel"], st.get("mean"), st.get("sd", ""), st.get("min"), st.get("max"), area)):  # noqa: E501
                 self.stats_table.setItem(r, c, QTableWidgetItem("" if v is None else str(v)))
         if a.kind is AnnKind.LINE:
             series = [(n, line_profile(d.mean(axis=2) if d.ndim == 3 else d, a.p0, a.p1), colors[i % len(colors)])

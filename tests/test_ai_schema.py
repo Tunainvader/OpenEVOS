@@ -65,9 +65,9 @@ def test_semantic_violations(scan):
     r["findings"][0]["claim"] = "The camera is working."
     r["findings"][0]["cites_findings"] = ["R-NOPE-0000000000"]
     r["recommended_checks"] += [
-        {"action": "Send command bytes 0xAA 0x55 to the endpoint to read the version.", "risk": "read_only", "requires_operator": False},
-        {"action": "Move the stage to home position to test the controller.", "risk": "read_only", "requires_operator": False},
-        {"action": "Uninstall the driver and reinstall from the vendor site.", "risk": "read_only", "requires_operator": False},
+        {"action": "Send command bytes 0xAA 0x55 to the endpoint to read the version.", "risk": "read_only", "requires_operator": False},  # noqa: E501
+        {"action": "Move the stage to home position to test the controller.", "risk": "read_only", "requires_operator": False},  # noqa: E501
+        {"action": "Uninstall the driver and reinstall from the vendor site.", "risk": "read_only", "requires_operator": False},  # noqa: E501
         {"action": "Run chkdsk on the old disk.", "risk": "read_only", "requires_operator": False},
     ]
     v = validate_against_register(AITriageResponse.model_validate(r), reg)

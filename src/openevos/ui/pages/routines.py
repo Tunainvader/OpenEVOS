@@ -370,7 +370,7 @@ class ScanPage(_RoutineBase):
             if self.rect_on.isChecked() else None,
             beacons=[b for b in self.beacons if b] if not self.m_rect.isChecked() else [],
             find_sample=self.find.isChecked(), auto_fine=self.fine.isChecked(),
-            coverage=Coverage(self.coverage.currentData()), percentage=self.pct.value(), random_images=self.nrand.value(),
+            coverage=Coverage(self.coverage.currentData()), percentage=self.pct.value(), random_images=self.nrand.value(),  # noqa: E501
             grid_rows=self.rows.value(), grid_cols=self.cols.value(), overlap_percent=self.overlap.value(),
             output_folder=self.folder.text())
 
@@ -428,7 +428,7 @@ class ScanPage(_RoutineBase):
         self.map.beacons_mm = [(b.x_mm, b.y_mm, b.label) for b in r.beacons]
         self.map.update()
         self.lbl_plan.setText(f"{len(p.tiles)} fields × {len(r.channels)} channel(s) · FOV {p.fov_mm[0] * 1000:.0f}×"
-                              f"{p.fov_mm[1] * 1000:.0f} µm · est. {_fmt_time(p.est_seconds)} · {_fmt_bytes(p.est_bytes)}")
+                              f"{p.fov_mm[1] * 1000:.0f} µm · est. {_fmt_time(p.est_seconds)} · {_fmt_bytes(p.est_bytes)}")  # noqa: E501
         show_warnings(self.lbl_warn, p.warnings)
         why = ("the plan has no fields" if not p.tiles else
                f"{p.out_of_limits} field(s) are outside the stage limits" if p.out_of_limits else
@@ -670,7 +670,7 @@ class TimelapsePage(_RoutineBase):
     def _beacons_changed(self) -> None:
         self.blist.clear()
         for b in self.beacons:
-            self.blist.addItem(f"{b.label}   ({b.x_mm:.2f}, {b.y_mm:.2f}) mm" + (f"   z {b.z_um:.1f}" if b.z_um else ""))
+            self.blist.addItem(f"{b.label}   ({b.x_mm:.2f}, {b.y_mm:.2f}) mm" + (f"   z {b.z_um:.1f}" if b.z_um else ""))  # noqa: E501
         self.replan()
 
     def _scenes(self) -> list[Scene]:
@@ -740,7 +740,7 @@ class TimelapsePage(_RoutineBase):
             self.model.add_log("error", f"time-lapse: {exc}")
             return
         s = self.session
-        sr = ScanRunner(s.capture, s.autofocus, s.vessel, auto_fine_range_percent=s.settings.basic.auto_fine_range_percent)
+        sr = ScanRunner(s.capture, s.autofocus, s.vessel, auto_fine_range_percent=s.settings.basic.auto_fine_range_percent)  # noqa: E501
         self.runner = TimelapseRunner(sr, s.stage_map, s.core.clock.monotonic)
         runner = self.runner
         s.controller.stop_live(s.settings.active_camera)

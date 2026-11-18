@@ -256,7 +256,7 @@ class CapturePage(QWidget):
             b.setCheckable(True)
             b.setEnabled(o.installed)
             tip = (f"Slot {o.slot}: {o.label or 'objective'}" + (f", NA {o.numerical_aperture}" if o.numerical_aperture
-                                                                   else "") + f" — {o.provenance.label}  (Alt+{o.slot})")
+                                                                   else "") + f" — {o.provenance.label}  (Alt+{o.slot})")  # noqa: E501
             b.setToolTip(tip if o.installed else f"Slot {o.slot}: empty")
             b.setAccessibleName(f"Objective slot {o.slot} {o.label or 'empty'}")
             self.obj_group.addButton(b, o.slot)
@@ -288,7 +288,7 @@ class CapturePage(QWidget):
                                     tip="Mark pixels at the black point (blue) and white point (red)")
         self.btn_sat = tool_button("Saturation", "warning", checkable=True,
                                    tip="Highlight sensor-saturated pixels in red")
-        self.btn_loupe = tool_button("Loupe", "loupe", checkable=True, tip="Magnified view and pixel value at the cursor")
+        self.btn_loupe = tool_button("Loupe", "loupe", checkable=True, tip="Magnified view and pixel value at the cursor")  # noqa: E501
         self.btn_hist = tool_button("Histogram", "histogram", checkable=True,
                                     tip="Show the levels histogram (black/white points) under the image")
         self.btn_hist.setChecked(self.settings.basic.show_histogram)
@@ -470,8 +470,8 @@ class CapturePage(QWidget):
         self.btn_overlay.clicked.connect(self.show_overlay)
         self.btn_fit.clicked.connect(self.view.fit)
         self.btn_11.clicked.connect(self.view.one_to_one)
-        self.btn_cross.toggled.connect(lambda on: (setattr(self.view, "show_crosshair", on), self.view.viewport().update()))
-        self.btn_scale.toggled.connect(lambda on: (setattr(self.view, "show_scale_bar", on), self.view.viewport().update()))
+        self.btn_cross.toggled.connect(lambda on: (setattr(self.view, "show_crosshair", on), self.view.viewport().update()))  # noqa: E501
+        self.btn_scale.toggled.connect(lambda on: (setattr(self.view, "show_scale_bar", on), self.view.viewport().update()))  # noqa: E501
         self.btn_sat.toggled.connect(self._toggle_saturation)
         self.btn_clip.toggled.connect(lambda _on: self._redraw())
         self.btn_loupe.toggled.connect(lambda on: (setattr(self.view, "loupe", on), self.view.viewport().update()))
@@ -613,7 +613,7 @@ class CapturePage(QWidget):
             # for the physical stage, so show raw stage coordinates and say so (never a fake well)
             self.lbl_pos.setText(f"Stage X {xy[0] / 1000:.3f}  Y {xy[1] / 1000:.3f} mm")  # fits 1280 px (APP-10)
             self.lbl_well.setText("Vessel map: simulator's, not calibrated")
-            self.lbl_well.setToolTip("Physical stage: the vessel ↔ stage mapping is not calibrated, so the map above is "
+            self.lbl_well.setToolTip("Physical stage: the vessel ↔ stage mapping is not calibrated, so the map above is "  # noqa: E501
                                      "the simulator's geometry and the position shows raw stage coordinates")
         elif xy is not None:
             vx, vy = self.session.stage_map.to_vessel(*xy)
@@ -746,7 +746,7 @@ class CapturePage(QWidget):
             self.lbl_task.setText("")
 
     # ================================================================== display pipeline
-    def _render(self, raw: np.ndarray, slot: str | None, max_value: int, *, rng=None, overlay: bool = True) -> np.ndarray:
+    def _render(self, raw: np.ndarray, slot: str | None, max_value: int, *, rng=None, overlay: bool = True) -> np.ndarray:  # noqa: E501
         if raw.ndim == 3:
             c = self.settings.color
             rgb = adjust_color(raw, c.brightness, c.contrast, c.saturation, c.hue)
@@ -1076,7 +1076,7 @@ class CapturePage(QWidget):
             return
         self._light_applied = True
         self.coalesce.request("light", lambda: self.ctl.set_light(ch, cs.led_percent, on))
-        self.coalesce.request("exposure", lambda: self.ctl.set_exposure(role, cs.exposure_ms), group=f"cam-{role.value}")
+        self.coalesce.request("exposure", lambda: self.ctl.set_exposure(role, cs.exposure_ms), group=f"cam-{role.value}")  # noqa: E501
         self.coalesce.request("gain", lambda: self.ctl.set_gain(role, cs.gain), group=f"cam-{role.value}")
 
     def _light_camera(self) -> None:
@@ -1245,7 +1245,7 @@ class CapturePage(QWidget):
             self.lbl_task.setText(r.message)
 
         if coarse:
-            self._run("Find Sample", lambda p: af.find_sample(role, v.focus_nominal_um, v.focus_range_um, p), done, True)
+            self._run("Find Sample", lambda p: af.find_sample(role, v.focus_nominal_um, v.focus_range_um, p), done, True)  # noqa: E501
         else:
             self._run("Auto Fine", lambda p: af.auto_fine(role, rng, p), done, True)
 

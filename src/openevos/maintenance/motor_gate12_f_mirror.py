@@ -6,7 +6,7 @@ and never a position; the drive moves to its stored LMIRROR1POS (128,000 counts,
 to its LPOSMIN/LPOSMAX. `--to slot1` returns via Gate 11's reviewed GOTO_CUBE frames (LTARGETPOS = 1, ESTATE = 16).
 Completion = ISTATUSFLAGS bit 0x4000 (converged) with APOS within LCONVERGEBAND of the stored target.
 Fault -> F's own STATE_15_STOP (ESTATE = 15). Writes: ESTATE 17; LTARGETPOS 1 + ESTATE 16; ESTATE 15. Dry run by default.
-"""
+"""  # noqa: E501
 
 from __future__ import annotations
 

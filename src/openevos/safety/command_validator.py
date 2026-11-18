@@ -186,7 +186,7 @@ class SafetyManager:
                 r.append(f"axis {axis} has no known limits")
                 continue
             if command.unit != ax.limits.unit:
-                r.append(f"axis {axis}: unit {command.unit!r} does not match capability unit {ax.limits.unit!r} (no implicit conversion)")
+                r.append(f"axis {axis}: unit {command.unit!r} does not match capability unit {ax.limits.unit!r} (no implicit conversion)")  # noqa: E501
             if ax.coordinate_frame is None or command.frame != ax.coordinate_frame:
                 r.append(f"axis {axis}: coordinate frame {command.frame!r} does not match {ax.coordinate_frame!r}")
             if not ax.calibration_valid:
@@ -194,7 +194,7 @@ class SafetyManager:
             if ax.readback_tolerance is None:
                 r.append(f"axis {axis} has no readback tolerance, so completion cannot be verified")
             if command.unit == ax.limits.unit and not ax.limits.contains(value):
-                r.append(f"axis {axis}: target {value} outside [{ax.limits.minimum}, {ax.limits.maximum}] {ax.limits.unit}")
+                r.append(f"axis {axis}: target {value} outside [{ax.limits.minimum}, {ax.limits.maximum}] {ax.limits.unit}")  # noqa: E501
         return r
 
 
@@ -204,5 +204,5 @@ def _in_range(what: str, value: float, lim: AxisLimits | None, unit: str | None)
     if unit is not None and lim.unit != unit:
         return [f"{what}: capability range is in {lim.unit!r}, command in {unit!r} (no implicit conversion)"]
     if not lim.contains(value):
-        return [f"{what} {value:g} {lim.unit} is outside the permitted range [{lim.minimum:g}, {lim.maximum:g}] {lim.unit}"]
+        return [f"{what} {value:g} {lim.unit} is outside the permitted range [{lim.minimum:g}, {lim.maximum:g}] {lim.unit}"]  # noqa: E501
     return []

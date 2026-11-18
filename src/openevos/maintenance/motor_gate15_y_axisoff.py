@@ -72,7 +72,7 @@ def axis_reads(axis: str) -> dict[str, g2.Read]:
     """Gate 2's state/position reads, Gate 9's status and program reads, and LCOMMERRPOS (0x03BC, 32-bit; the X and
     Y variables.cfg, never read on the unit before this gate)."""
     out = {r.var: r for r in g2.READS if r.axis == axis and r.var in ("ESTATEV", "IINITONCEDONE", "APOS", "CPOS")}
-    out |= {v: g9.STATUS[axis][v] for v in ("SRL", "SRH", "MER", "ISTATUSFLAGS", "BDOAXISOFF", "IQ", "IIQMAX", "IIQMIN")}
+    out |= {v: g9.STATUS[axis][v] for v in ("SRL", "SRH", "MER", "ISTATUSFLAGS", "BDOAXISOFF", "IQ", "IIQMAX", "IIQMIN")}  # noqa: E501
     out["LCOMMERRPOS"] = _read(axis, "LCOMMERRPOS", "LONG", 0x03BC)
     return out
 
@@ -80,7 +80,7 @@ def axis_reads(axis: str) -> dict[str, g2.Read]:
 R = {ax: axis_reads(ax) for ax in AXIS_IDS}
 READINESS = tuple(r for r in g2.READS if r.var in g2.READY)
 ESTATEV_ALL = tuple(r for r in g2.READS if r.var == "ESTATEV")
-ALLOWED_READS = frozenset({ID_QUERY, *(r.frame for r in READINESS), *(r.frame for rs in R.values() for r in rs.values())})
+ALLOWED_READS = frozenset({ID_QUERY, *(r.frame for r in READINESS), *(r.frame for rs in R.values() for r in rs.values())})  # noqa: E501
 BASELINE_VARS = ("ESTATEV", "SRL", "SRH", "MER", "ISTATUSFLAGS", "BDOAXISOFF", "APOS", "CPOS", "IQ", "IIQMAX", "IIQMIN",
                  "LCOMMERRPOS")
 HOLD_Y_EACH_S = ("IQ", "ISTATUSFLAGS", "ESTATEV", "CPOS", "MER")
@@ -187,7 +187,7 @@ def run(*, send: bool = False, confirm: str = "", on_for_2_min: bool = False, po
         stage_clear_watching_y: bool = False, main_switch_second_person: bool = False, check_recovered: bool = False,
         find_ports: Callable[[], list[PortInfo]] = find_ftdi_ports,
         open_port: Callable[[str], Port] = open_vendor_port,
-        monotonic: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> MotorGate15Result:
+        monotonic: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> MotorGate15Result:  # noqa: E501
     res = MotorGate15Result("refused", "", datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                             platform.node())
     ports = find_ports()
@@ -375,7 +375,7 @@ def _phase_d(link: _Link, res: MotorGate15Result, t0: float) -> None:
         apos, srl = link.fast(y["APOS"]), link.fast(y["SRL"])
         res.hold.append([_ms(link, t0), apos, srl])
         if link.monotonic() >= next_each:
-            each = {f"Y {v}": link.fast(y[v]) for v in HOLD_Y_EACH_S} | {f"X {v}": link.fast(x[v]) for v in HOLD_X_EACH_S}
+            each = {f"Y {v}": link.fast(y[v]) for v in HOLD_Y_EACH_S} | {f"X {v}": link.fast(x[v]) for v in HOLD_X_EACH_S}  # noqa: E501
             res.hold_each_s.append([_ms(link, t0), each])
             next_each += 1.0
             changed = _x_changed(each, base_x)
@@ -406,7 +406,7 @@ def evaluate(res: MotorGate15Result) -> tuple[dict[str, bool], dict]:
                                    else f"FINDING: Y moved {dev} counts while unpowered: review before T1 Run C.")
     if res.off_reads and res.off_after_ms is not None:
         srl = res.off_reads[-1][1]
-        findings["y_srl_off"] = f"0x{srl:04X}" + ("" if srl == SRL_OFF_EXPECTED else f" (expected 0x{SRL_OFF_EXPECTED:04X})")
+        findings["y_srl_off"] = f"0x{srl:04X}" + ("" if srl == SRL_OFF_EXPECTED else f" (expected 0x{SRL_OFF_EXPECTED:04X})")  # noqa: E501
     if res.hold_each_s:
         findings["y_iq_while_off"] = [e["Y IQ"] for _t, e in res.hold_each_s]
     if f.get("Y"):

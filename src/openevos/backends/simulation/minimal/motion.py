@@ -67,7 +67,7 @@ class SimMotionDevice:
 
     def _position(self, values: dict[str, float] | None = None, offset: float = 0.0) -> Position:
         v = values if values is not None else self._pos
-        return Position(axes=self.axes, values=tuple(v[a] + offset for a in self.axes), unit=self.unit, frame=self.frame)
+        return Position(axes=self.axes, values=tuple(v[a] + offset for a in self.axes), unit=self.unit, frame=self.frame)  # noqa: E501
 
     def _interpolate(self, m: _Move) -> dict[str, float]:
         frac = 1.0 if m.duration <= 0 else min(1.0, max(0.0, (self.clock.monotonic() - m.t0) / m.duration))
@@ -191,7 +191,7 @@ class SimMotionDevice:
 
     # ------------------------------------------------------------------ capabilities
     def capabilities(self, limits: dict[str, tuple[float, float]], tolerance: float = 0.5) -> DeviceCapabilities:
-        kind_cmd = {MoveStageAbsolute: "stage.move_absolute", MoveFocusAbsolute: "focus.move_absolute"}[self._command_type]
+        kind_cmd = {MoveStageAbsolute: "stage.move_absolute", MoveFocusAbsolute: "focus.move_absolute"}[self._command_type]  # noqa: E501
         return DeviceCapabilities(
             device_id=self.device_id, backend_kind=BackendKind.SIMULATED, source=CapabilitySource.SIMULATED,
             supported_commands=frozenset({kind_cmd}),

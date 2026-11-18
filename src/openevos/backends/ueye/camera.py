@@ -157,7 +157,7 @@ class UeyeColourCamera:
             self._report(seq=next(self._seq), **fields)
 
     def connect(self) -> None:
-        self._obs(connection=Connection.CONNECTING, activity=Activity.INITIALIZING, reason="opening uEye (IDS uEye API)")
+        self._obs(connection=Connection.CONNECTING, activity=Activity.INITIALIZING, reason="opening uEye (IDS uEye API)")  # noqa: E501
         s = self._sdk
         try:
             with self._io:
@@ -360,7 +360,7 @@ class UeyeColourCamera:
         accepted = self.transport.push(px, md, owned=True)
         self.frames_produced += 1
         if not accepted:
-            threading.Thread(target=self.stop_stream, args=(f"frame {idx} refused by storage path",), daemon=True).start()
+            threading.Thread(target=self.stop_stream, args=(f"frame {idx} refused by storage path",), daemon=True).start()  # noqa: E501
             return
         if s["n"] is not None and s["i"] >= s["n"]:
             self._stop.set()

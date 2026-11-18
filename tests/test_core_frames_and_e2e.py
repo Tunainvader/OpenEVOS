@@ -191,7 +191,7 @@ def test_simultaneous_conflicting_commands_only_one_reserves():
     rejected = [t for t in tickets if t.status is S.REJECTED]
     assert len(accepted) == 1 and len(rejected) == n - 1
     # later threads may see either the reservation or the already-observed motion; both fail closed
-    assert all(("resource conflict" in t.record.message) or ("activity is moving" in t.record.message) for t in rejected)
+    assert all(("resource conflict" in t.record.message) or ("activity is moving" in t.record.message) for t in rejected)  # noqa: E501
     assert accepted[0].wait_for({S.RUNNING}, 2) is S.RUNNING
     clock.advance(1)
     assert accepted[0].wait(2) is S.SUCCEEDED
@@ -224,7 +224,7 @@ def test_e2e_simulated_stage_movement_realtime():
     assert t.wait(3) is S.SUCCEEDED
     tl = [x for x in rec.timeline if x[0] in ("cmd", "state:sim-stage")]
     idx = {v: i for i, v in enumerate(tl)}
-    assert idx[("cmd", "accepted")] < idx[("state:sim-stage", "moving")] < idx[("cmd", "running")] < idx[("cmd", "succeeded")]
+    assert idx[("cmd", "accepted")] < idx[("state:sim-stage", "moving")] < idx[("cmd", "running")] < idx[("cmd", "succeeded")]  # noqa: E501
     assert core.store.get("sim-stage").activity is Activity.IDLE and core.resources.holders() == {}
     core.shutdown()
     clock.stop()

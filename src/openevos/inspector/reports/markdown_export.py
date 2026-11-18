@@ -107,7 +107,7 @@ def render_report(manifest: ScanManifest, results: ScanResults, register: Eviden
     if tree:
         o.append("```text")
         for depth, d in tree:
-            ident = d.usb.vid_pid if d.usb and d.usb.vid_pid else d.instance_id.split("\\")[1] if "\\" in d.instance_id else d.instance_id
+            ident = d.usb.vid_pid if d.usb and d.usb.vid_pid else d.instance_id.split("\\")[1] if "\\" in d.instance_id else d.instance_id  # noqa: E501
             mi = f" MI_{d.usb.mi}" if d.usb and d.usb.mi else ""
             br = f' "{d.bus_reported_description}"' if d.bus_reported_description else ""
             prob = f" [problem {d.problem_code}]" if d.problem_code not in (None, 0) else ""
@@ -144,7 +144,7 @@ def render_report(manifest: ScanManifest, results: ScanResults, register: Eviden
     o += [f"### EVOS-related files ({len(results.artifacts)})", ""]
     o += _table(["Path", "Size", "Bitness", "Product / version", "SHA-256", "Hits"],
                 [[a.path, a.size, a.pe.effective_bitness if a.pe else None,
-                  " ".join(filter(None, [a.version_info.get("ProductName"), a.version_info.get("FileVersion")])) or None,
+                  " ".join(filter(None, [a.version_info.get("ProductName"), a.version_info.get("FileVersion")])) or None,  # noqa: E501
                   (a.sha256 or "")[:16] or a.skipped_hash_reason, ", ".join(a.keyword_hits)]
                  for a in results.artifacts])
     o += ["### Camera SDK / USB-bridge libraries (filename heuristics)", ""]
@@ -249,8 +249,8 @@ def render_diff_markdown(diff: DiffResult) -> str:
                 [[c.instance_id, c.field, c.before, c.after] for c in diff.changed])
     o += ["## Serial ports", ""]
     o += _table(["Change", "Port", "Description", "VID:PID"],
-                [["added", p.device, p.description, f"{p.vid}:{p.pid}" if p.vid else None] for p in diff.added_serial_ports]
-                + [["removed", p.device, p.description, f"{p.vid}:{p.pid}" if p.vid else None] for p in diff.removed_serial_ports])
+                [["added", p.device, p.description, f"{p.vid}:{p.pid}" if p.vid else None] for p in diff.added_serial_ports]  # noqa: E501
+                + [["removed", p.device, p.description, f"{p.vid}:{p.pid}" if p.vid else None] for p in diff.removed_serial_ports])  # noqa: E501
     if diff.notes:
         o += ["## Notes", ""] + [f"- {n}" for n in diff.notes] + [""]
     return "\n".join(o)

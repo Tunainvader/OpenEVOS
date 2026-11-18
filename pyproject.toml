@@ -30,7 +30,7 @@ imaging = ["scipy>=1.10", "scikit-image>=0.22", "tifffile>=2023.7", "pillow>=10"
 ui = ["openevos[imaging]", "PySide6>=6.6"]   # desktop app; not used by the Inspector CLI
 # read-only MCP link for AI assistants (ADR-0054); the official SDK brings uvicorn/starlette
 mcp = ["openevos[imaging]", "mcp>=2.3,<3"]
-dev = ["pytest>=8", "ruff>=0.5", "openevos[ui]", "openevos[mcp]"]
+dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.10", "openevos[ui]", "openevos[mcp]"]
 
 [project.scripts]
 openevos-inspector = "openevos.inspector.app:main"
@@ -54,10 +54,28 @@ markers = [
     "windows: tests that need a real Windows host",
 ]
 
+[tool.coverage.run]
+source = ["src/openevos"]
+# audit APP-15: thin ctypes wrappers over Windows SetupAPI/HID and serial calls. They only run against real devices
+# (the LED board, the FTDI motor port); their callers are tested against fakes. Covered by the opt-in hardware gates.
+omit = ["src/openevos/backends/ledboard/winhid.py", "src/openevos/maintenance/win_hid.py",
+        "src/openevos/maintenance/win_serial.py"]
+
+[tool.mypy]
+# audit APP-20: type-check src against a recorded baseline (tools/mypy_baseline.py; mypy-baseline.txt), so new
+# errors stand out. Third-party packages without stubs are not checked.
+files = ["src/openevos"]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_configs = true
+show_error_codes = true
+
 [tool.ruff]
-line-length = 100
+# the code is written to 120 columns (100 flagged 4,332 lines, 120 flags 187); audit APP-17
+line-length = 120
 target-version = "py310"
 
 [tool.ruff.lint]
-# audit APP-17: zip() states its length rule; an empty non-abstract base method is explicit
-extend-select = ["B905", "B027"]
+# audit APP-17: zip() states its length rule; an empty non-abstract base method is explicit; long lines are checked
+# (the 187 lines over 120 on 2026-11-18 carry `# noqa: E501` as the baseline, so only new code is held to it)
+extend-select = ["B905", "B027", "E501"]

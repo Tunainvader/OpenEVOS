@@ -121,7 +121,7 @@ def test_allowed_baseline():
     ({}, {}, {"kind": DeviceKind.FOCUS}, "does not apply"),
 ])
 def test_fail_closed_rejections(cmd_kw, caps_kw, snap_kw, expect):
-    d = SM.validate(stage_move(**({"x": 1, "y": 1} | cmd_kw)), None if caps_kw is None else caps(**caps_kw), snap(**snap_kw))
+    d = SM.validate(stage_move(**({"x": 1, "y": 1} | cmd_kw)), None if caps_kw is None else caps(**caps_kw), snap(**snap_kw))  # noqa: E501
     assert not d.allowed and expect in d.message, d.message
 
 

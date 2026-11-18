@@ -63,7 +63,7 @@ def confirm_phrase(device: str) -> str:
 def run(*, send: bool = False, confirm: str = "", on_for_2_min: bool = False, stage_empty_watching: bool = False,
         find_ports: Callable[[], list[PortInfo]] = find_ftdi_ports,
         open_port: Callable[[str], Port] = open_vendor_port,
-        monotonic: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> g4.MotorGate4Result:
+        monotonic: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> g4.MotorGate4Result:  # noqa: E501
     res = g4.MotorGate4Result("refused", "", datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                               platform.node(), spec=SPEC)
     ports = find_ports()

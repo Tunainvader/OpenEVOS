@@ -107,7 +107,7 @@ class EventBus:
     def __init__(self, error_handler: Callable[[BaseException, object], None] | None = None):
         self._subs: tuple[Subscription, ...] = ()
         self._lock = threading.Lock()
-        self._error_handler = error_handler or (lambda exc, ev: log.exception("event subscriber failed for %r", ev, exc_info=exc))
+        self._error_handler = error_handler or (lambda exc, ev: log.exception("event subscriber failed for %r", ev, exc_info=exc))  # noqa: E501
         self.delivery_errors = 0
 
     def subscribe(self, event_type: type[E], callback: Callable[[E], None], *,

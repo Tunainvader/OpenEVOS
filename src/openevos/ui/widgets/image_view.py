@@ -201,7 +201,7 @@ class ImageView(QGraphicsView):
                     ang = math.atan2(b[1] - a[1], b[0] - a[0])
                     k = 12 / max(0.2, self.zoom_factor())
                     for sgn in (0.45, -0.45):
-                        painter.drawLine(QPointF(*b), QPointF(b[0] - k * math.cos(ang + sgn), b[1] - k * math.sin(ang + sgn)))
+                        painter.drawLine(QPointF(*b), QPointF(b[0] - k * math.cos(ang + sgn), b[1] - k * math.sin(ang + sgn)))  # noqa: E501
             if text:
                 painter.setFont(QFont(painter.font().family(), max(6, int(9 / max(0.2, self.zoom_factor())))))
                 painter.drawText(QPointF(r.left() + 3, r.top() - 4), text)

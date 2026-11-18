@@ -178,7 +178,7 @@ class StageMonitor:
                     problems.append(hit[2])
                 d = v["APOS"] - v["CPOS"]
                 if abs(d) > MOVE_DRIFT_MAX_COUNTS:
-                    problems.append(f"{ax} is {d:+d} counts from its command (> {MOVE_DRIFT_MAX_COUNTS}): its next move "
+                    problems.append(f"{ax} is {d:+d} counts from its command (> {MOVE_DRIFT_MAX_COUNTS}): its next move "  # noqa: E501
                                     "would lock again")
             if problems:
                 return "; ".join(problems) + f": {RECOVERY}"
@@ -247,7 +247,7 @@ class StageMonitor:
                     self.cpos[ax] = v["CPOS"]
                 if v.get("IINITONCEDONE") != tp.INIT_DONE_MARKER:
                     if self.homed[ax]:
-                        self.commands.append((round(t, 3), f"{ax} re-initialising (IINITONCEDONE {v.get('IINITONCEDONE')})"))
+                        self.commands.append((round(t, 3), f"{ax} re-initialising (IINITONCEDONE {v.get('IINITONCEDONE')})"))  # noqa: E501
                     self.homed[ax], self.ref[ax] = False, None
                     self.warnings.pop(ax, None)
                     if self.latch is not None:
@@ -299,7 +299,7 @@ class StageMonitor:
         d = apos - cpos
         if abs(d) <= MOVE_DRIFT_MAX_COUNTS:
             return ""
-        msg = f"{axis} encoder drift {d:+d} counts between position and command (> {MOVE_DRIFT_MAX_COUNTS}) before a move"
+        msg = f"{axis} encoder drift {d:+d} counts between position and command (> {MOVE_DRIFT_MAX_COUNTS}) before a move"  # noqa: E501
         self.trip("command_mismatch", axis, msg, {"apos": apos, "cpos": cpos})
         return msg
 
@@ -347,7 +347,7 @@ class StageMonitor:
             try:
                 self.evidence_dir.mkdir(parents=True, exist_ok=True)
                 self.export_csv(base.with_suffix(".csv"))
-                record = {"kind": "openevos.stage_monitor_snapshot", "version": 1, "monitor_started_utc": self.started_utc,
+                record = {"kind": "openevos.stage_monitor_snapshot", "version": 1, "monitor_started_utc": self.started_utc,  # noqa: E501
                           "written_utc": _utc(), "latch": asdict(self.latch), "thresholds": THRESHOLDS,
                           "recovery": RECOVERY, "csv": base.with_suffix(".csv").name,
                           "csv_columns": list(CSV_COLUMNS),
@@ -443,7 +443,7 @@ class StageMonitor:
                                values=d.get("values", {}), evidence=d.get("evidence", ""))
         except (OSError, ValueError, KeyError, TypeError) as exc:  # fail closed
             self.latch = Latch("latch_file_unreadable", "XY", f"{p} could not be read ({exc})", _utc())
-        self.commands.append((0.0, f"latch carried over from an earlier session: {self.latch.rule} on {self.latch.axis}"))
+        self.commands.append((0.0, f"latch carried over from an earlier session: {self.latch.rule} on {self.latch.axis}"))  # noqa: E501
 
     def _open_record(self) -> None:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")

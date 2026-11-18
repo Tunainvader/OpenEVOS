@@ -60,7 +60,7 @@ def load_image_file(path: Path):
         data=a, channel=prim.get("channel") or "file", channel_label=path.stem,
         camera=CameraRole(prim.get("camera", "color" if a.ndim == 3 else "mono")),
         objective_slot=prim.get("objective_slot"), magnification=prim.get("magnification"),
-        pixel_size_um=prim.get("pixel_size_um"), stage_xy_um=tuple(prim["stage_xy_um"]) if prim.get("stage_xy_um") else None,
+        pixel_size_um=prim.get("pixel_size_um"), stage_xy_um=tuple(prim["stage_xy_um"]) if prim.get("stage_xy_um") else None,  # noqa: E501
         z_um=prim.get("z_um"), exposure_ms=prim.get("exposure_ms") or 0.0, gain=prim.get("gain") or 1.0,
         led_percent=prim.get("led_percent") or 0.0, synthetic="SIMULATED" in md.get("provenance", ""),
         frame_device=prim.get("frame_device", "file"), frame_index=prim.get("frame_index", 0),
@@ -283,7 +283,7 @@ class MoviesPage(QWidget):
         if self.source.currentData() == "zstack":
             zs = self.session.capture.buffers.zstack
             return [(f"z={z:.2f} µm", render_frame(i.data, zs.channel, prof, st)) for z, i in zip(zs.z_um, zs.images, strict=True)] \
-                if zs else []
+                if zs else []  # noqa: E501
         if not self.beacon.count():
             self._beacons()
         res, b = self.tl.result, self.beacon.currentText()
@@ -405,7 +405,7 @@ class ReviewPage(QWidget):
         self.meta.setMaximumHeight(170)
         gl.addWidget(self.meta)
         root.addWidget(g, 1)
-        br.clicked.connect(lambda: self.folder.setText(QFileDialog.getExistingDirectory(self, "Folder") or self.folder.text()))
+        br.clicked.connect(lambda: self.folder.setText(QFileDialog.getExistingDirectory(self, "Folder") or self.folder.text()))  # noqa: E501
         rf.clicked.connect(self._files)
         self.buf.currentRowChanged.connect(self._show_buf)
         self.files.currentRowChanged.connect(self._show_file)

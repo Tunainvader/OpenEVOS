@@ -203,7 +203,7 @@ QToolTip {{ background: {t.s2}; color: {t.tx}; border: 1px solid {t.bdd}; paddin
 QGroupBox {{ {inset} border-radius: {r['control']}px; margin-top: 14px; padding-top: 8px; font-weight: 600;
     color: {t.t2}; }}
 QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 4px; }}
-"""
+"""  # noqa: E501
 
 
 _refresh_globals(_T)
@@ -225,7 +225,7 @@ def apply_theme(name_or_tokens: str | tk.Tokens, app=None) -> tk.Tokens:
     return _T
 
 
-def paint_surface(p, rect, radius: float, *, inset: bool = False, control: bool = True, fill: str | None = None) -> None:
+def paint_surface(p, rect, radius: float, *, inset: bool = False, control: bool = True, fill: str | None = None) -> None:  # noqa: E501
     """The stylesheet's surfaces for QPainter widgets (status pills, channel buttons, vessel map), depth-aware
     minimalism: a `control` is a flat fill with a 3:1 border (`bdd`); a selected control (`inset`) is the tonal accent
     fill with an accent border, like checked buttons; a non-control `inset` is a quiet sunken well (s3, hairline)."""

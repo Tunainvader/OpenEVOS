@@ -308,7 +308,7 @@ def main(argv: list[str] | None = None, backend: HidBackend | None = None) -> in
                                 description="LED Gate 5: one light at a low level briefly, then off and the "
                                             "original level restored. Dry run by default.")
     p.add_argument("--light", choices=("brightfield", "epi"), required=True)
-    p.add_argument("--level", type=int, default=LEVEL_DEFAULT, help=f"{LEVEL_MIN}..{LEVEL_MAX} (default {LEVEL_DEFAULT})")
+    p.add_argument("--level", type=int, default=LEVEL_DEFAULT, help=f"{LEVEL_MIN}..{LEVEL_MAX} (default {LEVEL_DEFAULT})")  # noqa: E501
     p.add_argument("--hold", type=float, default=HOLD_DEFAULT_S, help=f"seconds on (max {HOLD_MAX_S:g})")
     p.add_argument("--send", action="store_true")
     p.add_argument("--checklist", default="", help=f"must be exactly: {CHECKLIST_PHRASE}")

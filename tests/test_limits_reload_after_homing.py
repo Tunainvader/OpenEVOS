@@ -29,7 +29,7 @@ def test_frames_are_gate_7s_and_the_port_refuses_them_unless_registered():
 
 
 def _svc(chain):
-    svc = tm.TelemetryService(lambda: chain, "SIM", poll_interval_s=0.05, motion=True, sleep=lambda s: time.sleep(0.001))
+    svc = tm.TelemetryService(lambda: chain, "SIM", poll_interval_s=0.05, motion=True, sleep=lambda s: time.sleep(0.001))  # noqa: E501
     svc.calibrated_limits = CAL
     svc.start()
     return svc

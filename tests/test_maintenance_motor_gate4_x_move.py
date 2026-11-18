@@ -106,7 +106,7 @@ class FakeX:
             self._pending = b"O"
             if data[2] == 0x10 and data[3:5] in (bytes([0x25, 0xD4]), bytes([0x25, 0xD6])):  # X target / speed
                 v = data[5:9]
-                self._x("CPOSCMD" if data[4] == 0xD4 else "CSPDCMD", int.from_bytes(v[2:4] + v[0:2], "big", signed=True))
+                self._x("CPOSCMD" if data[4] == 0xD4 else "CSPDCMD", int.from_bytes(v[2:4] + v[0:2], "big", signed=True))  # noqa: E501
             elif data == g4.M3_ESTATE_MOVE and self.abandon:  # the drive ends the move by itself, short
                 self._x("APOS", 1000)
                 self._x("CPOS", 1000)

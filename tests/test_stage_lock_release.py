@@ -73,7 +73,7 @@ def test_release_through_the_service_on_the_simulated_chain():
     from openevos.backends.technosoft.transport import SimulatedDriveChain
 
     chain = SimulatedDriveChain(allow_motion=True)
-    svc = tm.TelemetryService(lambda: chain, "SIM", poll_interval_s=0.05, motion=True, sleep=lambda s: time.sleep(0.001))
+    svc = tm.TelemetryService(lambda: chain, "SIM", poll_interval_s=0.05, motion=True, sleep=lambda s: time.sleep(0.001))  # noqa: E501
     svc.start()
     try:
         deadline = time.monotonic() + 5

@@ -363,7 +363,7 @@ class MarkedSlider(QSlider):
         if self.orientation() == Qt.Vertical:
             y = groove.bottom() - frac * groove.height()
             p.drawLine(groove.center().x() - 9, int(y), groove.center().x() + 9, int(y))
-            p.drawText(QRectF(groove.center().x() + 10, y - 7, 34, 14), Qt.AlignLeft | Qt.AlignVCenter, self.marker_text)
+            p.drawText(QRectF(groove.center().x() + 10, y - 7, 34, 14), Qt.AlignLeft | Qt.AlignVCenter, self.marker_text)  # noqa: E501
         else:
             x = groove.left() + frac * groove.width()
             p.drawLine(int(x), groove.center().y() - 9, int(x), groove.center().y() + 9)

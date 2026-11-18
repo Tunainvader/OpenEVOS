@@ -159,7 +159,7 @@ def sanity_checks(values: dict[str, float | int]) -> dict[str, str]:
         out[f"{axis} mm/rev > 0 and finite"] = "n/a" if v is None else (
             "pass" if math.isfinite(v) and v > 0 else "FAIL")
     blank = [k for k, v in values.items() if isinstance(v, int) and v in (-1, 0)]
-    out["int32 fields that are 0 or -1 (erased?)"] = f"{len(blank)} of {sum(isinstance(v, int) for v in values.values())}"
+    out["int32 fields that are 0 or -1 (erased?)"] = f"{len(blank)} of {sum(isinstance(v, int) for v in values.values())}"  # noqa: E501
     return out
 
 

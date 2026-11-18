@@ -37,7 +37,7 @@ class InstalledSoftwareCollector(Collector):
                         install_date=_s(vals.get("InstallDate")),
                         install_location=_s(vals.get("InstallLocation")),
                         registry_view=view,
-                        keyword_hits=keyword_hits(str(name), _s(vals.get("Publisher")), _s(vals.get("InstallLocation"))),
+                        keyword_hits=keyword_hits(str(name), _s(vals.get("Publisher")), _s(vals.get("InstallLocation"))),  # noqa: E501
                         evidence_ids=[eid],
                     )
                 )

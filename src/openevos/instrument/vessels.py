@@ -124,8 +124,8 @@ def builtin_vessels() -> list[Vessel]:
                regions=(Region(region_id="Slide", cx=SBS_W / 2, cy=SBS_H / 2, w=75, h=25, shape=RegionShape.RECT),),
                focus_nominal_um=2400.0),
         Vessel(vessel_id="slide-dual", display_name="Dual slide holder", category=VesselCategory.SLIDE,
-               regions=(Region(region_id="Slide 1", cx=SBS_W / 2, cy=SBS_H / 2 - 17, w=75, h=25, shape=RegionShape.RECT),
-                        Region(region_id="Slide 2", cx=SBS_W / 2, cy=SBS_H / 2 + 17, w=75, h=25, shape=RegionShape.RECT)),
+               regions=(Region(region_id="Slide 1", cx=SBS_W / 2, cy=SBS_H / 2 - 17, w=75, h=25, shape=RegionShape.RECT),  # noqa: E501
+                        Region(region_id="Slide 2", cx=SBS_W / 2, cy=SBS_H / 2 + 17, w=75, h=25, shape=RegionShape.RECT)),  # noqa: E501
                focus_nominal_um=2400.0),
         Vessel(vessel_id="dish-35", display_name="35 mm Petri dish", category=VesselCategory.DISH,
                regions=(Region(region_id="Dish", cx=SBS_W / 2, cy=SBS_H / 2, w=33, h=33, shape=RegionShape.CIRCLE),),

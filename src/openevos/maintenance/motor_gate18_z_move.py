@@ -136,7 +136,7 @@ def run(*, send: bool = False, confirm: str = "", on_for_2_min: bool = False, st
                           ("Z2 CPOSCMD=0", Z2_TARGET_HOME), ("Z3 ESTATE=8", Z3_ESTATE_MOVE), *STOP)]
         return res
     if not on_for_2_min:
-        res.message = "operator has not confirmed the instrument has been on (and homed) for >= 2 minutes; nothing opened"
+        res.message = "operator has not confirmed the instrument has been on (and homed) for >= 2 minutes; nothing opened"  # noqa: E501
         return res
     if not stage_empty_watching:
         res.message = ("operator has not confirmed an empty stage (no vessel, slide or holder insert), hands clear of "
@@ -244,7 +244,7 @@ def write_evidence(result, out_dir: Path) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="python -m openevos.maintenance.motor_gate18_z_move",
-                                description="Motor Gate 18: Z idle stop, then +1 or +5 mm and back to 0. Dry run by default.")
+                                description="Motor Gate 18: Z idle stop, then +1 or +5 mm and back to 0. Dry run by default.")  # noqa: E501
     p.add_argument("--mm", type=int, choices=sorted(TARGETS), default=1, help="how far out: 1 or 5 mm")
     p.add_argument("--send", action="store_true", help="run it (phrase: MOVE Z <mm>MM AND BACK ON COMn)")
     p.add_argument("--instrument-on-2min", action="store_true", help="the EVOS has been on and homed >= 2 minutes")

@@ -261,7 +261,7 @@ def summary(checks: dict[str, dict]) -> str:
             continue
         state = "limits 0/0" if c["limits_zero"] else ("limits OK" if c["limits_ordered"] else "limits NOT ordered")
         if "span_matches_mcba" in c:
-            state += f", span {c['span_mm_candidate']} mm ({'matches' if c['span_matches_mcba'] else 'differs from'} mcba)"
+            state += f", span {c['span_mm_candidate']} mm ({'matches' if c['span_matches_mcba'] else 'differs from'} mcba)"  # noqa: E501
         if "stop_decel_positive" in c:
             state += ", CACCSTOP " + ("> 0" if c["stop_decel_positive"] else "NOT > 0")
         parts.append(f"{ax}: {state}")
@@ -272,8 +272,8 @@ def summary(checks: dict[str, dict]) -> str:
 def run(*, send: bool = False, confirm: str = "", on_for_2_min: bool = False,
         find_ports: Callable[[], list[PortInfo]] = find_ftdi_ports,
         open_port: Callable[[str], Port] = open_vendor_port,
-        monotonic: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> MotorGate2Result:
-    res = MotorGate2Result("refused", "", datetime.now(timezone.utc).isoformat(timespec="milliseconds"), platform.node())
+        monotonic: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> MotorGate2Result:  # noqa: E501
+    res = MotorGate2Result("refused", "", datetime.now(timezone.utc).isoformat(timespec="milliseconds"), platform.node())  # noqa: E501
     ports = find_ports()
     if len(ports) != 1:
         res.message = f"expected exactly one FTDI 0403:6001 serial port, found {len(ports)}; nothing opened"

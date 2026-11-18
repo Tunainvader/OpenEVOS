@@ -23,7 +23,7 @@ def test_baseline_scan_with_mocked_windows(make_ctx):
     status = {c.name: c.status for c in manifest.collectors}
     assert status["system"] == "ok" and status["windows_devices"] == "ok"
     assert status["driver_packages"] == "skipped"  # no Windows volume available in this test
-    assert set(ctx.runner.calls) >= {"pnp_devices", "pnp_device_properties", "signed_drivers", "system_info", "pnp_events"}
+    assert set(ctx.runner.calls) >= {"pnp_devices", "pnp_device_properties", "signed_drivers", "system_info", "pnp_events"}  # noqa: E501
 
     assert res.system.model == "OptiPlex 7090" and res.system.dotnet_framework_release == 528372
     by_id = {d.instance_id: d for d in res.devices}

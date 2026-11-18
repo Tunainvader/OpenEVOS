@@ -122,7 +122,7 @@ def test_save_page_rules_and_quick_save(app, window, tmp_path):
     cap._select_channel("cube1")
     wait_for(app, lambda: window.session.controller.light.channel == "cube1")
     cap.capture_current()
-    assert wait_for(app, lambda: window.session.capture.buffers.get("cube1") is not None and not window.model.tasks.busy)
+    assert wait_for(app, lambda: window.session.capture.buffers.get("cube1") is not None and not window.model.tasks.busy)  # noqa: E501
     sp = window.pages["save"]
     window.navigate("save")
     pump(app, 0.1)

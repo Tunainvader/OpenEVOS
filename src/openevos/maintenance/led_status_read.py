@@ -22,7 +22,7 @@ What it does, and nothing else:
 * Only `0x40`, `0x47`, `0x5A`, `0x4A` can be built. Every other byte is refused before any I/O.
   The board has no LED temperature or measured-current query (spec §3): none is attempted.
 * Decoded values are CANDIDATE: field meanings come from the host DLL, not the board firmware.
-"""
+"""  # noqa: E501
 
 from __future__ import annotations
 

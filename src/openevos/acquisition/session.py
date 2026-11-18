@@ -64,7 +64,7 @@ class Session:
         if measured:
             return measured
         cam, obj = self.profile.camera(role), self.profile.objective(slot)
-        return cam.pixel_size_um / obj.magnification if cam and obj and cam.pixel_size_um and obj.magnification else None
+        return cam.pixel_size_um / obj.magnification if cam and obj and cam.pixel_size_um and obj.magnification else None  # noqa: E501
 
     #: F carriage counts: the mirror routes the image to the colour camera (Motor Gate 12, 2026-11-15, Strongly
     #: supported: at any cube slot the colour camera reads 0, at the mirror it saturates under a flashlight)
@@ -220,7 +220,7 @@ def build_sim_session(clock: Clock, *, fast: bool = False, settings: AppSettings
     if physical:
         profile = profile.model_copy(update={"stage_device": PHYSICAL_STAGE_DEVICE})
         if _enable_focus_and_turret(core, services):
-            profile = profile.model_copy(update={"focus_device": "motor.focus", "turret_device": "motor.objective_turret",
+            profile = profile.model_copy(update={"focus_device": "motor.focus", "turret_device": "motor.objective_turret",  # noqa: E501
                                                  "objectives": unit_objectives()})
     audit = _audit_physical_commands(core, audit_path) if services else []
     ctl = InstrumentController(core, profile)

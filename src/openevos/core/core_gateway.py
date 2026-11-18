@@ -269,7 +269,7 @@ class CoreGateway:
         if actor is Actor.AI:
             raise self._reject(pending, spec, "actor", "AI may not issue device commands (ADR-0003, plan §13.3)")
         if self.mode is not OperationalMode.SIMULATION:
-            raise self._reject(pending, spec, "mode", f"state-changing commands are not permitted in {self.mode.display} mode")
+            raise self._reject(pending, spec, "mode", f"state-changing commands are not permitted in {self.mode.display} mode")  # noqa: E501
         role, inputs = self._parse(pending, spec)
 
         if command in ("xy.stop", "focus.stop"):
@@ -341,7 +341,7 @@ class CoreGateway:
             raise self._reject(pending, None, "params", "stage position is unknown; cannot resolve a jog")
         target = {a: pos.get(a) for a in ("x", "y")}
         target[axis] += step_um
-        audit = {"axis": axis, "step_um": step_um, "device": device, "resolved": {k: round(v, 3) for k, v in target.items()}}
+        audit = {"axis": axis, "step_um": step_um, "device": device, "resolved": {k: round(v, 3) for k, v in target.items()}}  # noqa: E501
         cmd = MoveStageAbsolute(device_id=device, origin=ORIGIN[pending.actor], owner=None, confirmed=False,
                                 timeout_s=15.0, x=target["x"], y=target["y"], unit=UNIT, frame=STAGE_FRAME)
         ticket = self.core.router.submit(cmd)
@@ -445,10 +445,10 @@ class CoreGateway:
             "camera.snap": lambda: SnapImage(**kw),
             "camera.start_live": lambda: SetCameraLive(live=True, **kw),
             "camera.stop_live": lambda: SetCameraLive(live=False, **kw),
-            "incubator.set_temperature": lambda: SetIncubatorSetpoint(control="temperature", value=a["temperature_c"], **kw),
+            "incubator.set_temperature": lambda: SetIncubatorSetpoint(control="temperature", value=a["temperature_c"], **kw),  # noqa: E501
             "incubator.set_co2": lambda: SetIncubatorSetpoint(control="co2", value=a["co2_pct"], **kw),
             "incubator.set_o2": lambda: SetIncubatorSetpoint(control="o2", value=a["o2_pct"], **kw),
-            "incubator.set_enabled": lambda: SetIncubatorControlEnabled(control=a["control"], enabled=a["enabled"], **kw),
+            "incubator.set_enabled": lambda: SetIncubatorControlEnabled(control=a["control"], enabled=a["enabled"], **kw),  # noqa: E501
         }
         build = builders.get(name)
         if build is None:

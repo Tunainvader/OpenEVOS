@@ -88,7 +88,7 @@ REVIEWED_L3_READS: dict[str, dict] = {
     },
     "led_application.gate3_status_read": {
         "vid_pid": (0x0DAD, 0x0051), "commands": frozenset({0x40, 0x47, 0x5A, 0x4A}), "gate": 3, "adr": "ADR-0031",
-        "layout": "four bare get requests (no payload), once each, fixed order 0x40, 0x47, 0x5A, 0x4A; stop on any failure",
+        "layout": "four bare get requests (no payload), once each, fixed order 0x40, 0x47, 0x5A, 0x4A; stop on any failure",  # noqa: E501
         "spec": "docs/evidence/fl1_v1.6_led_app_command_table.md §4",
     },
     "motor.gate1_read": {
@@ -98,7 +98,7 @@ REVIEWED_L3_READS: dict[str, dict] = {
     },
     "motor.gate2_read": {
         "vid_pid": (0x0403, 0x6001), "commands": frozenset({0xB000, 0xB004, 0xB005}), "gate": 2, "adr": "ADR-0017",
-        "layout": "Gate 1 rev 2 transport; readiness first, then 41 fixed per-axis reads (limits, CACCSTOP, speeds, positions)",
+        "layout": "Gate 1 rev 2 transport; readiness first, then 41 fixed per-axis reads (limits, CACCSTOP, speeds, positions)",  # noqa: E501
         "spec": "docs/evidence/fl1_v1.6_motor_gate2_spec.md",
     },
     "motor.gate9_status_read": {
@@ -232,7 +232,7 @@ REVIEWED_MAINTENANCE: dict[str, dict] = {
         "vid_pid": (0x0403, 0x6001), "commands": frozenset({0x25B3, 0x21B1}),
         "adr": "ADR-0052", "module": "maintenance/motor_gate18_z_move.py",
         "review": "docs/evidence/fl1_v1.6_motor_gates17_19_z_focus_o_turret_spec.md",
-        "writes": "Z (axis 4) only: CPOSCMD 0, 8200 (1 mm) or 41000 (5 mm), ESTATE 8 (move, drive-clamped) and ESTATE 6 (stop at rest); "
+        "writes": "Z (axis 4) only: CPOSCMD 0, 8200 (1 mm) or 41000 (5 mm), ESTATE 8 (move, drive-clamped) and ESTATE 6 (stop at rest); "  # noqa: E501
                   "speed, acceleration and limits never written",
     },
 }
@@ -306,6 +306,6 @@ class FirmwareModeRefusal:
         if mode in ("bootloader", "recovery"):
             return [f"device is in {mode.upper()} mode: quarantined, no commands accepted ({ADR})"]
         if mode == "unknown" and kind == "physical":
-            reason = f"physical device firmware mode is unknown: fail closed until the application is confirmed running ({ADR})"
+            reason = f"physical device firmware mode is unknown: fail closed until the application is confirmed running ({ADR})"  # noqa: E501
             return [reason]
         return []

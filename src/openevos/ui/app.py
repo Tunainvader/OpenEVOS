@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="openevos", description="OpenEVOS desktop app (simulators, or the real instrument "
+    ap = argparse.ArgumentParser(prog="openevos", description="OpenEVOS desktop app (simulators, or the real instrument "  # noqa: E501
                                  "with --motor-telemetry/--motor-control, the real cameras and LED board)")
     ap.add_argument("--settings", type=Path, default=None, help="settings JSON (default: user config dir)")
     ap.add_argument("--no-settings", action="store_true", help="do not load or save settings")

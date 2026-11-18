@@ -380,7 +380,7 @@ class CommandRouter:
             return False, None, "backend provided no readback"
         target = command.target()
         if readback.unit != target.unit or readback.frame != target.frame:
-            return False, readback, f"readback in {readback.unit}/{readback.frame}, target in {target.unit}/{target.frame}"
+            return False, readback, f"readback in {readback.unit}/{readback.frame}, target in {target.unit}/{target.frame}"  # noqa: E501
         for axis, want in target.as_dict().items():
             ax = rec.capabilities.axis(axis)
             if ax is None or ax.readback_tolerance is None or axis not in readback.axes:
@@ -447,7 +447,7 @@ class CommandRouter:
             entry.reserved = False
         if isinstance(entry.command, MOTION_COMMANDS) and status is not S.REJECTED:
             try:
-                self.store.set_requested(entry.command.device_id, None, reason=f"{entry.command.command_id} {status.value}")
+                self.store.set_requested(entry.command.device_id, None, reason=f"{entry.command.command_id} {status.value}")  # noqa: E501
             except KeyError:
                 pass
 

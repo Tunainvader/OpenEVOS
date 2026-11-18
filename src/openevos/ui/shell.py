@@ -337,8 +337,8 @@ class MainWindow(QMainWindow):
         self._cmd(m, "view.fit", "Zoom to fit", cap.view.fit, shortcut="Ctrl+0")
         self._cmd(m, "view.actual", "Actual size", cap.view.one_to_one, shortcut="Ctrl+1")
         m.addSeparator()
-        self._cmd(m, "view.cross", "Crosshair", lambda: cap.btn_cross.toggle(), checked=lambda: cap.btn_cross.isChecked())
-        self._cmd(m, "view.scale", "Scale bar", lambda: cap.btn_scale.toggle(), checked=lambda: cap.btn_scale.isChecked())
+        self._cmd(m, "view.cross", "Crosshair", lambda: cap.btn_cross.toggle(), checked=lambda: cap.btn_cross.isChecked())  # noqa: E501
+        self._cmd(m, "view.scale", "Scale bar", lambda: cap.btn_scale.toggle(), checked=lambda: cap.btn_scale.isChecked())  # noqa: E501
         self._cmd(m, "view.clip", "Clipping overlay", lambda: cap.btn_clip.toggle(), shortcut="Ctrl+Shift+C",
                   checked=lambda: cap.btn_clip.isChecked())
         self._cmd(m, "view.sat", "Highlight saturated pixels", lambda: cap.btn_sat.toggle(),
@@ -365,7 +365,7 @@ class MainWindow(QMainWindow):
                   lambda: cap.run_action(HotButtonAction.CAPTURE_FOCUS_NOMINAL), why=busy)
         m.addSeparator()
         self._cmd(m, "acq.zstack", "Z-stack…", lambda: cap.run_action(HotButtonAction.ZSTACK), why=busy)
-        self._cmd(m, "acq.transfection", "Transfection…", lambda: cap.run_action(HotButtonAction.TRANSFECTION), why=busy)
+        self._cmd(m, "acq.transfection", "Transfection…", lambda: cap.run_action(HotButtonAction.TRANSFECTION), why=busy)  # noqa: E501
         m.addSeparator()
         self._cmd(m, "acq.scan", "Scan…", lambda: self.navigate("scan"))
         self._cmd(m, "acq.timelapse", "Time-lapse…", lambda: self.navigate("timelapse"))
@@ -544,7 +544,7 @@ class MainWindow(QMainWindow):
         st, drift = svc.monitor.state(), svc.monitor.latch_drift()
         blocker = svc.monitor._release_blocker()
         if blocker:  # cannot be released from the app: say why and what to do instead of a dead button
-            QMessageBox.information(self, "Stage locked", f"The drift monitor locked the stage: {st.get('message', '')}."
+            QMessageBox.information(self, "Stage locked", f"The drift monitor locked the stage: {st.get('message', '')}."  # noqa: E501
                                     f"\n\nIt cannot be released from the app: {blocker}.")
             return
         text = (f"The drift monitor locked the stage: {st.get('message', '')}.\n\nRecorded drift: {drift:+d} counts "
@@ -706,7 +706,7 @@ class MainWindow(QMainWindow):
     def _on_command_event(self, e) -> None:
         """A stage move refused by the drift lock: offer the release once per lock (operator, 2026-11-18)."""
         msg = getattr(e, "message", "") or ""
-        if getattr(e, "device_id", None) != self.session.profile.stage_device or "locked by the drift monitor" not in msg:
+        if getattr(e, "device_id", None) != self.session.profile.stage_device or "locked by the drift monitor" not in msg:  # noqa: E501
             return
         locked = self._locked_monitors()
         if not locked:

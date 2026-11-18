@@ -89,7 +89,7 @@ class ScriptedBackend:
     def connect(self):
         from openevos.core.models import Activity, Connection, Health
 
-        self.report(connection=Connection.CONNECTED, health=Health.NORMAL, activity=Activity.IDLE, position=self.position)
+        self.report(connection=Connection.CONNECTED, health=Health.NORMAL, activity=Activity.IDLE, position=self.position)  # noqa: E501
 
     def disconnect(self):
         pass

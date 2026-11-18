@@ -87,7 +87,7 @@ def test_ui_never_imports_a_backend(path):
             assert "backends" not in {a.name for a in node.names}, f"{_rel(path)}:{node.lineno}"
 
 
-@pytest.mark.parametrize("path", [p for p in FILES if _rel(p).startswith(("hal/", "core/", "backends/", "instrument/", "acquisition/",
+@pytest.mark.parametrize("path", [p for p in FILES if _rel(p).startswith(("hal/", "core/", "backends/", "instrument/", "acquisition/",  # noqa: E501
                                                                      "imaging/", "analysis/"))],
                          ids=_rel)
 def test_core_and_hal_are_ui_free(path):

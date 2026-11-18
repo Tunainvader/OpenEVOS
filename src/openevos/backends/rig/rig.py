@@ -44,7 +44,7 @@ class SimOpticalCamera(SimCamera):
         drng = np.random.default_rng(4242 + (cam.width or 0))
         h, w = self.height, self.width
         self.hot_pixels = np.column_stack([drng.integers(2, h - 2, N_HOT_PIXELS), drng.integers(2, w - 2, N_HOT_PIXELS)]) \
-            if cam.role is CameraRole.MONO else np.empty((0, 2), int)
+            if cam.role is CameraRole.MONO else np.empty((0, 2), int)  # noqa: E501
 
     def frame_channel(self) -> str | None:
         return self.rig.light.channel

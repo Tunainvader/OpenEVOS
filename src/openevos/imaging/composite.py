@@ -87,7 +87,7 @@ def transfection(fluor: Layer, transmitted: Layer, fluor_weight: float = 1.0, tr
     """Two-image overlay: transmitted light in grey under one pseudo-coloured fluorescence channel."""
     base = render_layer(Layer(transmitted.data, "#FFFFFF", transmitted.lo, transmitted.hi), pseudo=False)
     top = render_layer(fluor, pseudo=True)
-    return np.clip(base.astype(np.float32) * trans_weight + top.astype(np.float32) * fluor_weight, 0, 255).astype(np.uint8)
+    return np.clip(base.astype(np.float32) * trans_weight + top.astype(np.float32) * fluor_weight, 0, 255).astype(np.uint8)  # noqa: E501
 
 
 def highlight_saturated(rgb: np.ndarray, raw: np.ndarray, max_value: int) -> np.ndarray:

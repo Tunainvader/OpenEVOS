@@ -56,7 +56,7 @@ SRH_NOT_MOVING_BIT = 1 << 9
 ESTATEV_AFTER_MOVE = 13
 MAX_BAND = 50
 LEG_TIMEOUT_S, POLL_S, PAUSE_S = 3.0, 0.050, 1.5
-ABANDON_POLLS = 3  # consecutive polls with the drive not moving and CPOS unchanged short of the target (~5 s on the line)
+ABANDON_POLLS = 3  # consecutive polls with the drive not moving and CPOS unchanged short of the target (~5 s on the line)  # noqa: E501
 
 def axis_reads(axis: str, axis_id: int) -> dict[str, g2.Read]:
     """Gate 2's reads for one X/Y-type axis, plus SRH, LCONVERGEBAND and CPOSCMD (same addresses on X and Y)."""
@@ -101,7 +101,7 @@ def assert_allowed(request: bytes) -> None:
 
 @dataclass
 class MotorGate4Result:
-    outcome: str  # dry_run | refused | driver_state | stopped | not_idle | baseline_refused | fault_stopped | fail | pass
+    outcome: str  # dry_run | refused | driver_state | stopped | not_idle | baseline_refused | fault_stopped | fail | pass  # noqa: E501
     message: str
     started_utc: str
     host: str
@@ -231,8 +231,8 @@ class _Link:
 def run(*, send: bool = False, confirm: str = "", on_for_2_min: bool = False, stage_empty_watching: bool = False,
         find_ports: Callable[[], list[PortInfo]] = find_ftdi_ports,
         open_port: Callable[[str], Port] = open_vendor_port,
-        monotonic: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> MotorGate4Result:
-    res = MotorGate4Result("refused", "", datetime.now(timezone.utc).isoformat(timespec="milliseconds"), platform.node())
+        monotonic: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> MotorGate4Result:  # noqa: E501
+    res = MotorGate4Result("refused", "", datetime.now(timezone.utc).isoformat(timespec="milliseconds"), platform.node())  # noqa: E501
     ports = find_ports()
     if len(ports) != 1:
         res.message = f"expected exactly one FTDI 0403:6001 serial port, found {len(ports)}; nothing opened"

@@ -182,17 +182,17 @@ class AcquisitionStream:
                 return False
             if md.acquisition_id != self.acquisition_id:
                 self.rejected += 1
-                self._fault_locked(f"frame from acquisition {md.acquisition_id!r} sent to {self.acquisition_id!r}", md.frame_index)
+                self._fault_locked(f"frame from acquisition {md.acquisition_id!r} sent to {self.acquisition_id!r}", md.frame_index)  # noqa: E501
                 return False
             if md.frame_index <= self._last_index:
                 self.rejected += 1
-                self._fault_locked(f"frame index {md.frame_index} out of order (last {self._last_index})", md.frame_index)
+                self._fault_locked(f"frame index {md.frame_index} out of order (last {self._last_index})", md.frame_index)  # noqa: E501
                 return False
             try:
                 self._q.put_nowait(frame)
             except queue.Full:
                 self.rejected += 1
-                self._fault_locked(f"storage back-pressure: writer queue full ({self._q.maxsize}) at frame {md.frame_index}",
+                self._fault_locked(f"storage back-pressure: writer queue full ({self._q.maxsize}) at frame {md.frame_index}",  # noqa: E501
                                    md.frame_index)
                 return False
             self._last_index = md.frame_index
@@ -250,7 +250,7 @@ class AcquisitionStream:
             except Exception as exc:  # noqa: BLE001
                 with self._lock:
                     self.failed += 1
-                    self._fault_locked(f"sink write failed: {exc.__class__.__name__}: {exc}", frame.metadata.frame_index)
+                    self._fault_locked(f"sink write failed: {exc.__class__.__name__}: {exc}", frame.metadata.frame_index)  # noqa: E501
         # drain anything left after a fault-triggered stop
         while True:
             try:
@@ -295,7 +295,7 @@ class FrameTransport:
         with self._lock:
             if acquisition_id in self._streams:
                 raise ValueError(f"acquisition {acquisition_id} already open")
-            stream = AcquisitionStream(acquisition_id, sink, self.bus, capacity=capacity, expected_frames=expected_frames)
+            stream = AcquisitionStream(acquisition_id, sink, self.bus, capacity=capacity, expected_frames=expected_frames)  # noqa: E501
             self._streams[acquisition_id] = stream
         stream.start()
         return stream

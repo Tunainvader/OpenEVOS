@@ -223,7 +223,7 @@ def test_inspect_port_reads_back_and_writes_nothing(flags, normal):
                             on_for_2_min=False)
     assert res.outcome == "inspected" and opened == ["COM3"]
     assert chain.calls == [("inspect",), ("close",)]  # no configure, no purge, no write
-    assert res.bytes_written == 0 and res.port_state_read_back["dcb"]["flags"]["fDtrControl"] == flags.get("fDtrControl", 1)
+    assert res.bytes_written == 0 and res.port_state_read_back["dcb"]["flags"]["fDtrControl"] == flags.get("fDtrControl", 1)  # noqa: E501
     assert ("normal" in res.message and "NOT" not in res.message) == normal
 
 

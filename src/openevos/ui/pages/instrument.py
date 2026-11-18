@@ -360,12 +360,12 @@ class HardwarePage(QWidget):
             lay.addWidget(self._physical_stage_panel())
         g, gl = panel("Physical unit readiness (gate evidence)")
         self.dev_widgets.append(g)
-        gl.addWidget(label("What the project's EVOS FL Auto has been shown to do on the instrument, from the gate records "
-                           "(ADR-0011..0024; each row cites its evidence). 'Read-only' = state verified, never commanded. "
-                           "Physical commands still require verified capability records with evidence IDs.", "muted", wrap=True))
+        gl.addWidget(label("What the project's EVOS FL Auto has been shown to do on the instrument, from the gate records "  # noqa: E501
+                           "(ADR-0011..0024; each row cites its evidence). 'Read-only' = state verified, never commanded. "  # noqa: E501
+                           "Physical commands still require verified capability records with evidence IDs.", "muted", wrap=True))  # noqa: E501
         rt = _table(["Subsystem", "Axis", "Readiness", "Known", "Gating in OpenEVOS", "Unlock requires", "Evidence"])
         rt.setWordWrap(True)
-        colors = {Readiness.VERIFIED_LIMITED: theme.OK, Readiness.READ_ONLY: theme.ACCENT_TX, Readiness.LOCKED: theme.WARN,
+        colors = {Readiness.VERIFIED_LIMITED: theme.OK, Readiness.READ_ONLY: theme.ACCENT_TX, Readiness.LOCKED: theme.WARN,  # noqa: E501
                   Readiness.NOT_INTEGRATED: theme.UNKNOWN, Readiness.UNAVAILABLE: theme.UNKNOWN}
         for r in PHYSICAL_READINESS:
             i = rt.rowCount()
@@ -540,7 +540,7 @@ class CalibrationPage(QWidget):
     PROCS: ClassVar[list[tuple[str, str, str, str]]] = [
         ("pixel_size", "Objective field of view (pixel size)", "p.47-49",
          "Image, move the stage a known distance, image again; phase correlation gives µm per pixel."),
-        ("parfocality", "Parfocality", "p.47-49", "Auto fine on every objective; Z offsets vs the lowest magnification."),
+        ("parfocality", "Parfocality", "p.47-49", "Auto fine on every objective; Z offsets vs the lowest magnification."),  # noqa: E501
         ("parcentration", "Parcentration", "p.47-49", "Register the same field on every objective; XY offsets."),
         ("vessel_alignment", "Vessel alignment", "p.50",
          "Find the edges of two wells in brightfield at low magnification; offset of the vessel on the stage."),
@@ -692,7 +692,7 @@ class CalibrationPage(QWidget):
         self.table.setRowCount(len(self.PROCS))
         for r, (key, title, page, tip) in enumerate(self.PROCS):
             res = self.results.get(key) or ("applied" if st.get(key) else "not run — nominal values in use")
-            _set_row(self.table, r, (title, page, st.get(key) or "—", res), {3: theme.OK if st.get(key) else theme.MUTED})
+            _set_row(self.table, r, (title, page, st.get(key) or "—", res), {3: theme.OK if st.get(key) else theme.MUTED})  # noqa: E501
         self.table.resizeRowsToContents()
         v = self.session.vessel
         self.lbl_nominal.setText(f"{v.display_name}: focus nominal {v.focus_nominal_um:.1f} µm · Find sample range "
@@ -734,7 +734,7 @@ class SettingsPage(QWidget):
             for a in HotButtonAction:
                 c.addItem(a.label, a)
             c.setCurrentIndex(c.findData(cam.hot_buttons[i]))
-            c.currentIndexChanged.connect(lambda _=0, i=i, c=c, cam=cam: self._set_hot(cam, i, HotButtonAction(c.currentData())))
+            c.currentIndexChanged.connect(lambda _=0, i=i, c=c, cam=cam: self._set_hot(cam, i, HotButtonAction(c.currentData())))  # noqa: E501
             form.addRow(f"Hot button {i + 1}", c)
             combos.append(c)
         return combos
@@ -897,7 +897,7 @@ class SettingsPage(QWidget):
         th.currentIndexChanged.connect(lambda _=0: self._theme(th.currentData()))
         form.addRow("Theme", th)
         nv = QComboBox()
-        for k, t in (("auto", "Automatic (icons below 1440 px)"), ("expanded", "Icons and labels"), ("rail", "Icons only")):
+        for k, t in (("auto", "Automatic (icons below 1440 px)"), ("expanded", "Icons and labels"), ("rail", "Icons only")):  # noqa: E501
             nv.addItem(t, k)
         nv.setCurrentIndex(nv.findData(b.navigation))
         nv.currentIndexChanged.connect(lambda _=0: self._nav(nv.currentData()))
@@ -987,7 +987,7 @@ class SettingsPage(QWidget):
 
 # ====================================================================================== Service
 SERVICE = [
-    ("This instrument (serial, software revision)", "R0 read-only", "view", "Inspector report holds the recovered identity."),
+    ("This instrument (serial, software revision)", "R0 read-only", "view", "Inspector report holds the recovered identity."),  # noqa: E501
     ("Microscope: objective per turret position", "R1 configuration", "view",
      "Profile JSON below; physical slots unconfirmed (O axis locked)."),
     ("Import Vessels", "R1 configuration", "available", "Vessel Manager (Settings) adds user vessels."),

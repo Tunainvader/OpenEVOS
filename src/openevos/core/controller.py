@@ -8,7 +8,7 @@ one worker thread, so two sequences never interleave, and they return a Future.
 
 STOP (`stop()`) goes straight to `CoreGateway.stop_all()` → `CommandRouter.stop_all()`; it does
 not queue behind the worker and does not depend on anything remote.
-"""
+"""  # noqa: E501
 
 from __future__ import annotations
 

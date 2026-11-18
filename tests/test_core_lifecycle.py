@@ -135,7 +135,7 @@ def test_unexpected_disconnect_during_motion(manual_core):
 def test_protocol_violations_and_stale_callbacks(manual_core):
     core, sim, _clock, _rec = manual_core
     be = ScriptedBackend()
-    core.devices.register(be, sim.stage.capabilities({"x": (-10, 10), "y": (-10, 10)}).model_copy(update={"device_id": "scripted"}))
+    core.devices.register(be, sim.stage.capabilities({"x": (-10, 10), "y": (-10, 10)}).model_copy(update={"device_id": "scripted"}))  # noqa: E501
     core.devices.connect("scripted")
 
     def submit(**kw):

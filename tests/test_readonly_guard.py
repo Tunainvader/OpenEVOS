@@ -31,7 +31,7 @@ def test_no_forbidden_calls(path):
     rel = path.relative_to(SRC).as_posix()
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
-            names = [a.name for a in node.names] + ([node.module] if isinstance(node, ast.ImportFrom) and node.module else [])
+            names = [a.name for a in node.names] + ([node.module] if isinstance(node, ast.ImportFrom) and node.module else [])  # noqa: E501
             for n in names:
                 if n and n.split(".")[0] in {"subprocess", "usb", "ctypes.wintypes", "pywinusb", "hid", "ftd2xx"}:  # noqa: SIM102
                     if not (n == "subprocess" and rel.endswith("inspector/safe_exec.py")):
@@ -89,7 +89,7 @@ def test_validator_blocks_state_changes(script):
 
 
 def test_validator_ignores_text_inside_single_quotes():
-    safe_exec.validate_script("Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Kernel-PnP/Configuration' }")
+    safe_exec.validate_script("Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Kernel-PnP/Configuration' }")  # noqa: E501
 
 
 def test_run_refuses_unknown_query_and_non_windows(monkeypatch):

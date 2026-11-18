@@ -68,7 +68,7 @@ def assert_allowed(request: bytes) -> None:
 
 @dataclass
 class MotorGate3Result:
-    outcome: str  # dry_run | refused | driver_state | stopped | not_idle | baseline_refused | write_failed | fail | pass
+    outcome: str  # dry_run | refused | driver_state | stopped | not_idle | baseline_refused | write_failed | fail | pass  # noqa: E501
     message: str
     started_utc: str
     host: str
@@ -173,8 +173,8 @@ def _phase_d(port, res: MotorGate3Result, monotonic, sleep) -> None:
 def run(*, send: bool = False, confirm: str = "", on_for_2_min: bool = False, stage_clear_watching: bool = False,
         find_ports: Callable[[], list[PortInfo]] = find_ftdi_ports,
         open_port: Callable[[str], Port] = open_vendor_port,
-        monotonic: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> MotorGate3Result:
-    res = MotorGate3Result("refused", "", datetime.now(timezone.utc).isoformat(timespec="milliseconds"), platform.node())
+        monotonic: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> MotorGate3Result:  # noqa: E501
+    res = MotorGate3Result("refused", "", datetime.now(timezone.utc).isoformat(timespec="milliseconds"), platform.node())  # noqa: E501
     ports = find_ports()
     if len(ports) != 1:
         res.message = f"expected exactly one FTDI 0403:6001 serial port, found {len(ports)}; nothing opened"

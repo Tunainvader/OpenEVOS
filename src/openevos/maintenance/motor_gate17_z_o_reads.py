@@ -125,7 +125,7 @@ def evaluate(samples: dict[str, list[dict[str, int]]]) -> tuple[list[str], list[
     if o["SRL"] & 0x8000:
         notes.append(f"O power stage ON at rest (SRL 0x{o['SRL']:04X}); the decode says O is off between moves")
     notes.append(f"Z: LHOMEINDEXDELTA {z['LHOMEINDEXDELTA']}, HOMEDONE {z['HOMEDONE']}, ISTATUSFLAGS "
-                 f"0x{z['ISTATUSFLAGS']:04X}, IPENDINGMOVES {z['IPENDINGMOVES']}, peak current {z['IIQMAX']}/{z['IIQMIN']}")
+                 f"0x{z['ISTATUSFLAGS']:04X}, IPENDINGMOVES {z['IPENDINGMOVES']}, peak current {z['IIQMAX']}/{z['IIQMIN']}")  # noqa: E501
     notes.append(f"O: objective position {o['ICURRENTPOSHF']} (IHF {o['IHF']}), ITARGETPOS {o['ITARGETPOS']}, "
                  f"ISTATUSFLAGS 0x{o['ISTATUSFLAGS']:04X}, APOS {o['APOS']}")
     return problems, notes
@@ -149,7 +149,7 @@ def run(*, send: bool = False, confirm: str = "", on_for_2_min: bool = False,
         res.exchanges = [Exchange(f"{r.axis} {r.var}", r.frame.hex(" ")) for rs in READS.values() for r in rs.values()]
         return res
     if not on_for_2_min:
-        res.message = "operator has not confirmed the instrument has been on (and homed) for >= 2 minutes; nothing opened"
+        res.message = "operator has not confirmed the instrument has been on (and homed) for >= 2 minutes; nothing opened"  # noqa: E501
         return res
     if confirm != confirm_phrase(dev):
         res.message = f"confirmation phrase missing or wrong (expected {confirm_phrase(dev)!r}); nothing opened"

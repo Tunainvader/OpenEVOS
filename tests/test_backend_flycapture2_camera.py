@@ -159,7 +159,7 @@ def test_exposure_and_gain_commands_read_back():
     assert ctx.done and cam.props["shutter"]["abs"] == pytest.approx(5.0)
     ctx = Ctx()
     dev.start(SetCameraGain(device_id="cam-mono", origin=CommandOrigin.UI, gain_db=6.0, timeout_s=5.0), ctx)
-    assert ctx.done and dev.verify_result(SetCameraGain(device_id="cam-mono", origin=CommandOrigin.UI, gain_db=6.0, timeout_s=5.0))[0]
+    assert ctx.done and dev.verify_result(SetCameraGain(device_id="cam-mono", origin=CommandOrigin.UI, gain_db=6.0, timeout_s=5.0))[0]  # noqa: E501
 
 
 def test_settings_accepted_while_streaming():

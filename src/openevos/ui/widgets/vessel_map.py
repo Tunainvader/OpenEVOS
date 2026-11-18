@@ -77,7 +77,7 @@ class VesselMap(QWidget):
             p.drawRect(QRectF(self.to_widget(x0, y0), self.to_widget(x1, y1)))
         cur = v.region_at(*self.position_mm) if self.position_mm else None
         for r in v.regions:
-            rect = QRectF(self.to_widget(r.cx - r.w / 2, r.cy - r.h / 2), self.to_widget(r.cx + r.w / 2, r.cy + r.h / 2))
+            rect = QRectF(self.to_widget(r.cx - r.w / 2, r.cy - r.h / 2), self.to_widget(r.cx + r.w / 2, r.cy + r.h / 2))  # noqa: E501
             sel = r.region_id in self.selected
             active = cur is not None and cur.region_id == r.region_id
             fill = QColor(theme.ACCENT_DIM) if sel else QColor(theme.PANEL_2)

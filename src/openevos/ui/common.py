@@ -32,7 +32,7 @@ def label(text: str, kind: str = "", wrap: bool = False) -> QLabel:
     return lab
 
 
-def panel(title: str | None = None, *, sub: bool = False, margins: int = 12, spacing: int = 8) -> tuple[QFrame, QVBoxLayout]:
+def panel(title: str | None = None, *, sub: bool = False, margins: int = 12, spacing: int = 8) -> tuple[QFrame, QVBoxLayout]:  # noqa: E501
     f = QFrame()
     f.setObjectName("subpanel" if sub else "panel")
     lay = QVBoxLayout(f)

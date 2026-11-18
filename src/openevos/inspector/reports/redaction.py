@@ -24,7 +24,7 @@ from openevos.inspector.evidence import sha256_of
 _USER_PATH = re.compile(r"(?i)(?:[a-z]:\\users\\|/home/|/users/)([^\\/]+)")
 _GENERIC_USERS = {"public", "default", "default user", "all users", "administrator", "defaultapppool"}
 _MIN_LEN = 5
-_SKIP_KEYS = frozenset({"id", "evidence_ids", "sha256", "rule_id", "scan_id", "cites_findings", "vid", "pid", "rev", "mi"})
+_SKIP_KEYS = frozenset({"id", "evidence_ids", "sha256", "rule_id", "scan_id", "cites_findings", "vid", "pid", "rev", "mi"})  # noqa: E501
 
 
 def load_or_create_key(path: Path | None = None) -> bytes:
