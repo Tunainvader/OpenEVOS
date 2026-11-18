@@ -197,7 +197,7 @@ class SimulatedOptics:
             fraction = 1.0 if at_mirror else CUBE_TRANSMITTED_FRACTION
             e = TRANSMITTED_E_PER_MS * (tl / 100.0) * fraction
             tint = LED_WHITE_RGB if at_mirror or cube is None else tuple(
-                a * b for a, b in zip(LED_WHITE_RGB, cube.display_rgb))
+                a * b for a, b in zip(LED_WHITE_RGB, cube.display_rgb, strict=True))
             self._add(rate, t * e, tint)
             meta["transmitted_mode"] = mode
 

@@ -671,7 +671,9 @@ class MainWindow(QMainWindow):
     # ================================================================== status
     def _tick(self) -> None:
         s, m = self.session, self.model
-        kind = ("SIM+STAGE" if getattr(s, "physical_stage", False) else "SIM+TELEMETRY"
+        emulated = any(getattr(t, "emulated", False) for t in getattr(s, "telemetry", []) or [])
+        kind = ("SIM+EMULATED DRIVES" if emulated else "SIM+STAGE" if getattr(s, "physical_stage", False)
+                else "SIM+TELEMETRY"
                 if getattr(s, "telemetry", None) else "SIM" if s.simulated else "HW")
         self.f_session.setText(f"SESSION {kind} · {s.vessel.display_name}")
         n = len(m.active_commands)

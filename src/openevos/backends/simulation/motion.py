@@ -36,7 +36,7 @@ class _Trajectory:
         if self.duration <= 0 or now >= self.t0 + self.duration:
             return self.target
         f = max(0.0, (now - self.t0) / self.duration)
-        return tuple(a + (b - a) * f for a, b in zip(self.start, self.target))
+        return tuple(a + (b - a) * f for a, b in zip(self.start, self.target, strict=True))
 
     def busy(self, now: float) -> bool:
         return self.duration > 0 and now < self.t0 + self.duration

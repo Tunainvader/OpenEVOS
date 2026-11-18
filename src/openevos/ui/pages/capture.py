@@ -144,7 +144,16 @@ class CapturePage(QWidget):
         root = QHBoxLayout(self)
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(10)
-        self.left = self._left()
+        # the Instrument column scrolls on short windows instead of squeezing the jog pad onto the Objectives heading
+        # (audit APP-11, 1280 x 800)
+        self.left = QScrollArea()
+        self.left.setWidget(self._left())
+        self.left.setWidgetResizable(True)
+        self.left.setFrameShape(QFrame.NoFrame)
+        self.left.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.left.viewport().setAutoFillBackground(False)
+        self.left.setMinimumWidth(248)
+        self.left.setMaximumWidth(280)
         # the Light & focus column scrolls on short windows instead of squashing the Z focus panel (1100 x 720); the
         # Capture block stays pinned below it (audit APP-06)
         self.right_scroll = QScrollArea()
@@ -167,8 +176,7 @@ class CapturePage(QWidget):
 
     def _left(self) -> QWidget:
         f, lay = panel("Instrument")
-        f.setMinimumWidth(248)
-        f.setMaximumWidth(280)
+        f.setMinimumWidth(238)  # inside the column's scroll area (scroll bar 10 px)
         lay.addWidget(label("Camera", "section"))
         self.seg_camera = SegmentedControl([("mono", "Monochrome"), ("color", "Colour")], accessible_name="Camera")
         self.seg_camera.buttons["mono"].setToolTip("Monochrome camera: fluorescence and brightfield")
@@ -204,7 +212,7 @@ class CapturePage(QWidget):
         self.map.setAccessibleName("Virtual vessel: click a well to centre it, drag the crosshair to move")
         lay.addWidget(self.map)
         self.lbl_pos = label("X — mm   Y — mm", "mono")
-        self.lbl_well = label("", "caption")
+        self.lbl_well = label("", "caption", wrap=True)  # wraps instead of clipping in the narrow column (APP-10)
         lay.addWidget(self.lbl_pos)
         lay.addWidget(self.lbl_well)
         lay.addWidget(label("Stage", "section"))
@@ -415,6 +423,7 @@ class CapturePage(QWidget):
             b.setMinimumHeight(32)
             b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             b.setMinimumWidth(1)
+            b.setStyleSheet("padding-left: 4px; padding-right: 4px;")  # 'Capture All' fits the ~90 px button
             self.hot.append(b)
             hg.addWidget(b, 1)
         lay.addLayout(hg)
@@ -602,8 +611,10 @@ class CapturePage(QWidget):
         if xy is not None and getattr(self.session, "physical_stage", False):
             # the vessel map's geometry belongs to the simulator; no vessel<->stage mapping is calibrated
             # for the physical stage, so show raw stage coordinates and say so (never a fake well)
-            self.lbl_pos.setText(f"Stage X {xy[0] / 1000:7.3f} mm   Y {xy[1] / 1000:7.3f} mm")
-            self.lbl_well.setText("Physical stage · vessel mapping not calibrated (map is the simulator's)")
+            self.lbl_pos.setText(f"Stage X {xy[0] / 1000:.3f}  Y {xy[1] / 1000:.3f} mm")  # fits 1280 px (APP-10)
+            self.lbl_well.setText("Vessel map: simulator's, not calibrated")
+            self.lbl_well.setToolTip("Physical stage: the vessel ↔ stage mapping is not calibrated, so the map above is "
+                                     "the simulator's geometry and the position shows raw stage coordinates")
         elif xy is not None:
             vx, vy = self.session.stage_map.to_vessel(*xy)
             self.map.position_mm = (vx, vy)

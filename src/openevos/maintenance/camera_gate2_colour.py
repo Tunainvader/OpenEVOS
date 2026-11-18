@@ -101,7 +101,7 @@ def compare_state(ref: dict[str, Any], cur: dict[str, Any], keys=COMPARED) -> li
                 diffs.append(f"{k}: {a} -> {b}")
         elif isinstance(a, list) and isinstance(b, list) and len(a) == len(b) and all(
                 isinstance(x, (int, float)) for x in a + b):
-            if any(abs(x - y) > 1e-6 for x, y in zip(a, b)):
+            if any(abs(x - y) > 1e-6 for x, y in zip(a, b, strict=False)):
                 diffs.append(f"{k}: {a} -> {b}")
         elif a != b:
             diffs.append(f"{k}: {a} -> {b}")

@@ -125,7 +125,7 @@ class Position(BaseModel):
         return self.values[self.axes.index(axis)]
 
     def as_dict(self) -> dict[str, float]:
-        return dict(zip(self.axes, self.values))
+        return dict(zip(self.axes, self.values, strict=True))
 
 
 # --------------------------------------------------------------------------------------------

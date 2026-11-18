@@ -282,7 +282,7 @@ class MoviesPage(QWidget):
         st, prof = self.session.settings, self.session.profile
         if self.source.currentData() == "zstack":
             zs = self.session.capture.buffers.zstack
-            return [(f"z={z:.2f} µm", render_frame(i.data, zs.channel, prof, st)) for z, i in zip(zs.z_um, zs.images)] \
+            return [(f"z={z:.2f} µm", render_frame(i.data, zs.channel, prof, st)) for z, i in zip(zs.z_um, zs.images, strict=True)] \
                 if zs else []
         if not self.beacon.count():
             self._beacons()

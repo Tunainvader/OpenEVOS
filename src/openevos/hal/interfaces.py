@@ -54,7 +54,7 @@ class HardwareDevice(ABC):
     @abstractmethod
     def disconnect(self) -> None: ...
 
-    def halt(self) -> None:
+    def halt(self) -> None:  # noqa: B027 - a deliberate no-op default; devices that move override it
         """Bring the device to a safe state immediately. Default (deliberately): nothing to do."""
 
     def is_busy(self) -> bool:

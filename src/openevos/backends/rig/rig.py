@@ -147,7 +147,7 @@ def attach_optical_simulator(core: CoreServices, profile: InstrumentProfile, ves
     rig.focus.set_initial_position(z=vessel.focus_nominal_um + 15.0)  # simulator power-on state
     if vessel.regions:  # park over the region nearest the vessel centre so the first live image shows cells
         c = min(vessel.regions, key=lambda r: (r.cx - vessel.width_mm / 2) ** 2 + (r.cy - vessel.height_mm / 2) ** 2)
-        rig.stage.set_initial_position(**dict(zip(("x", "y"), rig.stage_map.to_stage(c.cx, c.cy))))
+        rig.stage.set_initial_position(**dict(zip(("x", "y"), rig.stage_map.to_stage(c.cx, c.cy), strict=True)))
     if connect:
         for d in rig.device_ids:
             core.devices.connect(d)

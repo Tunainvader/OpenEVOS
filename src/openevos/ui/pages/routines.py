@@ -221,7 +221,8 @@ class _RoutineBase(QWidget):
         lay.addWidget(self.progress)
         lay.addWidget(self.lbl_progress)
         self.model.tasks.progress.connect(self._on_progress)
-        self.model.tasks.busy_changed.connect(lambda b: self.btn_run.setEnabled(not b))
+        # busy -> off; idle -> whatever the current plan allows (not blindly on: APP-14)
+        self.model.tasks.busy_changed.connect(lambda b: self.btn_run.setEnabled(False) if b else self.replan())
 
     def _on_progress(self, name: str, i: int, n: int, msg: str) -> None:
         if name.startswith(self.kind.capitalize()):
@@ -399,6 +400,16 @@ class ScanPage(_RoutineBase):
         self.cols.setEnabled(c is Coverage.GRID)
         ctl = self.session.controller
         lx, ly = ctl.axis_limits(self.profile.stage_device, "x"), ctl.axis_limits(self.profile.stage_device, "y")
+        if self.m_rect.isChecked() and not self.map.selected:
+            # a fresh page plans nothing: no wells selected used to mean the whole plate (a 19 h, 18 GB plan that could
+            # not start, audit APP-14). The planner keeps that meaning for saved routines.
+            self.plan = None
+            self.map.tiles_mm = []
+            self.map.update()
+            self.lbl_plan.setText("No wells selected")
+            self.lbl_warn.setText("Select wells on the map to plan a scan")
+            self._run_state(False, "Select wells on the map first")
+            return
         try:
             r = self.routine()
             self.plan = plan_scan(r, self.session.vessel, self.profile, self.session.stage_map,
@@ -408,7 +419,7 @@ class ScanPage(_RoutineBase):
             self.map.tiles_mm = []
             self.lbl_plan.setText("Plan not valid")
             self.lbl_warn.setText(explain(exc))
-            self.btn_run.setEnabled(False) if hasattr(self, "btn_run") else None
+            self._run_state(False, explain(exc))
             self.map.update()
             return
         p = self.plan
@@ -419,8 +430,16 @@ class ScanPage(_RoutineBase):
         self.lbl_plan.setText(f"{len(p.tiles)} fields × {len(r.channels)} channel(s) · FOV {p.fov_mm[0] * 1000:.0f}×"
                               f"{p.fov_mm[1] * 1000:.0f} µm · est. {_fmt_time(p.est_seconds)} · {_fmt_bytes(p.est_bytes)}")
         show_warnings(self.lbl_warn, p.warnings)
+        why = ("the plan has no fields" if not p.tiles else
+               f"{p.out_of_limits} field(s) are outside the stage limits" if p.out_of_limits else
+               "the instrument is busy" if self.model.tasks.busy else "")
+        self._run_state(not why, why)
+
+    def _run_state(self, ok: bool, why: str = "") -> None:
+        """Start is enabled only for a runnable plan; when it is not, the reason is on the button (audit APP-14)."""
         if hasattr(self, "btn_run"):
-            self.btn_run.setEnabled(bool(p.tiles) and p.out_of_limits == 0 and not self.model.tasks.busy)
+            self.btn_run.setEnabled(ok)
+            self.btn_run.setToolTip("" if ok else f"Cannot start: {why}")
 
     def _run(self) -> None:
         self.replan()

@@ -104,7 +104,7 @@ src/openevos/
     data/               # SDK signature table, documented EVOS profile (no unverified IDs)
   ai/                   # response schema, register validation, provider interface (NullProvider)
   hal/status_model.py   # runtime state (separate axis from evidence stage; ADR-0004)
-docs/decisions/         # ADR-0001 … ADR-0027 (0005 product direction; 0006 STOP keeps the incubator
+docs/decisions/         # ADR-0001 … ADR-0057 (index below) (0005 product direction; 0006 STOP keeps the incubator
                         #   running; 0007 runtime state axes; 0008 core execution model; 0009 firmware
                         #   safety; 0010 the desktop UI runs on the command core; 0011 Gate 1 LED
                         #   bootloader version query; 0012 LED StartApp maintenance tool; 0013 Gate 2
@@ -114,6 +114,67 @@ tests/                  # mocked Windows fixtures, read-only AST guard, opt-in l
 ```
 
 *Layout note:* plan §9.2 shows a top-level `openevos_inspector/` package, while §14 puts the Inspector under `src/openevos/inspector/`. This repository follows §14, so nothing has to be renamed when the HAL and UI arrive.
+
+## Decision records
+
+All 56 architecture decision records in [`docs/decisions`](docs/decisions), newest last:
+
+- [ADR-0001](docs/decisions/ADR-0001-standalone-ui.md): Standalone PySide6 application; Micro-Manager is a backend, not the UI
+- [ADR-0002](docs/decisions/ADR-0002-micro-manager-backend.md): Micro-Manager (MMCore) as the preferred backend — conditional on evidence
+- [ADR-0003](docs/decisions/ADR-0003-ai-evidence-boundary.md): Read-only AI evidence boundary and evidence-label policy
+- [ADR-0004](docs/decisions/ADR-0004-evidence-stage-vs-runtime-state.md): Evidence stage and runtime state are separate axes
+- [ADR-0005](docs/decisions/ADR-0005-product-direction.md): Product direction: FL Auto 2-class capabilities on the FL Auto 1 hardware we own
+- [ADR-0006](docs/decisions/ADR-0006-stop-keeps-incubator-running.md): STOP halts motion, light and acquisition, but keeps the incubator running
+- [ADR-0007](docs/decisions/ADR-0007-runtime-state-axes.md): Runtime state as three independent axes (revises ADR-0004)
+- [ADR-0008](docs/decisions/ADR-0008-core-execution-model.md): Phase 2.1 core execution model, event bus and capability provenance
+- [ADR-0009](docs/decisions/ADR-0009-firmware-safety.md): Firmware safety: no flashing, maintenance-only transitions, bootloader quarantine
+- [ADR-0010](docs/decisions/ADR-0010-ui-on-command-core.md): The desktop UI runs on the command core
+- [ADR-0011](docs/decisions/ADR-0011-gate1-led-bootloader-version-query.md): Gate 1, the LED board bootloader version query, as an operator-run tool
+- [ADR-0012](docs/decisions/ADR-0012-led-startapp-maintenance-tool.md): StartApp on the LED board, as an operator-run maintenance tool
+- [ADR-0013](docs/decisions/ADR-0013-gate2-stepb-calibration-checksum.md): Gate 2 Step B, the LED application's calibration-memory checksum query
+- [ADR-0014](docs/decisions/ADR-0014-gate2-stepc-hwdata-read.md): Gate 2 Step C, field-by-field `HW_DATA` read from the LED application
+- [ADR-0015](docs/decisions/ADR-0015-gate2-stepd-section2-blob.md): Gate 2 Step D, PearlScope's calibration blob from LED persistent-data section 2
+- [ADR-0016](docs/decisions/ADR-0016-motor-gate1-read-only.md): Motor Gate 1, read-only first contact with the Technosoft drives
+- [ADR-0017](docs/decisions/ADR-0017-motor-gate2-safety-variables.md): Motor Gate 2, read-only check of the drives' safety-relevant variables
+- [ADR-0018](docs/decisions/ADR-0018-motor-gate3-idle-x-stop.md): Motor Gate 3, controlled stop on the idle X axis (first write to a drive)
+- [ADR-0019](docs/decisions/ADR-0019-motor-gate4-x-move-1mm.md): Motor Gate 4, first movement: X +1 mm and back to 0
+- [ADR-0020](docs/decisions/ADR-0020-motor-gate5-x-stop-in-motion.md): Motor Gate 5, controlled stop during a 10 mm X move
+- [ADR-0021](docs/decisions/ADR-0021-motor-gate6-y-move-12mm.md): Motor Gate 6, first Y movement: +12 mm and back to 0
+- [ADR-0022](docs/decisions/ADR-0022-motor-gate7-xy-calibrated-limits.md): Motor Gate 7, load the calibrated X/Y limits into the drives
+- [ADR-0023](docs/decisions/ADR-0023-readonly-motor-telemetry-backend.md): Read-only motor telemetry in the desktop app
+- [ADR-0024](docs/decisions/ADR-0024-physical-xy-stage-stop-and-jog.md): Physical X/Y stage Stop and fixed-step jog in the desktop app
+- [ADR-0025](docs/decisions/ADR-0025-ui-manual-parity.md): Desktop UI: manual parity on top of the command router
+- [ADR-0026](docs/decisions/ADR-0026-craftimon-design-system.md): Adopt the Craftimon "Lab" design system for the OpenEVOS UI
+- [ADR-0027](docs/decisions/ADR-0027-ui-merge-v040.md): Adopt the v0.4.0 desktop UI on this repository's core
+- [ADR-0028](docs/decisions/ADR-0028-motor-gate8-full-range.md): Motor Gate 8, full-range X/Y traverse
+- [ADR-0029](docs/decisions/ADR-0029-calibrated-stage-travel-box.md): Widen the app's physical X/Y travel box to the calibrated envelope
+- [ADR-0030](docs/decisions/ADR-0030-motor-gate9-drive-status-reads.md): Motor Gate 9, read-only drive status/error registers, and safer move completion
+- [ADR-0031](docs/decisions/ADR-0031-led-gate3-status-read.md): LED application command table (RE-4) and LED Gate 3, a read-only status query
+- [ADR-0032](docs/decisions/ADR-0032-xy-speed-presets.md): X/Y jog speed presets (CSPDCMD), behind Motor Gate 10
+- [ADR-0033](docs/decisions/ADR-0033-camera-gate1-readonly.md): Camera Gate 1, read-only identity, modes and one dark frame
+- [ADR-0034](docs/decisions/ADR-0034-led-gate4-light-test.md): LED Gate 4, brightfield and epi LED on/off test
+- [ADR-0035](docs/decisions/ADR-0035-motor-gate11-f-cube-slot.md): Motor Gate 11, F carriage to a cube slot via the drive's GOTO_CUBE
+- [ADR-0036](docs/decisions/ADR-0036-camera-gate2-mono-settings.md): Camera Gate 2 (mono), RAM-only settings writes with verified restore
+- [ADR-0037](docs/decisions/ADR-0037-real-mono-camera-backend.md): Real mono camera backend in the app (Chameleon via FlyCapture2)
+- [ADR-0038](docs/decisions/ADR-0038-camera-gate2-colour-settings.md): Camera Gate 2 (colour), RAM-only settings writes with re-init restore check
+- [ADR-0039](docs/decisions/ADR-0039-real-colour-camera-backend.md): Real colour camera backend in the app (uEye UI-146xLE-C via the uEye API)
+- [ADR-0040](docs/decisions/ADR-0040-xy-stage-drift-monitor.md): X/Y stage drift monitor and one-axis-at-a-time moves
+- [ADR-0041](docs/decisions/ADR-0041-motor-gate12-f-mirror.md): Motor Gate 12, F carriage to the mirror via the drive's GOTO_MIRR
+- [ADR-0042](docs/decisions/ADR-0042-motor-gate13-f-centring.md): Motor Gate 13, F centring test with PC-sent fixed targets
+- [ADR-0043](docs/decisions/ADR-0043-motor-gate14-f-beyond-mirror.md): Motor Gate 14, F past 128,000 by raising the drive's RAM limit in steps
+- [ADR-0044](docs/decisions/ADR-0044-motor-gate15-y-axisoff.md): Motor Gate 15, host `AXISOFF` on the idle Y axis
+- [ADR-0045](docs/decisions/ADR-0045-motor-gate8-t1-y-off-runs.md): ADR-0045-motor-gate8-t1-y-off-runs
+- [ADR-0047](docs/decisions/ADR-0047-stage-runaway-watchdog.md): X/Y runaway watchdog, shadow mode first
+- [ADR-0048](docs/decisions/ADR-0048-app-real-led-illumination.md): Real LED illumination in the app (on/off only)
+- [ADR-0049](docs/decisions/ADR-0049-led-gate5-brightness-test.md): LED Gate 5, low-level brightness test
+- [ADR-0050](docs/decisions/ADR-0050-led-camera-sweep.md): LED brightness sweep measured with the mono camera
+- [ADR-0051](docs/decisions/ADR-0051-app-f-carriage-for-cube-channels.md): Cube channel buttons move the F carriage, then light the cube
+- [ADR-0052](docs/decisions/ADR-0052-motor-gates17-19-z-focus-o-turret.md): Motor Gates 17–19, first Z (focus) and O (objective turret) reads and moves
+- [ADR-0053](docs/decisions/ADR-0053-app-z-focus-and-objective-turret.md): Z focus and the objective turret from the app
+- [ADR-0054](docs/decisions/ADR-0054-read-only-mcp-link.md): Read-only MCP link for AI assistants (Phase 1)
+- [ADR-0055](docs/decisions/ADR-0055-led-board-autostart-at-launch.md): Start the LED board application at app launch (amends ADR-0012)
+- [ADR-0056](docs/decisions/ADR-0056-xy-limits-autoload-at-launch.md): Load the calibrated X/Y limits at app launch (amends ADR-0022)
+- [ADR-0057](docs/decisions/ADR-0057-operator-stage-lock-release.md): Operator release of a small stage-drift lock (amends ADR-0040)
 
 ## AI assistant link (MCP, read-only)
 

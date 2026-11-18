@@ -445,7 +445,8 @@ class HardwarePage(QWidget):
         for r, did in enumerate(ids):
             s = core.store.get(did)
             rec = core.devices.get(did)
-            pos = ", ".join(f"{a}={v:.1f}" for a, v in zip(s.observed_position.axes, s.observed_position.values)) \
+            pos = ", ".join(f"{a}={v:.1f}" for a, v in zip(s.observed_position.axes, s.observed_position.values,
+                                                                          strict=True)) \
                 if s and s.observed_position else "—"
             health_c = theme.OK if s and s.health.value == "normal" else theme.FAULT
             _set_row(self.devices, r, (did, s.kind.value, s.backend_kind.value, s.connection.value, s.health.value,

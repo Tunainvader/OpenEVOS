@@ -55,6 +55,21 @@ def test_zstack_channels_follow_the_active_camera(win):
     pump(app, 0.3)
 
 
+def test_fresh_scan_page_plans_nothing_and_says_why_start_is_off(win):
+    """Audit APP-14: no wells selected used to plan the whole plate (19 h, 18 GB) that could not start."""
+    app, w, _s = win
+    sp = w.pages["scan"]
+    sp.map.selected = set()
+    sp.replan()
+    assert sp.plan is None and not sp.btn_run.isEnabled()
+    assert "Select wells" in sp.btn_run.toolTip() and "No wells" in sp.lbl_plan.text()
+    sp.map.selected = {"D7"}
+    sp.replan()
+    pump(app, 0.1)
+    assert sp.plan is not None and sp.plan.tiles
+    assert sp.btn_run.isEnabled() or "Cannot start" in sp.btn_run.toolTip()  # runnable, or it says why not
+
+
 def test_focus_nominal_near_home_asks_and_can_be_undone(win, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
 

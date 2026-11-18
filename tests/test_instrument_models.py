@@ -77,7 +77,7 @@ def test_hot_buttons_and_light_slider():
     prev = (0.0, 0.0, 0.0)
     for v in range(0, 101, 5):
         cur = light_slider_split(v, True)
-        assert all(c >= p for c, p in zip(cur, prev))  # monotonic in every component
+        assert all(c >= p for c, p in zip(cur, prev, strict=True))  # monotonic in every component
         prev = cur
     assert light_slider_split(100, False)[2] > 1
 

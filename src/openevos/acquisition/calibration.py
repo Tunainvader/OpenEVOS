@@ -344,7 +344,7 @@ def find_hot_pixels(ctl: InstrumentController, role: CameraRole, *, frames: int 
         ctl.apply_camera(role, prev_exp, prev_gain)
     if light.channel is not None and light.enabled:
         ctl.run(ctl.set_light(light.channel, light.intensity_percent, True))
-    return HotPixelResult(role.value, [(int(y), int(x)) for y, x in zip(ys, xs)], thr, frames)
+    return HotPixelResult(role.value, [(int(y), int(x)) for y, x in zip(ys, xs, strict=True)], thr, frames)
 
 
 def correct_hot_pixels(data: np.ndarray, defects: list[tuple[int, int]]) -> np.ndarray:
