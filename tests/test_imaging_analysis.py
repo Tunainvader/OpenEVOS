@@ -83,14 +83,17 @@ def test_save_rule_matrix():
     assert validate(SaveOptions(ImageFormat.TIFF, 16, True, False), source_is_color=False)
     assert validate(SaveOptions(ImageFormat.TIFF, 16, False, False), source_is_color=True)
     assert validate(SaveOptions(ImageFormat.TIFF, 16, False, True), source_is_color=False)  # annotations in raw
-    assert allowed_bit_depths(ImageFormat.TIFF, False) == (8, 16)
+    assert allowed_bit_depths(ImageFormat.TIFF, False) == (8, 12, 16)
+    assert validate(SaveOptions(ImageFormat.TIFF, 12, False, False), source_is_color=False, source_bits=12) == []
+    assert validate(SaveOptions(ImageFormat.TIFF, 12, False, False), source_is_color=False, source_bits=16)
+    assert validate(SaveOptions(ImageFormat.PNG, 12, False, False), source_is_color=False)
     for fmt in (ImageFormat.PNG, ImageFormat.JPEG, ImageFormat.BMP):
         assert allowed_bit_depths(fmt, False) == (8,)
     assert allowed_bit_depths(ImageFormat.TIFF, True) == (8,)
     d = SavePreset.DEFAULT.options()
     assert (d.image_format, d.bit_depth, d.as_color, d.include_annotations) == (ImageFormat.TIFF, 8, True, True)
     q = SavePreset.QUANTITATIVE_MONO.options()
-    assert (q.bit_depth, q.as_color) == (16, False)
+    assert (q.bit_depth, q.as_color) == (12, False)  # the camera's counts, unscaled
 
 
 def test_save_files_preserve_raw_and_label_simulated(tmp_path):
@@ -100,8 +103,14 @@ def test_save_files_preserve_raw_and_label_simulated(tmp_path):
     img = _img(raw)
     out = save(tmp_path, "Raw", rgb8=None, raw=img, opts=SavePreset.QUANTITATIVE_MONO.options())
     back = tifffile.imread(out.image)
-    assert back.dtype == np.uint16 and np.array_equal(back, raw)  # 16-bit raw survives untouched
+    assert back.dtype == np.uint16 and np.array_equal(back, raw)  # 12-bit: the camera's counts survive untouched
     meta = json.loads(out.sidecar.read_text())
+    assert meta["openevos_save"]["bit_depth"] == 12 and meta["openevos_save"]["counts_scale"] == 1
+    o16 = save(tmp_path, "Full", rgb8=None, raw=img, opts=SaveOptions(ImageFormat.TIFF, 16, False, False))
+    full = tifffile.imread(o16.image)
+    assert full.dtype == np.uint16 and np.array_equal(full, raw * 16)  # 16-bit: 12-bit counts x16, exact
+    assert json.loads(o16.sidecar.read_text())["openevos_save"]["counts_scale"] == 16
+    assert int(full.max()) <= 65535 and np.array_equal(full >> 4, raw)
     assert meta["provenance"].startswith("SIMULATED") and meta["primary"]["synthetic"] is True
     rgb = np.zeros((6, 8, 3), np.uint8)
     o2 = save(tmp_path, "Raw", rgb8=rgb, raw=img, opts=SaveOptions(save_underlying=True), channels={"cube2": img})

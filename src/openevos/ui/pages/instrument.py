@@ -915,8 +915,8 @@ class SettingsPage(QWidget):
         self.chk_gamepad = QCheckBox("Gamepad controls the stage, focus and light")
         self.chk_gamepad.setChecked(b.gamepad_enabled)
         self.chk_gamepad.setToolTip("A USB gamepad (XInput) while this window is active: left stick/D-pad jog the "
-                                    "stage, right stick focuses, RB/LB one focus step, A capture, B light, X snap to "
-                                    "last, Y fine/coarse, Back stop")
+                                    "stage, right stick focuses, RB/LB one focus step, A capture, Start quick save, "
+                                    "B light, X snap to last, Y fine/coarse, Back stop")
         self.chk_gamepad.toggled.connect(lambda v: setattr(b, "gamepad_enabled", v))
         form.addRow("", self.chk_gamepad)
         form.addRow(label("Auto fine adjustment, capture focus nominal and vessel alignment are in Calibration; gas "

@@ -68,6 +68,7 @@ class Joystick(QWidget):
         self._v = QPointF(0, 0)
         self._held = False
         self._hover: int | None = None  # index into DIRS
+        self._mirror = False  # showing a gamepad's deflection (display only; never emits)
         self._timer = QTimer(self)
         self._timer.setInterval(180)
         self._timer.timeout.connect(self._tick)
@@ -165,6 +166,17 @@ class Joystick(QWidget):
             return
         super().keyReleaseEvent(e)
 
+    def mirror(self, vx: float, vy: float) -> None:
+        """Show another input's deflection (the gamepad): the knob tilts and lights that side as if pressed. Display
+        only: emits nothing, and a mouse or key hold in progress keeps the knob."""
+        if self._held:
+            return
+        i = None if max(abs(vx), abs(vy)) <= 0.08 else ((1 if vx > 0 else 3) if abs(vx) >= abs(vy)
+                                                         else (2 if vy > 0 else 0))
+        if (i is not None) != self._mirror or i != self._hover:
+            self._mirror, self._hover = i is not None, i
+            self.update()
+
     # ------------------------------------------------------------------ painting
     @staticmethod
     def _lin(r: QRectF, top: str, bottom: str):
@@ -227,7 +239,8 @@ class Joystick(QWidget):
         p.setBrush(well)
         p.drawEllipse(c, hr, hr)
         # the button tilts towards the aimed side (CSS: translate 5 px + rotate 8 deg)
-        shift = QPointF(*self.DIRS[lit]) * (5 * s * (1.4 if self._held else 1.0)) if lit is not None else QPointF()
+        pressed = self._held or self._mirror
+        shift = QPointF(*self.DIRS[lit]) * (5 * s * (1.4 if pressed else 1.0)) if lit is not None else QPointF()
         bc = c + shift
         br = 51 * s
         self._shadow(p, bc - shift * 0.6, br, 14 * s, min(255, int(120 * k["shadow"])), 12 * s)

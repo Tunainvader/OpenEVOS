@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -220,8 +221,13 @@ class SavePage(QWidget):
         cur = self.depth.currentData()
         self.depth.blockSignals(True)
         self.depth.clear()
+        tips = {12: "the camera's counts unscaled (0–4095), for measurement",
+                16: "the camera's counts ×16 to fill 0–65535, opens at normal brightness in other viewers",
+                8: "8-bit, auto-ranged for display"}
+        box: QComboBox = self.depth  # type: ignore[assignment]  # (QWidget.depth() shadows the name for mypy)
         for d in allowed_bit_depths(ImageFormat(self.fmt.currentData()), self.color.isChecked()):
-            self.depth.addItem(f"{d}-bit", d)
+            box.addItem(f"{d}-bit", d)
+            box.setItemData(box.count() - 1, tips[d], Qt.ItemDataRole.ToolTipRole)
         i = self.depth.findData(cur)
         self.depth.setCurrentIndex(max(i, 0))
         self.depth.blockSignals(False)
@@ -235,7 +241,7 @@ class SavePage(QWidget):
     def _validate(self) -> None:
         _rgb, raw, _ = self._selection() if self.source.count() else (None, None, {})
         o = self.options()
-        errs = validate(o, source_is_color=raw.is_color if raw is not None else False) if raw is not None else \
+        errs = validate(o, source_is_color=raw.is_color, source_bits=raw.bit_depth) if raw is not None else \
             ["nothing captured yet"]
         self.annot.setEnabled(self.color.isChecked())
         self.mono.setEnabled(not (raw is not None and raw.is_color))
@@ -276,7 +282,9 @@ class SavePage(QWidget):
             self.model.add_log("warn", "Quick Save: nothing captured yet")
             return
         as_color = q.save_as_color or raw.is_color
-        bit = 16 if (not as_color and q.image_format is ImageFormat.TIFF and role is CameraRole.MONO) else 8
+        bit = 8
+        if not as_color and q.image_format is ImageFormat.TIFF and role is CameraRole.MONO:
+            bit = 12 if raw.bit_depth <= 12 else 16  # the camera's counts, unscaled
         opts = SaveOptions(q.image_format, bit, as_color, q.include_annotations and as_color, q.save_underlying,
                            self.session.settings.mono.underlying_channel_save)
         if opts.include_annotations:

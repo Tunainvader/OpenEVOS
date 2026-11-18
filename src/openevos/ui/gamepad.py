@@ -11,7 +11,12 @@ on the focus pad does.
     RB / LB              one focus step up / down
     A                    Capture        B   Light on/off
     X                    Snap to last   Y   Fine/coarse focus steps
+    Start                Quick Save the last capture to file
     Back                 stop: releases every held stage and focus move
+
+A stage direction must be held for JOG_SETTLE_S before the stage starts (a flick or a stick passing through a
+diagonal starts nothing; the 2026-11-18 run showed several moves started and stopped inside one 50 ms tick); letting go
+stops at once. The on-screen jog knob mirrors the stick, and the focus pad shows the held direction.
 
 Input is read only while the app window is active and no dialog is open; losing the window, opening a dialog or
 unplugging the pad releases anything held.
@@ -29,13 +34,14 @@ STICK_DEAD = 0.25  # radial dead zone of the left stick (worn sticks rest at up 
 FOCUS_DEAD = 0.35  # the right stick must clearly lean before focus moves
 FOCUS_FAST = 0.85  # beyond this, a held focus step is doubled
 JOG_REPEAT_S = 0.18  # the on-screen joystick's repeat (controls.Joystick)
+JOG_SETTLE_S = 0.12  # a new stage direction must be held this long before it starts (stops are immediate)
 FOCUS_REPEAT_S = 0.12
 DPAD_PACE = 0.6
 POLL_MS = 33
 
 #: edge-triggered buttons -> action name
 PRESS_ACTIONS = {"a": "capture", "b": "light", "x": "snap", "y": "focus_mode", "rb": "focus_up", "lb": "focus_down",
-                 "back": "stop"}
+                 "start": "quick_save", "back": "stop"}
 
 
 @dataclass
@@ -51,6 +57,10 @@ class GamepadMapper:
 
     _jog_dir: tuple[int, int] | None = None
     _jog_t: float = -1e9
+    _cand: tuple[int, int] | None = None  # a new direction waiting out JOG_SETTLE_S
+    _cand_t: float = 0.0
+    #: the stick/D-pad vector of the last reading (screen convention), for the on-screen knob
+    shown: tuple[float, float] = (0.0, 0.0)
     _focus_dir: int = 0
     _focus_t: float = -1e9
     _held: frozenset[str] = field(default_factory=frozenset)
@@ -61,7 +71,7 @@ class GamepadMapper:
             out.append(("jog_release",))
         if self._focus_dir:
             out.append(("focus_release",))
-        self._jog_dir, self._focus_dir = None, 0
+        self._jog_dir, self._focus_dir, self._cand, self.shown = None, 0, None, (0.0, 0.0)
         return out
 
     def reset(self, state: PadState | None = None) -> list[tuple]:
@@ -87,16 +97,23 @@ class GamepadMapper:
                     vx = pace if s.lx > 0 else -pace
                 else:
                     vy = -pace if s.ly > 0 else pace  # stick up -> screen up (vy < 0) -> Y+
+        self.shown = (vx, vy)
         d = (int(math.copysign(1, vx)) if vx else 0, int(math.copysign(1, vy)) if vy else 0)
-        if vx or vy:
-            if d != self._jog_dir or now - self._jog_t >= JOG_REPEAT_S:
-                if self._jog_dir is not None and d != self._jog_dir:
-                    out.append(("jog_release",))  # a new direction: stop first
-                out.append(("jog", vx, vy))
-                self._jog_dir, self._jog_t = d, now
-        elif self._jog_dir is not None:
-            out.append(("jog_release",))
+        if self._jog_dir is not None and d != self._jog_dir:
+            out.append(("jog_release",))  # centred or a new direction: stop at once
             self._jog_dir = None
+        if vx or vy:
+            if self._jog_dir is None:  # a start waits until the direction has been held JOG_SETTLE_S
+                if d != self._cand:
+                    self._cand, self._cand_t = d, now
+                if now - self._cand_t >= JOG_SETTLE_S - 1e-9:
+                    out.append(("jog", vx, vy))
+                    self._jog_dir, self._jog_t, self._cand = d, now, None
+            elif now - self._jog_t >= JOG_REPEAT_S:
+                out.append(("jog", vx, vy))
+                self._jog_t = now
+        else:
+            self._cand = None
         # ---- focus: right stick, vertical only
         fdir = 0 if abs(s.ry) <= FOCUS_DEAD else (1 if s.ry > 0 else -1)
         if fdir:
@@ -163,17 +180,20 @@ class GamepadBridge(QObject):  # type: ignore[misc]
         if (s is not None) != self.connected:
             self.connected = s is not None
             self.model.add_log("info", "Gamepad connected: left stick/D-pad jog the stage, right stick focuses, "
-                                       "A capture, B light, X snap, Y fine/coarse, Back stop"
+                                       "A capture, Start quick save, B light, X snap, Y fine/coarse, Back stop"
                                if self.connected else "Gamepad disconnected")
         if s is None or not self._accepting():
             if self._live:
                 self._apply(self.mapper.reset(s))
+                self.cap.joy.mirror(0.0, 0.0)
             self._live = False
             return
         if not self._live:  # input resumes: buttons already down do not fire
             self.mapper.reset(s)
             self._live = True
         self._apply(self.mapper.step(s, time.monotonic()))
+        if self.cap.joy.isEnabled():
+            self.cap.joy.mirror(*self.mapper.shown)  # the on-screen knob tilts with the stick
 
     # ------------------------------------------------------------------ actions -> the Capture page
     def _apply(self, actions: list[tuple]) -> None:
@@ -194,11 +214,14 @@ class GamepadBridge(QObject):  # type: ignore[misc]
                 if cap.focus.isEnabled():
                     cap.focus._stepped(1 if kind == "focus_up" else -1, 1, False)
             elif kind == "capture":
-                cap.btn_capture.click()  # click() does nothing on a disabled (busy) button
+                cap.btn_capture.animateClick()  # shows the press; does nothing on a disabled (busy) button
             elif kind == "light":
-                cap.btn_power.click()
+                cap.btn_power.animateClick()
             elif kind == "snap":
-                cap.btn_snap.click()
+                cap.btn_snap.animateClick()
+            elif kind == "quick_save":
+                if cap.btn_capture.isEnabled():  # not while a workflow owns the instrument
+                    self.win.pages["save"].quick_save()
             elif kind == "focus_mode":
                 if cap.focus.isEnabled():
                     mode = "coarse" if cap.focus.mode == "fine" else "fine"

@@ -52,29 +52,47 @@ class SavePreset(str, Enum):
     def options(self, base: SaveOptions | None = None) -> SaveOptions:
         if self is SavePreset.DEFAULT:
             return SaveOptions(ImageFormat.TIFF, 8, True, True)
-        if self is SavePreset.QUANTITATIVE_MONO:
-            return SaveOptions(ImageFormat.TIFF, 16, False, False)
+        if self is SavePreset.QUANTITATIVE_MONO:  # the camera's own counts, unscaled (12-bit mono camera)
+            return SaveOptions(ImageFormat.TIFF, 12, False, False)
         return base or SaveOptions()
 
 
-def validate(opts: SaveOptions, *, source_is_color: bool) -> list[str]:
+def validate(opts: SaveOptions, *, source_is_color: bool, source_bits: int | None = None) -> list[str]:
+    """`source_bits`: the raw capture's native bit depth (12 for the mono camera), when known."""
     errs = []
-    if opts.bit_depth not in (8, 16):
-        errs.append("bit depth must be 8 or 16")
-    if opts.bit_depth == 16:
+    if opts.bit_depth not in (8, 12, 16):
+        errs.append("bit depth must be 8, 12 or 16")
+    if opts.bit_depth in (12, 16):
+        b = opts.bit_depth
         if opts.image_format is not ImageFormat.TIFF:
-            errs.append("16-bit is only available for TIFF")
+            errs.append(f"{b}-bit is only available for TIFF")
         if opts.as_color or source_is_color:
-            errs.append("16-bit requires monochrome (colour images are 8-bit)")
+            errs.append(f"{b}-bit requires monochrome (colour images are 8-bit)")
         if opts.include_annotations:
-            errs.append("annotations cannot be burnt into 16-bit raw data; save them as colour 8-bit")
+            errs.append(f"annotations cannot be burnt into {b}-bit raw data; save them as colour 8-bit")
+    if opts.bit_depth == 12 and source_bits is not None and source_bits > 12:
+        errs.append(f"12-bit keeps the camera's counts unscaled; this capture is {source_bits}-bit (save 16-bit)")
     if source_is_color and not opts.as_color:
         errs.append("a colour-camera image cannot be saved as monochrome")
     return errs
 
 
 def allowed_bit_depths(fmt: ImageFormat, as_color: bool) -> tuple[int, ...]:
-    return (8, 16) if fmt is ImageFormat.TIFF and not as_color else (8,)
+    return (8, 12, 16) if fmt is ImageFormat.TIFF and not as_color else (8,)
+
+
+def mono_pixels(raw: CapturedImage, bit_depth: int) -> tuple[np.ndarray, int]:
+    """The monochrome pixels for a save at `bit_depth`, and the factor applied to the camera's counts.
+
+    12-bit: the camera's counts unchanged (0-4095 in a 16-bit TIFF container, the quantitative choice).
+    16-bit: the counts scaled by 2**(16 - native bits) to fill 0-65535 (exact, reversible; opens at normal brightness
+    in ordinary viewers). 8-bit: auto-ranged for display."""
+    if bit_depth == 8:
+        return _mono8(raw.data), 0
+    if bit_depth == 16 and 0 < raw.bit_depth < 16:
+        shift = 16 - raw.bit_depth
+        return (raw.data.astype(np.uint16) << shift).astype(np.uint16), 1 << shift
+    return raw.data, 1
 
 
 _SAFE = re.compile(r"[^A-Za-z0-9._ -]+")
@@ -101,11 +119,13 @@ def save(folder: Path, base: str, *, rgb8: np.ndarray | None, raw: CapturedImage
          opts: SaveOptions, channels: dict[str, CapturedImage] | None = None,
          extra_metadata: dict | None = None) -> SavedFiles:
     """`rgb8` is the displayed (composited/annotated) 8-bit RGB image; `raw` the primary capture."""
-    errs = validate(opts, source_is_color=raw.is_color if raw is not None else True)
+    errs = validate(opts, source_is_color=raw.is_color if raw is not None else True,
+                    source_bits=raw.bit_depth if raw is not None else None)
     if errs:
         raise SaveError("; ".join(errs))
     folder.mkdir(parents=True, exist_ok=True)
     path = next_free_path(folder, base, opts.image_format.suffix)
+    scale = 0
     if opts.as_color:
         if rgb8 is None:
             raise SaveError("nothing to save in colour")
@@ -113,9 +133,12 @@ def save(folder: Path, base: str, *, rgb8: np.ndarray | None, raw: CapturedImage
     else:
         if raw is None:
             raise SaveError("monochrome save needs a raw capture")
-        data = raw.data if opts.bit_depth == 16 else _mono8(raw.data)
+        data, scale = mono_pixels(raw, opts.bit_depth)
     meta = {"openevos_save": {"format": opts.image_format.value, "bit_depth": opts.bit_depth,
-                              "color": opts.as_color, "annotations": opts.include_annotations and opts.as_color},
+                              "color": opts.as_color, "annotations": opts.include_annotations and opts.as_color,
+                              # pixel = camera count x counts_scale (12-bit: 1; 16-bit: 16 for the 12-bit camera;
+                              # 0 = auto-ranged 8-bit display data, not counts)
+                              **({} if opts.as_color else {"counts_scale": scale})},
             "primary": raw.metadata() if raw else None,
             "channels": {k: v.metadata() for k, v in (channels or {}).items()},
             **(extra_metadata or {})}
