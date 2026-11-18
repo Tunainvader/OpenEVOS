@@ -77,6 +77,10 @@ class InstrumentInterlocks:
 
     def check(self, command: Command, world: World) -> list[str]:
         if isinstance(command, SetTurretPosition) and command.device_id == self.objective_turret_id:
+            turret = world.get(self.objective_turret_id)
+            here = turret.observed_position if turret is not None else None
+            if here is not None and here.values and int(here.values[0]) == command.position:
+                return []  # already there: the turret does not turn
             return self._focus_clear(world)
         if isinstance(command, SelectCarriagePosition) and command.device_id == self.illumination_id:
             return self._epi_leds_off(world.get(command.device_id))
@@ -120,6 +124,35 @@ class InstrumentInterlocks:
             return [(f"{channel} sits in carriage slot {slot} but slot {carriage} is in the light path; "
                      "select that cube first")]
         return []
+
+
+@dataclass(frozen=True)
+class FocusSafeHeight:
+    """The objective's safe height (audit APP-03): an upward focus move past it is refused unless the command is
+    confirmed by the operator (`confirmed=True`, recorded with the command). Moving down is always allowed.
+    `limit_for()` returns (objective name, safe height in the focus unit) for the objective in the light path, or
+    None when no height is set."""
+
+    focus_id: str
+    limit_for: object  # Callable[[], tuple[str, float] | None]
+    tolerance: float = 0.5
+    name: str = "focus_safe_height"
+
+    def check(self, command: Command, world: World) -> list[str]:
+        if not isinstance(command, MoveFocusAbsolute) or command.device_id != self.focus_id or command.confirmed:
+            return []
+        lim = self.limit_for()
+        if lim is None:
+            return []
+        objective, safe = lim
+        if command.z <= safe + self.tolerance:
+            return []
+        snap = world.get(self.focus_id)
+        pos = snap.observed_position if snap is not None else None
+        if pos is not None and "z" in pos.axes and command.z <= pos.get("z") + self.tolerance:
+            return []  # not upward: never block a move back toward safety
+        return [(f"Z {command.z:,.1f} µm is above the {objective} safe height ({safe:,.1f} µm), where the objective "
+                 "nears the vessel; confirm the move to go higher")]
 
 
 DEFAULT_INTERLOCKS: tuple[Interlock, ...] = (HomedBeforeMotion(), NotLiveForSnap())

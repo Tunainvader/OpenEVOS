@@ -52,6 +52,7 @@ def test_gain_command_parses_and_is_verified(sim):
 
 def test_non_motion_readback_verification_fails_closed(sim):
     sim.rig.turret.verify_result = lambda cmd: (False, "index sensor disagrees")
+    sim.controller.run(sim.controller.move_focus(1000.0))  # below the turret-safe height (APP-01 interlock)
     t = sim.core.router.submit(SetTurretPosition(device_id="sim-turret", origin=CommandOrigin.TEST, position=3))
     assert t.wait(5) is not CommandStatus.SUCCEEDED
     assert "index sensor" in (t.record.message or "")
@@ -149,6 +150,41 @@ def test_scan_runner_small_grid(sim, tmp_path):
     assert len(res.images) == 3 and set(res.mosaics) == {"cube1", "cube2"}
     assert (tmp_path / "unit" / "manifest.json").exists()
     assert len(list((tmp_path / "unit").glob("tile*.tif"))) == 6
+
+
+def test_scan_streams_tiles_to_disk_and_survives_a_crash(sim, tmp_path, monkeypatch):
+    """Audit APP-05: each tile is on disk as soon as it is captured; memory keeps a 1/4 copy; a failure mid-scan
+    leaves every finished tile and the append-only index."""
+    import json
+
+    from openevos.acquisition import scan_runner as sr
+
+    r = ScanRoutine(name="crash", vessel_id=sim.vessel.vessel_id, objective_slot=2, channels=["cube1"],
+                    regions=["D7"], coverage=Coverage.GRID, grid_rows=1, grid_cols=3, auto_fine=False,
+                    output_folder=str(tmp_path))
+    runner = ScanRunner(sim.capture, sim.autofocus, sim.vessel)
+    real, calls = runner.visit, {"n": 0}
+
+    def visit(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise RuntimeError("power cut")
+        return real(*a, **k)
+
+    monkeypatch.setattr(runner, "visit", visit)
+    res = runner.run(plan_scan(r, sim.vessel, sim.profile, sim.stage_map))
+    out = tmp_path / "crash"
+    assert not res.completed and "power cut" in res.message
+    lines = (out / "tiles.jsonl").read_text("utf-8").splitlines()
+    assert len(lines) == 2 and all((out / json.loads(x)["files"]["cube1"]).exists() for x in lines)
+    img = res.images[0][1]["cube1"]
+    assert dict(img.extra)["in_memory_copy"].startswith(f"1/{sr.MEMORY_DOWNSAMPLE}")
+    import tifffile
+
+    on_disk = tifffile.imread(out / json.loads(lines[0])["files"]["cube1"])
+    assert on_disk.shape[0] == img.data.shape[0] * sr.MEMORY_DOWNSAMPLE or \
+        abs(on_disk.shape[0] / img.data.shape[0] - sr.MEMORY_DOWNSAMPLE) < 1
+    assert json.loads((out / "manifest.json").read_text("utf-8"))["completed"] is False
 
 
 def test_scan_runner_stop(sim):

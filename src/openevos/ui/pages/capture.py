@@ -82,6 +82,10 @@ from openevos.ui.widgets.segmented import SegmentedControl
 from openevos.ui.widgets.status import Badge
 from openevos.ui.widgets.vessel_map import VesselMap
 
+#: Capture focus nominal asks first when Z is this close to home, or this far from the vessel's current nominal (APP-21)
+NOMINAL_NEAR_HOME_UM = 200.0
+NOMINAL_JUMP_UM = 300.0
+
 
 def tool_button(text: str, ic: str, *, checkable: bool = False, tip: str = "") -> QToolButton:
     b = QToolButton()
@@ -141,15 +145,22 @@ class CapturePage(QWidget):
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(10)
         self.left = self._left()
-        # the Light & focus column scrolls on short windows instead of squashing the Z focus panel (1100 x 720)
-        self.right = QScrollArea()
-        self.right.setWidget(self._right())
-        self.right.setWidgetResizable(True)
-        self.right.setFrameShape(QFrame.NoFrame)
-        self.right.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # the Light & focus column scrolls on short windows instead of squashing the Z focus panel (1100 x 720); the
+        # Capture block stays pinned below it (audit APP-06)
+        self.right_scroll = QScrollArea()
+        self.right_scroll.setWidget(self._right())
+        self.right_scroll.setWidgetResizable(True)
+        self.right_scroll.setFrameShape(QFrame.NoFrame)
+        self.right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.right_scroll.viewport().setAutoFillBackground(False)
+        self.right = QWidget()
+        col = QVBoxLayout(self.right)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(8)
+        col.addWidget(self.right_scroll, 1)
+        col.addWidget(self._capture_block(), 0)
         self.right.setMinimumWidth(300)
         self.right.setMaximumWidth(330)
-        self.right.viewport().setAutoFillBackground(False)
         root.addWidget(self.left, 0)
         root.addWidget(self._center(), 1)
         root.addWidget(self.right, 0)
@@ -383,6 +394,12 @@ class CapturePage(QWidget):
         self._z_goal: float | None = None  # last requested focus target while a focus move is in flight
         self._z_submitting = False
         lay.addWidget(self.focus, 1)
+        return f
+
+    def _capture_block(self) -> QWidget:
+        """Capture + hot buttons, pinned below the scrolling Light & focus column so they never leave the screen
+        (audit APP-06: at 1280 x 800 they were below the fold)."""
+        f, lay = panel(margins=10, spacing=6)
         lay.addWidget(label("Capture", "section"))
         self.btn_capture = QPushButton("Capture")
         self.btn_capture.setObjectName("primary")
@@ -887,8 +904,18 @@ class CapturePage(QWidget):
     def _objective(self, slot: int) -> None:
         self.coalesce.request("turret", lambda: self.session.change_objective(slot))
 
-    def _move_z(self, z: float) -> None:
-        self.coalesce.request("focus", lambda: self.ctl.move_focus(z))
+    def _move_z(self, z: float, *, confirmed: bool = False) -> None:
+        self.coalesce.request("focus", lambda: self.ctl.move_focus(z, confirmed=confirmed))
+
+    def undo_focus_nominal(self) -> None:
+        last = getattr(self, "_last_nominal", None)
+        if not last or last[0] != self.session.vessel.vessel_id:
+            self.model.add_log("info", "Undo focus nominal: nothing to undo for this vessel")
+            return
+        self.session.set_focus_nominal(last[1])
+        self._last_nominal = None
+        self.model.add_log("info", f"focus nominal for {self.session.vessel.display_name} restored to {last[1]:.1f} µm")
+        self._refresh_state()
 
     def _focus_hold_end(self) -> None:
         """The operator let go of a held pad half or arrow key: drop the queued step and cancel the running Z move.
@@ -928,8 +955,25 @@ class CapturePage(QWidget):
             target = round(safe, 3)  # a held move ends exactly at the safe height
         elif not held:
             self._hold_at_limit = False
-        if not held and delta_um > 0 and safe is not None and base <= safe + 1e-6 < target:
-            self.model.add_log("warn", f"Z {fmt_um(target)} µm is above the {name} safe height ({fmt_um(safe)} µm)")
+        confirmed = False
+        if not held and delta_um > 0 and safe is not None and target > safe + 1e-6:
+            # the router refuses an upward move past the safe height unless the operator confirmed it (APP-03); ask once
+            # per objective and height, until Z is back below it
+            key = (name, safe)
+            if getattr(self, "_above_ok", None) != key:
+                from PySide6.QtWidgets import QMessageBox
+
+                if QMessageBox.question(self, "Above the safe height",
+                                        f"Z {fmt_um(target)} µm is above the {name} safe height ({fmt_um(safe)} µm), "
+                                        "where the objective nears the vessel.\n\nMove higher anyway?") \
+                        != QMessageBox.Yes:
+                    return
+                self._above_ok = key
+            confirmed = True
+            self.model.add_log("warn", f"Z {fmt_um(target)} µm is above the {name} safe height ({fmt_um(safe)} µm); "
+                                       "operator confirmed")
+        elif safe is None or target <= (safe or 0) + 1e-6:
+            self._above_ok = None
         lim = self.ctl.axis_limits(self.profile.focus_device, "z")
         if lim and not (lim[0] - 1e-6 <= target <= lim[1] + 1e-6):
             self.model.add_log("warn", f"Z step refused: {fmt_um(target)} µm is outside the focus range "
@@ -939,7 +983,7 @@ class CapturePage(QWidget):
         self.focus.pad.set_moving("up" if delta_um > 0 else "down")  # the press pose holds until the drive is idle
         self._z_submitting = True
         try:
-            self._move_z(target)
+            self._move_z(target, confirmed=confirmed)
         finally:
             self._z_submitting = False
         self._refresh_focus()
@@ -1208,9 +1252,23 @@ class CapturePage(QWidget):
         elif action is HotButtonAction.QUICK_SAVE:
             self.request_page.emit("quick_save")
         elif action is HotButtonAction.CAPTURE_FOCUS_NOMINAL:
+            # audit APP-21: near home, or far from the old value, ask first (one click right after homing or an
+            # objective change used to replace the vessel's nominal with Z = 0)
+            z_now, old = self.ctl.focus_z(), self.session.vessel.focus_nominal_um
+            if z_now is not None and (z_now < NOMINAL_NEAR_HOME_UM or abs(z_now - old) > NOMINAL_JUMP_UM):
+                from PySide6.QtWidgets import QMessageBox
+
+                if QMessageBox.question(self, "Capture focus nominal",
+                                        f"Replace the focus nominal for {self.session.vessel.display_name}?\n\n"
+                                        f"{old:,.1f} µm → {z_now:,.1f} µm"
+                                        + ("\n\nZ is at or near home: this is rarely the focus." if
+                                           z_now < NOMINAL_NEAR_HOME_UM else "")) != QMessageBox.Yes:
+                    return
             try:
                 z = self.session.capture_focus_nominal()
-                self.model.add_log("info", f"focus nominal for {self.session.vessel.display_name} set to {z:.1f} µm")
+                self._last_nominal = (self.session.vessel.vessel_id, old)  # for undo
+                self.model.add_log("info", f"focus nominal for {self.session.vessel.display_name} set to {z:.1f} µm "
+                                           f"(was {old:.1f} µm; Edit › Undo focus nominal restores it)")
                 self._refresh_state()
             except RuntimeError as exc:
                 self.model.add_log("error", str(exc))

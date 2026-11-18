@@ -41,6 +41,8 @@ class Session:
     telemetry: list = field(default_factory=list)
     physical_stage: bool = False
     physical_audit: list = field(default_factory=list)  # lifecycle of every motor.* command
+    #: the router's turret-vs-focus interlock height, when the turret does not retract Z itself (audit APP-01)
+    turret_safe_z_um: float | None = None
 
     def __post_init__(self) -> None:
         self.nominal_map = self.stage_map
@@ -103,6 +105,8 @@ class Session:
         same sample point stays centred and in focus (what the original software does after calibration)."""
         ctl = self.controller
         prev = ctl.objective_slot()
+        # a turret that does not lower Z itself (the simulator): the controller lowers Z for the turn and puts it back
+        # (audit APP-01); the real turret service retracts Z itself (ADR-0053)
         ticket = ctl.set_objective(slot)
         cal = self.calibration
         dz = (cal.parfocal_um.get(slot, 0.0) - cal.parfocal_um.get(prev, 0.0)) if prev in cal.parfocal_um and \
@@ -144,6 +148,10 @@ class Session:
         z = self.controller.focus_z()
         if z is None:
             raise RuntimeError("focus position unknown")
+        return self.set_focus_nominal(z)
+
+    def set_focus_nominal(self, z: float) -> float:
+        """The vessel's focus nominal (also the undo of Capture focus nominal, audit APP-21)."""
         self.vessel = self.vessels.with_focus_nominal(self.vessel.vessel_id, z)
         if self.rig is not None:
             self.rig.world.vessel = self.vessel  # sample unchanged; nominal only
@@ -221,9 +229,49 @@ def build_sim_session(clock: Clock, *, fast: bool = False, settings: AppSettings
     session = Session(core, profile, settings, vessels, vessel, rig.stage_map, ctl, cap, af, rig, settings_path,
                       calibration=CalibrationStore.load(calibration_path), telemetry=services,
                       physical_stage=physical, physical_audit=audit)
+    _install_interlocks(session)
     for svc in services:
         svc.start()
     return session
+
+
+#: turrets that lower Z themselves before turning (the real turret service, ADR-0053, with its centred-stage check)
+SELF_RETRACTING_TURRETS = frozenset({"motor.objective_turret"})
+
+
+def _install_interlocks(session: Session) -> None:
+    """Router-level instrument rules for the app (audit APP-01/APP-03), wired to what each backend really does:
+
+    * turret vs focus height: for a turret that does not lower Z itself (the simulator). `Session.change_objective`
+      lowers Z through the router first, so normal use meets the rule. The real turret service enforces it inside its
+      own sequence (retract Z to 0, centred stage, ADR-0053).
+    * focus safe height per objective (Settings › focus_limit_um): an upward move past it needs an operator-confirmed
+      command; autofocus never searches above it.
+    * light vs cube in the path: not a router pre-check here. Both light backends move the cube carriage and confirm
+      the cube inside the same command (the real board with its own cube sensor, ADR-0051), so a pre-check would
+      refuse every valid cube selection.
+    """
+    from openevos.core.command_language import DEFAULT_LIMITS, POSITION_TOLERANCE_UM
+    from openevos.safety.interlocks import FocusSafeHeight, InstrumentInterlocks
+
+    p, ctl = session.profile, session.controller
+    if p.turret_device and p.focus_device and p.turret_device not in SELF_RETRACTING_TURRETS:
+        session.turret_safe_z_um = ctl.turret_safe_z_um = DEFAULT_LIMITS["turret_safe_z_um"]
+        session.core.safety.add_interlock(InstrumentInterlocks(
+            focus_id=p.focus_device, objective_turret_id=p.turret_device,
+            turret_safe_z=session.turret_safe_z_um, position_tolerance=POSITION_TOLERANCE_UM))
+
+    def safe_height() -> tuple[str, float] | None:
+        slot = ctl.objective_slot()
+        v = session.settings.basic.focus_limit_um.get(str(slot)) if slot else None
+        if v is None:
+            return None
+        obj = p.objective(slot)
+        return (obj.short if obj else f"position {slot}"), float(v)
+
+    if p.focus_device:
+        session.core.safety.add_interlock(FocusSafeHeight(focus_id=p.focus_device, limit_for=safe_height))
+        session.autofocus.z_cap = lambda: (lim[1] if (lim := safe_height()) else None)
 
 
 def real_mono_camera_present() -> bool:

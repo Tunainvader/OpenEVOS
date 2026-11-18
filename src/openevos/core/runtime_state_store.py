@@ -71,8 +71,11 @@ class RuntimeStateStore:
                 connection: Connection | None = None, health: Health | None = None,
                 activity: Activity | None = None, position: Position | None | object = _UNSET,
                 firmware_mode: FirmwareMode | None = None,
-                attributes: dict | None = None, reason: str | None = None) -> bool:
-        """Apply a backend observation. Returns False (and changes nothing) if it is stale."""
+                attributes: dict | None = None, reason: str | None = None,
+                recovery_required: bool | None = None) -> bool:
+        """Apply a backend observation. Returns False (and changes nothing) if it is stale. A backend may *raise*
+        recovery_required (e.g. after its own last-resort error handler, audit APP-04); only the router's
+        recover_device clears it."""
         with self._lock:
             cur = self._require(device_id)
             key = (device_id, source)
@@ -89,6 +92,8 @@ class RuntimeStateStore:
                 update["activity"] = activity
             if firmware_mode is not None:
                 update["firmware_mode"] = firmware_mode
+            if recovery_required:
+                update["recovery_required"] = True
             if position is not _UNSET:
                 update["observed_position"] = position
             if attributes is not None:  # merged: a backend may report only the facts that changed

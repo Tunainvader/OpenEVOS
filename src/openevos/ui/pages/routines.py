@@ -174,6 +174,7 @@ class _RoutineBase(QWidget):
         self.stored.setMaximumHeight(110)
         lay.addWidget(self.stored)
         b_save, b_load, b_del = QPushButton("Save routine"), QPushButton("Recall / Edit"), QPushButton("Delete")
+        self.btn_save = b_save  # disabled while the routine is not valid (audit APP-12)
         lay.addWidget(hbox(b_save, b_load, b_del, None))
         b_save.clicked.connect(self._save_routine)
         b_load.clicked.connect(self._load_routine)
@@ -189,7 +190,7 @@ class _RoutineBase(QWidget):
         try:
             r = self.routine()
         except Exception as exc:  # noqa: BLE001
-            self.model.add_log("error", f"routine invalid: {exc}")
+            self.model.add_log("warn", f"routine not saved: {explain(exc)}")  # plain words, no validator text
             return
         safe = "".join(c if c.isalnum() or c in "-_ " else "_" for c in r.name)
         (routines_dir(self.kind) / f"{safe}.json").write_text(r.model_dump_json(indent=2), "utf-8")
@@ -700,12 +701,18 @@ class TimelapsePage(_RoutineBase):
             self.lbl_warn.setText(explain(exc))
             if hasattr(self, "btn_run"):
                 self.btn_run.setEnabled(False)
+            if hasattr(self, "btn_save"):
+                self.btn_save.setEnabled(False)
+                self.btn_save.setToolTip(explain(exc))
             return
         self.lbl_est.setText(f"{len(r.beacons)} beacon(s) · {e.timepoints} time point(s) · {e.images} images · "
                              f"cycle ≈ {_fmt_time(e.cycle_s)} · total ≈ {_fmt_time(e.total_s)}")
         show_warnings(self.lbl_warn, e.warnings)
         if hasattr(self, "btn_run"):
             self.btn_run.setEnabled(not self.model.tasks.busy)
+        if hasattr(self, "btn_save"):
+            self.btn_save.setEnabled(True)
+            self.btn_save.setToolTip("")
 
     def _run(self) -> None:
         try:

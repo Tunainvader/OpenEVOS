@@ -300,7 +300,7 @@ class FocusTape(QWidget):
                     w = 16 if is_major else 11 if mid else 7
                     p.setPen(QPen(QColor(t.t2 if is_major else t.bdd), 2 if is_major else 1))
                     p.drawLine(QPointF(r.left(), y), QPointF(r.left() + w, y))
-                    if is_major:
+                    if is_major and abs(y - cy) > 9:  # the pointer never strikes through a label (audit APP-09)
                         p.setPen(QColor(t.t2))
                         lab = "0 home" if v == 0 else f"{int(v):,}"
                         p.drawText(QRectF(r.left() + w + 4, y - 8, r.width() - w - 14, 16),

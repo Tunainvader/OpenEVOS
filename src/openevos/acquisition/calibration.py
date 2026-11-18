@@ -332,6 +332,8 @@ def find_hot_pixels(ctl: InstrumentController, role: CameraRole, *, frames: int 
         ctl.run(ctl.set_light(light.channel, light.intensity_percent, False))
     ctl.apply_camera(role, exposure_ms, 1.0)
     stack = np.stack([ctl.acquire(role, 1)[0].data.astype(np.float32) for _ in range(frames)])
+    if stack.ndim == 4:  # colour frames (H x W x 3): a hot photosite shows in at least one channel (audit APP-08)
+        stack = stack.max(axis=3)
     med = np.median(stack, axis=0)
     base = ndimage.median_filter(med, size=5)
     diff = med - base
@@ -346,7 +348,12 @@ def find_hot_pixels(ctl: InstrumentController, role: CameraRole, *, frames: int 
 
 
 def correct_hot_pixels(data: np.ndarray, defects: list[tuple[int, int]]) -> np.ndarray:
-    """Replace defect pixels with the median of their 3x3 neighbours (excluding other defects)."""
+    """Replace defect pixels with the median of their 3x3 neighbours (excluding other defects). Colour frames
+    (H x W x 3) are corrected channel by channel."""
+    if data.ndim == 3 and defects:
+        out = np.stack([correct_hot_pixels(np.ascontiguousarray(data[..., c]), defects) for c in range(data.shape[2])],
+                       axis=2)
+        return out.astype(data.dtype, copy=False)
     if not defects or data.ndim != 2:
         return data
     out = data.copy()

@@ -86,6 +86,9 @@ class SessionModel(QObject):
             self.active_commands[e.command_id] = e.device_id
 
     def _on_fault(self, e: HardwareFaultEvent) -> None:
+        if getattr(e.severity, "value", e.severity) == "warning":  # a refusal before anything moved (APP-07)
+            self.add_log("warn", f"{e.device_id}: {e.message}")
+            return
         self.add_log("error", f"FAULT {e.device_id}: {e.message}")
         self.fault.emit(f"{e.device_id}: {e.message}")
 

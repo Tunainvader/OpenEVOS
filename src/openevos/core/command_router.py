@@ -395,7 +395,10 @@ class CommandRouter:
             self._stale(entry, "fail")
             return
         if self._transition(entry, S.FAILED, message, from_backend=True):
-            self.bus.publish(HardwareFaultEvent(entry.command.device_id, message, Severity.ERROR, error_code,
+            # a backend's precondition refusal (error code '..._precondition': nothing was written or moved) is a
+            # warning, not a hardware fault (audit APP-07)
+            sev = Severity.WARNING if (error_code or "").lower().endswith("precondition") else Severity.ERROR
+            self.bus.publish(HardwareFaultEvent(entry.command.device_id, message, sev, error_code,
                                                 entry.command.command_id))
 
     def _on_timeout(self, entry: _Entry) -> None:

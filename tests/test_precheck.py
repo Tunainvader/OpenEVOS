@@ -50,7 +50,8 @@ def test_motor_chain_devices_monitor_stage_box_and_safe_heights():
     try:
         k = _by_key(pc.run_precheck(s))
         for did in ("motor.stage", "motor.focus", "motor.objective_turret", "motor.cube_carriage"):
-            assert k[f"device.{did}"].status == "ok", k[f"device.{did}"]
+            # the drive emulator is simulated (audit APP-02): info, never ok-as-physical
+            assert k[f"device.{did}"].status == "info" and "simulated" in k[f"device.{did}"].detail
         assert k["monitor"].status == "ok"
         assert "stage_limits" in k
         snap = s.core.store.get("motor.stage")

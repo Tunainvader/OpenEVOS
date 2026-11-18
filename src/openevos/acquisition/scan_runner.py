@@ -1,6 +1,7 @@
 """Runs a ScanPlan: verified stage move per tile, optional Find Sample / Auto Fine, one capture per
 channel, then a downsampled mosaic per channel for review. Pause/stop are honoured between steps
-(never mid-exposure). Optional on-disk output: one TIFF per tile+channel and a manifest.json.
+(never mid-exposure). Optional on-disk output, written per tile as the scan runs: one TIFF per tile+channel,
+tiles.jsonl (append-only), then manifest.json and the mosaics at the end.
 """
 
 from __future__ import annotations
@@ -135,6 +136,10 @@ class ScanRunner:
         r = plan.routine
         res = ScanResult(plan)
         n = len(plan.tiles)
+        # with an output folder, every tile goes to disk as soon as it is captured (append-only tiles.jsonl), and
+        # memory keeps a 1/MEMORY_DOWNSAMPLE copy for the mosaic: a crash keeps every finished tile, and memory no
+        # longer grows with full tiles (audit APP-05)
+        writer = TileWriter(Path(r.output_folder), res) if r.output_folder else None
         try:
             self.capture.ctl.run(self.capture.ctl.set_objective(r.objective_slot))
             for i, t in enumerate(plan.tiles):
@@ -143,6 +148,9 @@ class ScanRunner:
                 imgs = self.visit(t.stage_x, t.stage_y, r.channels, r.camera,
                                   find_sample=r.find_sample and i == 0, auto_fine=r.auto_fine,
                                   log=res.focus_log, index=i)
+                if writer is not None:
+                    writer.tile(t, imgs)
+                    imgs = {slot: downsampled(img, MEMORY_DOWNSAMPLE) for slot, img in imgs.items()}
                 res.images.append((t, imgs))
             res.completed = True
             res.message = f"{n} tiles captured"
@@ -155,31 +163,62 @@ class ScanRunner:
             if m is not None:
                 res.mosaics[slot] = m
                 res.mosaic_scale_um_per_px = scale
-        if r.output_folder and res.images:
-            res.output_folder = str(write_scan(Path(r.output_folder), res))
+        if writer is not None and res.images:
+            res.output_folder = str(writer.finish())
         if progress:
             progress(n, n, res.message)
         return res
 
 
-def write_scan(folder: Path, res: ScanResult) -> Path:
-    import tifffile
+#: in-memory copies of tiles already written to disk keep 1 pixel in N per side (for the mosaic and the review)
+MEMORY_DOWNSAMPLE = 4
 
-    r = res.plan.routine
-    out = folder / f"{r.name}"
-    out.mkdir(parents=True, exist_ok=True)
-    manifest = {"routine": json.loads(r.model_dump_json()), "completed": res.completed, "message": res.message,
-                "synthetic": any(i.synthetic for _, d in res.images for i in d.values()),
-                "warnings": list(res.plan.warnings), "tiles": []}
-    for t, d in res.images:
+
+def downsampled(img: CapturedImage, n: int) -> CapturedImage:
+    """A smaller copy of a tile for the mosaic; its pixel size follows, and its metadata says so."""
+    import dataclasses
+
+    data = np.ascontiguousarray(img.data[::n, ::n])
+    data.flags.writeable = False
+    return dataclasses.replace(img, data=data, pixel_size_um=img.pixel_size_um * n if img.pixel_size_um else None,
+                               extra=(*img.extra, ("in_memory_copy", f"1/{n} per side; full tile on disk")))
+
+
+class TileWriter:
+    """Writes each tile's TIFFs as soon as it is captured and appends one line per tile to tiles.jsonl, so a crash
+    leaves every finished tile and a valid partial manifest on disk. `finish()` writes manifest.json and mosaics."""
+
+    def __init__(self, folder: Path, res: ScanResult):
+        self.res = res
+        self.out = folder / res.plan.routine.name
+        self.out.mkdir(parents=True, exist_ok=True)
+        self.index = self.out / "tiles.jsonl"
+        self.entries: list[dict] = []
+        self.synthetic = False
+        (self.out / "routine.json").write_text(res.plan.routine.model_dump_json(indent=2), "utf-8")
+
+    def tile(self, t: Tile, imgs: dict[str, CapturedImage]) -> None:
+        import tifffile
+
         entry = {"tile": json.loads(t.model_dump_json()), "files": {}}
-        for slot, img in d.items():
+        for slot, img in imgs.items():
             name = f"tile{t.index:04d}_{t.region_id.replace(' ', '')}_{slot}.tif"
-            tifffile.imwrite(out / name, np.asarray(img.data), metadata=None,
+            tifffile.imwrite(self.out / name, np.asarray(img.data), metadata=None,
                              description=json.dumps(img.metadata()))
             entry["files"][slot] = name
-        manifest["tiles"].append(entry)
-    for slot, m in res.mosaics.items():
-        tifffile.imwrite(out / f"mosaic_{slot}.tif", m)
-    (out / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str), "utf-8")
-    return out
+            self.synthetic = self.synthetic or img.synthetic
+        with open(self.index, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, default=str) + "\n")
+        self.entries.append(entry)
+
+    def finish(self) -> Path:
+        import tifffile
+
+        res = self.res
+        for slot, m in res.mosaics.items():
+            tifffile.imwrite(self.out / f"mosaic_{slot}.tif", m)
+        manifest = {"routine": json.loads(res.plan.routine.model_dump_json()), "completed": res.completed,
+                    "message": res.message, "synthetic": self.synthetic, "warnings": list(res.plan.warnings),
+                    "tiles": self.entries}
+        (self.out / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str), "utf-8")
+        return self.out

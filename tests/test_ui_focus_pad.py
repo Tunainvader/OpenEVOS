@@ -192,7 +192,8 @@ def test_pad_drives_the_real_z_motor_frames_with_motor_control(app, tmp_path):
         assert s.profile.focus_device == "motor.focus"
         chain = s.telemetry[0].simulated_chain
         assert wait_for(app, lambda: cap.focus.state in ("ready", "simulated") and cap.ctl.focus_z() is not None)
-        assert cap.focus.state == "ready" and "Homed" in cap.focus.readout.toolTip()  # the drive, not the simulator
+        # the drive emulator is labelled simulated (audit APP-02), while the frames below are the real drive's frames
+        assert cap.focus.state == "simulated" and "Simulated drive" in cap.focus.readout.toolTip()
         z0 = cap.ctl.focus_z()
         chain.writes.clear()
         cap.focus.set_mode("coarse")
@@ -261,7 +262,11 @@ def test_hold_release_drops_the_queued_step_and_cancels_the_running_move(app, wi
     cap.coalesce._inflight.pop("focus", None)
 
 
-def test_objective_safe_height_warns_and_stops_a_hold(app, window):
+def test_objective_safe_height_warns_and_stops_a_hold(app, window, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a: asked.append(a[2]) or QMessageBox.Yes)
     cap = window.pages["capture"]
     f = cap.focus
     assert _idle(app, cap)
@@ -303,6 +308,22 @@ def test_objective_safe_height_warns_and_stops_a_hold(app, window):
     finally:
         cap._clear_focus_limit()
     assert str(slot) not in cap.settings.basic.focus_limit_um and f.tape.limit is None
+
+
+@pytest.mark.parametrize("size", [(1280, 800), (1366, 768)])
+def test_capture_button_is_visible_without_scrolling(app, window, size):
+    """Audit APP-06: the Capture block is pinned below the scrolling Light & focus column."""
+    from PySide6.QtCore import QPoint
+
+    window.resize(*size)
+    pump(app, 0.4)
+    cap = window.pages["capture"]
+    for b in (cap.btn_capture, *[h for h in cap.hot if h.isVisible()]):
+        top = b.mapTo(window, QPoint(0, 0))
+        assert b.isVisible() and not b.visibleRegion().isEmpty()
+        assert top.y() + b.height() <= window.height(), (b.text(), top.y(), window.height())
+    window.resize(1600, 960)
+    pump(app, 0.2)
 
 
 @pytest.mark.parametrize("name", ["dark", "light"])

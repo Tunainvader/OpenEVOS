@@ -50,6 +50,8 @@ class Autofocus:
         self.metric = metric
         self.min_prominence = min_prominence
         self.cancel_event = threading.Event()
+        #: the objective's safe height (µm) or None; a search never asks for Z above it (audit APP-03)
+        self.z_cap: Callable[[], float | None] = lambda: None
 
     def sweep(self, role: CameraRole, center: float, span: float, steps: int,
               progress: Callable[[int, int, str], None] | None = None) -> AutofocusResult:
@@ -62,6 +64,11 @@ class Autofocus:
         lo, hi = center - span / 2, center + span / 2
         if lim:
             lo, hi = max(lo, lim[0]), min(hi, lim[1])
+        cap = self.z_cap()
+        if cap is not None:  # never search above the objective's safe height (audit APP-03)
+            hi = min(hi, cap)
+            lo = min(lo, hi)
+            lim = (lim[0] if lim else lo, min(lim[1], cap) if lim else cap)
         zs = [float(z) for z in np.linspace(lo, hi, steps)]
         scores: list[float] = []
         self.cancel_event.clear()

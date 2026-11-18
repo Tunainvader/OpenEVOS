@@ -251,6 +251,16 @@ class RealLedIllumination:
             fn, done = job
             try:
                 fn()
+            except Exception as exc:  # noqa: BLE001 - last resort (audit APP-04): keep the worker alive
+                # a job that raised outside its own guards used to end this thread, and later light commands were never
+                # served. Lights off (confirmed where possible), the command in flight fails, the worker carries on.
+                msg = f"LED board worker error: {exc!r}"
+                with contextlib.suppress(Exception):
+                    msg = self._fail_safe(msg)
+                p, self._pending = self._pending, None
+                if p is not None:
+                    with contextlib.suppress(Exception):
+                        p[1].fail(msg, "INTERNAL")
             finally:
                 if done is not None:
                     done.set()

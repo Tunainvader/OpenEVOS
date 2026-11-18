@@ -118,12 +118,24 @@ def test_turret_change_retracts_z_then_turns_the_decreasing_way():
 
 
 def test_turret_refused_unless_the_stage_is_centred():
-    chain = SimulatedDriveChain(allow_motion=True)  # stage at its homed corner 0, 0 (the Gate 19 run 1 collision)
+    # stage at its homed corner 0, 0 (the Gate 19 run 1 collision), calibrated limits loaded: "centre the stage"
+    chain = SimulatedDriveChain({("X", "LPOSMAX"): 266000, ("Y", "LPOSMAX"): 173000}, allow_motion=True)
     svc = _service(chain)
     try:
         ctx = _run(svc, "motor.objective_turret", SetTurretPosition(device_id="motor.objective_turret", origin="test",
                                                                     position=2))
         assert ctx.status == "failed" and "centre the stage" in ctx.message
+        assert _writes(chain, tp.O_ID) == [] and _writes(chain, tp.Z_ID) == []
+    finally:
+        svc.stop()
+    # on the power-up limits the stage cannot reach the centre at all: the refusal names the cause (audit APP-07)
+    chain = SimulatedDriveChain(allow_motion=True)
+    svc = _service(chain)
+    try:
+        ctx = _run(svc, "motor.objective_turret", SetTurretPosition(device_id="motor.objective_turret", origin="test",
+                                                                    position=2))
+        assert ctx.status == "failed" and "limits are not loaded" in ctx.message and "Gate 7" in ctx.message
+        assert ctx.code == "turret_precondition"
         assert _writes(chain, tp.O_ID) == [] and _writes(chain, tp.Z_ID) == []
     finally:
         svc.stop()

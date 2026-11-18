@@ -22,6 +22,7 @@ and Y never move together: a target that changes both runs as two legs, X then Y
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 import json
 import queue
@@ -305,9 +306,19 @@ TURRET_OBJECTIVES = {1: "4X", 2: "10X", 3: "20X", 4: "40X", 5: "60X"}
 
 
 class TelemetryBackend:
-    """A PHYSICAL device fed by the TelemetryService. Only motor.stage, with motion enabled, takes commands."""
+    """A PHYSICAL device fed by the TelemetryService. Only motor.stage, with motion enabled, takes commands. On the
+    drive emulator (`--motor-telemetry sim`) it is SIMULATED, with no hardware evidence (audit APP-02)."""
 
-    backend_kind = BackendKind.PHYSICAL
+    @property
+    def backend_kind(self) -> BackendKind:
+        return BackendKind.SIMULATED if self._service.emulated else BackendKind.PHYSICAL
+
+    def capabilities(self) -> DeviceCapabilities:
+        caps = self._capabilities()
+        if not self._service.emulated:
+            return caps
+        return caps.model_copy(update={"backend_kind": BackendKind.SIMULATED, "source": CapabilitySource.SIMULATED,
+                                       "evidence_ids": (), "note": f"drive emulator (no hardware): {caps.note or ''}"})
 
     def __init__(self, spec: DeviceSpec, port_label: str, service: TelemetryService):
         self.spec = spec
@@ -324,7 +335,7 @@ class TelemetryBackend:
         s = self._service
         return s.motion and (self.spec.device_id == "motor.stage" or (self.spec.device_id in ZO_DEVICES and s.zo_control))
 
-    def capabilities(self) -> DeviceCapabilities:
+    def _capabilities(self) -> DeviceCapabilities:
         if not self.controllable:
             return DeviceCapabilities(device_id=self.device_id, backend_kind=BackendKind.PHYSICAL,
                                       source=CapabilitySource.CANDIDATE, supported_commands=frozenset(),
@@ -405,7 +416,10 @@ class TelemetryBackend:
         return True, ""
 
     def recover(self) -> None:
-        pass
+        """Operator recovery after the service's last-resort handler (audit APP-04): clears the flag; the next poll
+        reports the drive's real state (the router clears recovery_required). Drift-monitor latches are separate
+        (power cycle or ADR-0057 release)."""
+        self.report(health=Health.NORMAL, reason="recovered by the operator")
 
     def report(self, **fields) -> None:
         if "position" in fields:
@@ -459,6 +473,8 @@ class TelemetryService:
         #: ADR-0056: the validated calibrated X/Y limits (counts). With motor control the service loads them (Gate 7's
         #: frames) once X and Y finish homing on their power-up limits, e.g. after a power cycle while the app runs
         self.calibrated_limits: dict[str, tuple[int, int]] | None = None
+        #: the drive emulator (`port="sim"`): devices report SIMULATED, never physical or verified (audit APP-02)
+        self.emulated = False
         self._limits_attempted = False  # once per homing; reset when X or Y re-initialises
         self.limits_reloads: list[dict] = []
 
@@ -604,10 +620,11 @@ class TelemetryService:
                     self.last_error = ""
                     self._power_up_pending, self._homed_since = "app start", None
                     self._report_all(connection=Connection.CONNECTED, reason=f"telemetry on {self.port_label} @ {baud}")
-                except (TransportError, _LinkError, ValueError, OSError) as exc:
+                except Exception as exc:  # noqa: BLE001 - any open failure: report, back off, retry (audit APP-04)
                     self.last_error = str(exc)
                     if port is not None:
-                        port.close()
+                        with contextlib.suppress(Exception):
+                            port.close()
                         port = None
                     self._report_all(connection=Connection.DISCONNECTED, health=Health.UNKNOWN,
                                      activity=Activity.UNKNOWN, reason=f"telemetry unavailable: {exc}")
@@ -636,6 +653,25 @@ class TelemetryService:
                 port.close()
                 port = None
                 self._wait(self.poll_interval_s)
+                continue
+            except Exception as exc:  # noqa: BLE001 - last resort (audit APP-04): never die silently
+                # an unexpected error (a bug, not the link) used to end the only thread that owns COM3: snapshots froze
+                # at "connected, idle" and new moves hung. Stop, say so, fail what is queued, reconnect after a pause.
+                self.last_error = f"internal error: {exc!r}"
+                if self.motion:
+                    with contextlib.suppress(Exception):
+                        self._send_stop(link)
+                with contextlib.suppress(Exception):
+                    self.monitor.note(f"telemetry internal error: {exc!r}")
+                    self.monitor.link_lost()
+                self._report_all(health=Health.FAULT, activity=Activity.UNKNOWN, recovery_required=True,
+                                 reason=f"motor service internal error ({exc!r}); controlled stop sent; recover the "
+                                        "device in Service › Hardware, and report this")
+                self._fail_pending(f"motor service internal error: {exc!r}")
+                with contextlib.suppress(Exception):
+                    port.close()
+                port = None
+                self._wait(REOPEN_INTERVAL_S)
                 continue
         self.monitor.write_evidence(force=True)  # a latch less than 10 s old: keep what there is
         self.monitor.close()
@@ -836,11 +872,17 @@ class TelemetryService:
                 except (_LinkError, TransportError, OSError, tp.ProtocolRefused) as exc:
                     job.ctx.fail(f"motor link error: {exc}", error_code="link")
                     raise
+                except Exception as exc:
+                    job.ctx.fail(f"motor service internal error: {exc!r}", error_code="internal")
+                    raise
                 continue
             try:
                 self._run_move(link, job)
             except (_LinkError, TransportError, OSError, tp.ProtocolRefused) as exc:
                 job.ctx.fail(f"motor link error during the move: {exc}", error_code="link")  # no-op if already ended
+                raise
+            except Exception as exc:
+                job.ctx.fail(f"motor service internal error during the move: {exc!r}", error_code="internal")
                 raise
             self._report_settled(link)
 
@@ -1023,6 +1065,12 @@ class TelemetryService:
         cur = st["ICURRENTPOSHF"]
         problems = [f"stage {ax} at {xy[ax]:.1f} mm, outside {lo:g}-{hi:g} mm: centre the stage before changing objectives"
                     for ax, (lo, hi) in TURRET_STAGE_BOX_MM.items() if not lo <= xy[ax] <= hi]
+        if problems:  # can the stage reach the centre at all? (audit APP-07)
+            lim_max = {ax: link.read(tp.VARS[ax]["LPOSMAX"]) for ax in ("X", "Y")}
+            if any(v == tp.POWER_UP_LIMITS[1] for v in lim_max.values()):
+                problems = [("the stage's calibrated travel limits are not loaded (drives on their power-up box, "
+                             "0-22 mm), so it cannot reach the centre the turret needs (X 40-80, Y 20-60 mm): return "
+                             "the stage to home and restart the app, which loads them (Gate 7, ADR-0056)")]
         if st["ESTATEV"] != 0 or st["IPENDINGMOVES"] != 0:
             problems.append(f"turret not idle (state {st['ESTATEV']}, pending {st['IPENDINGMOVES']})")
         if st["ISTATUSFLAGS"] & TURRET_STUCK_FLAG or st["MER"] & 0xFFFF:
@@ -1411,6 +1459,7 @@ def create_telemetry(options: dict) -> TelemetryService:
                     chain.values[(ax, "LPOSMAX")] = counts_from_um(ax, hi) + round(2.0 * tp.COUNTS_PER_MM[ax])
         svc = TelemetryService(lambda: chain, "SIM", **kw)
         svc.simulated_chain = chain  # type: ignore[attr-defined]
+        svc.emulated = True
     elif port.lower() == "auto":
         from openevos.backends.technosoft.transport import ftdi_com_ports
 

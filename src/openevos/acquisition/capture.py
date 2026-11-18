@@ -264,7 +264,7 @@ class CaptureService:
         if md.channel is not None and md.channel != slot:
             raise AcquisitionError(f"frame was exposed on {md.channel}, expected {slot}")
         data = frame.data
-        defects = self.defects_for(role) if data.ndim == 2 else []
+        defects = self.defects_for(role)  # mono and colour (channel by channel), audit APP-08
         extra_md = (*md.extra, ("pixel_size_source", px_source))
         if defects:
             from openevos.acquisition.calibration import correct_hot_pixels

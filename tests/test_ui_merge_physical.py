@@ -130,7 +130,8 @@ def test_new_ui_shows_the_physical_stage_panel_and_diagnostics(qtbot=None):
         hw._phys_stop()
         assert _wait(lambda: s.telemetry[0].stops_sent >= 1)
         badge = win.mode_badge.text if isinstance(win.mode_badge.text, str) else win.mode_badge.text()
-        assert "diagnostics" in win.pages and badge.startswith("SIM + PHYSICAL")
+        # the drive emulator is named as such (audit APP-02), never PHYSICAL
+        assert "diagnostics" in win.pages and badge.startswith("SIM + EMULATED DRIVES")
         win.close()
         app.processEvents()
     finally:

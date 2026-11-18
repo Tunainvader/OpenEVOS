@@ -319,6 +319,8 @@ class MainWindow(QMainWindow):
         self._cmd(m, "edit.palette", "Search commands…", self.open_palette, shortcut="Ctrl+K")
         m.addSeparator()
         self._cmd(m, "edit.clear", "Clear all channels", lambda: self.session.capture.buffers.clear(), why=no_capture)
+        self._cmd(m, "edit.undo_nominal", "Undo focus nominal", cap.undo_focus_nominal,
+                  why=lambda: "" if getattr(cap, "_last_nominal", None) else "no focus nominal change to undo")
 
         m = mb.addMenu("&View")
         tm = m.addMenu("Theme")
@@ -437,7 +439,12 @@ class MainWindow(QMainWindow):
         search.setIcon(icon("search"))
         search.clicked.connect(self.open_palette)
         cl.addWidget(search)
-        if getattr(self.session, "physical_stage", False):
+        emulated = any(getattr(s, "emulated", False) for s in getattr(self.session, "telemetry", []) or [])
+        if emulated:
+            text, kind = "SIM + EMULATED DRIVES", "simulated"
+            tip = ("The motor drives are an emulator (--motor-telemetry sim): nothing physical moves. Stage, focus and "
+                   "turret behave like the drives but every value is simulated.")
+        elif getattr(self.session, "physical_stage", False):
             text, kind = "SIM + PHYSICAL X/Y STAGE", "warn"
             svc = self.session.telemetry[0] if self.session.telemetry else None
             tip = ("The X/Y stage is the REAL instrument stage (ADR-0024/0029): the joystick, jogs and Stop move it, "

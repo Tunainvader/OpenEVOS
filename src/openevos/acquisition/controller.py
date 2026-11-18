@@ -189,8 +189,10 @@ class InstrumentController:
         lim_y = self.axis_limits(self.profile.stage_device, "y")
         x, y = cur[0] + dx, cur[1] + dy
         caps = self._caps(self.profile.stage_device)
-        if caps is not None and caps.backend_kind is BackendKind.PHYSICAL:
-            # a physical stage never has a relative move silently shortened: refuse instead (ADR-0024)
+        if caps is not None and (caps.backend_kind is BackendKind.PHYSICAL
+                                 or self.profile.stage_device.startswith("motor.")):
+            # a physical stage never has a relative move silently shortened: refuse instead (ADR-0024). The Technosoft
+            # drive emulator (motor.*, labelled simulated since audit APP-02) behaves exactly like the drives
             for name, v, lim in (("x", x, lim_x), ("y", y, lim_y)):
                 if lim is None or not lim[0] <= v <= lim[1]:
                     raise CommandError("stage.move_relative", CommandStatus.REJECTED,
@@ -203,16 +205,32 @@ class InstrumentController:
             y = min(max(y, lim_y[0]), lim_y[1])
         return self.move_stage(x, y)
 
-    def move_focus(self, z: float, timeout_s: float = 30.0):
+    def move_focus(self, z: float, timeout_s: float = 30.0, *, confirmed: bool = False):
+        """`confirmed`: the operator explicitly approved going above the objective's safe height (APP-03)."""
         unit, frame = self.focus_frame()
         return self.core.router.submit(MoveFocusAbsolute(device_id=self.profile.focus_device, origin=self.origin,
-                                                         z=z, unit=unit, frame=frame, timeout_s=timeout_s))
+                                                         z=z, unit=unit, frame=frame, timeout_s=timeout_s,
+                                                         confirmed=confirmed))
+
+    #: set by the session when the turret does not lower Z itself (audit APP-01): every objective change through this
+    #: controller lowers Z to this height first, through the router, so the turret interlock is met on every path
+    #: (UI, scans, time-lapse, calibration)
+    turret_safe_z_um: float | None = None
 
     def set_objective(self, slot: int):
         if not self.profile.turret_device:
             raise CommandError("turret.set_position", CommandStatus.REJECTED, "no turret device")
-        return self.core.router.submit(SetTurretPosition(device_id=self.profile.turret_device, origin=self.origin,
-                                                         position=slot, timeout_s=15.0))
+        safe, z = self.turret_safe_z_um, self.focus_z()
+        retract = safe is not None and z is not None and z > safe and self.objective_slot() != slot
+        if retract:
+            self.move_focus(safe).wait(30)  # the interlock then decides from the observed Z
+        ticket = self.core.router.submit(SetTurretPosition(device_id=self.profile.turret_device, origin=self.origin,
+                                                           position=slot, timeout_s=15.0))
+        if retract and ticket.wait(30) is CommandStatus.SUCCEEDED:
+            # Z back where it was before the turn, so every caller (calibration, scans, time-lapse, review) continues
+            # at its focus height; only a turret that does not lower Z itself takes this path (the simulator)
+            self.move_focus(z).wait(30)
+        return ticket
 
     def set_light(self, channel: str, intensity_percent: float, enabled: bool):
         if not self.profile.illumination_device:

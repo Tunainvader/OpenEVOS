@@ -82,10 +82,8 @@ class ZStackPage(QWidget):
         f.setFixedWidth(340)
         form = QFormLayout()
         self.channel = QComboBox()
-        for c in self.session.profile.channels:
-            if c.installed:
-                self.channel.addItem(c.display, c.slot)
-        self.below = QDoubleSpinBox(minimum=0, maximum=2000, value=10, suffix=" µm")
+        self._fill_channels()
+        self.below =QDoubleSpinBox(minimum=0, maximum=2000, value=10, suffix=" µm")
         self.above = QDoubleSpinBox(minimum=0, maximum=2000, value=10, suffix=" µm")
         self.step = QDoubleSpinBox(minimum=0.1, maximum=500, value=2, decimals=2, suffix=" µm")
         form.addRow("Channel", self.channel)
@@ -122,8 +120,24 @@ class ZStackPage(QWidget):
         self.slice.valueChanged.connect(self._show)
         self.proj.toggled.connect(self._show)
         model.buffers_changed.connect(self._refresh)
+        model.settings_changed.connect(self._fill_channels)  # the camera may have changed
         model.tasks.busy_changed.connect(lambda b: self.btn.setEnabled(not b))
         self._count()
+
+    def _fill_channels(self) -> None:
+        """Only channels the active camera can image (audit APP-13: the colour camera was offered DAPI)."""
+        role = self.session.settings.active_camera
+        want = [(c.display, c.slot) for c in self.session.profile.channels_for(role) if c.installed]
+        if [(self.channel.itemText(i), self.channel.itemData(i)) for i in range(self.channel.count())] == want:
+            return
+        cur = self.channel.currentData()
+        self.channel.blockSignals(True)
+        self.channel.clear()
+        for text, slot in want:
+            self.channel.addItem(text, slot)
+        i = self.channel.findData(cur)
+        self.channel.setCurrentIndex(max(i, 0))
+        self.channel.blockSignals(False)
 
     def _export_ome(self) -> None:
         from openevos.imaging.ome import zstack_to_ome
