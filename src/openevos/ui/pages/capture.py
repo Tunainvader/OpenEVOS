@@ -1053,6 +1053,11 @@ class CapturePage(QWidget):
             self.model.add_log("error", f"live view: {exc}")
         self._select_channel(self.channel, initial=True)  # keeps the light's on/off as it was
         self.model.settings_changed.emit()
+        if any(getattr(s, "carriage_control", False) for s in getattr(self.session, "telemetry", []) or []):
+            # the colour camera sees the sample only with F at the mirror (Gate 12): route the light path for `role`
+            self._run(f"Light path for the {role.value} camera", lambda: self.session.route_light_path(role),
+                      on_done=lambda msg: msg and self.model.add_log(
+                          "warn" if "not moved" in msg else "info", msg))
 
     def _toggle_saturation(self, on: bool) -> None:
         self.settings.camera_settings(self.role).highlight_saturated = on

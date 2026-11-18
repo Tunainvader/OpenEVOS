@@ -64,6 +64,40 @@ class Session:
         cam, obj = self.profile.camera(role), self.profile.objective(slot)
         return cam.pixel_size_um / obj.magnification if cam and obj and cam.pixel_size_um and obj.magnification else None
 
+    #: F carriage counts: the mirror routes the image to the colour camera (Motor Gate 12, 2026-11-15, Strongly
+    #: supported: at any cube slot the colour camera reads 0, at the mirror it saturates under a flashlight)
+    F_MIRROR_COUNTS = 128000
+    F_AT_TOLERANCE = 200
+
+    def route_light_path(self, role) -> str:
+        """Put the F carriage where `role`'s camera sees the sample (operator, 2026-11-18: "no image colour cam"):
+        the colour camera needs F at the mirror; the mono camera gets F back to slot 1 when it is at the mirror (a
+        cube channel then moves F to its own cube as before, ADR-0051). Only with real motor control and carriage
+        control, through the stage service's own F move (Gates 11/12); refused while an epi light is on. Blocking:
+        call it off the UI thread. Returns what happened ('' = nothing to do)."""
+        from openevos.instrument.profile import CameraRole
+
+        svc = next((s for s in self.telemetry if getattr(s, "carriage_control", False)), None)
+        if svc is None:
+            return ""
+        snap = self.core.store.get("motor.cube_carriage")
+        pos = snap.observed_position.values[0] if snap is not None and snap.observed_position else None
+        if pos is None:
+            return "filter carriage position unknown; not moved"
+        at_mirror = abs(pos - self.F_MIRROR_COUNTS) <= self.F_AT_TOLERANCE
+        if role is CameraRole.COLOR and not at_mirror:
+            dest = "mirror"
+        elif role is CameraRole.MONO and at_mirror:
+            dest = "slot1"
+        else:
+            return ""
+        light = self.controller.light
+        ch = self.profile.channel(light.channel) if light.channel else None
+        if light.enabled and ch is not None and ch.kind.value == "fluorescence":
+            return "an epi light is on; filter carriage not moved"
+        ok, msg = svc.move_carriage(dest)
+        return f"filter carriage to {dest} for the {role.value} camera" if ok else f"filter carriage not moved: {msg}"
+
     def change_objective(self, slot: int):
         """Turret command; once verified, apply calibrated parfocal (Z) and parcentric (XY) compensation so the
         same sample point stays centred and in focus (what the original software does after calibration)."""
