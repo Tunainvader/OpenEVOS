@@ -28,8 +28,8 @@ import json
 import queue
 import threading
 import time
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from openevos.backends.technosoft import power_up_record, watchdog
@@ -247,6 +247,25 @@ class _MoveJob:
 
 
 @dataclass
+class _Leg:
+    """One leg of a stage move while it runs (audit APP-16): what the steps of TelemetryService._move_leg share.
+    `outcome` is what the monitor and the motion profile record; each step sets it before it acts."""
+    ctx: object
+    axes: list[str]
+    targets: dict[str, int]
+    start: dict[str, int]
+    speed: dict[str, float]  # mm/s per axis, for the timeout
+    watches: dict  # axis -> watchdog.LegWatch (shadow mode, ADR-0047)
+    outcome: str = "link error"
+    live: dict[str, int] = field(default_factory=dict)
+    done: set[str] = field(default_factory=set)
+    rest: dict[str, dict] = field(default_factory=dict)
+    extra: Iterator[str] = field(default_factory=lambda: itertools.cycle(("POSERR", "IQ")))  # watchdog reads
+    deadline: float = 0.0
+    last_report: float = 0.0
+
+
+@dataclass
 class _CarriageJob:
     """F to a cube slot or the mirror (ADR-0051), asked for by the LED device before it lights a cube."""
     dest: str  # 'slot1'..'slot4' or 'mirror'
@@ -333,7 +352,7 @@ class TelemetryBackend:
     @property
     def controllable(self) -> bool:
         s = self._service
-        return s.motion and (self.spec.device_id == "motor.stage" or (self.spec.device_id in ZO_DEVICES and s.zo_control))
+        return s.motion and (self.spec.device_id == "motor.stage" or (self.spec.device_id in ZO_DEVICES and s.zo_control))  # noqa: E501
 
     def _capabilities(self) -> DeviceCapabilities:
         if not self.controllable:
@@ -342,7 +361,7 @@ class TelemetryBackend:
                                       note="read-only Technosoft telemetry (ADR-0023); no commands")
         if self.spec.device_id == "motor.focus":
             lo, hi = (round(um_from_counts("Z", c), 1) for c in tp.Z_TARGET_BOUNDS)
-            ax = AxisCapability(name="z", limits=AxisLimits(minimum=lo, maximum=hi, unit="um"), coordinate_frame="focus",
+            ax = AxisCapability(name="z", limits=AxisLimits(minimum=lo, maximum=hi, unit="um"), coordinate_frame="focus",  # noqa: E501
                                 calibration_valid=True, readback_tolerance=Z_READBACK_TOLERANCE_UM)
             return DeviceCapabilities(device_id=self.device_id, backend_kind=BackendKind.PHYSICAL,
                                       source=CapabilitySource.VERIFIED,
@@ -363,8 +382,8 @@ class TelemetryBackend:
                                     readback_tolerance=READBACK_TOLERANCE_UM) for a in ("x", "y"))
         kind = "calibrated envelope (ADR-0029)" if self._service.calibrated_box else "power-up box (ADR-0024)"
         return DeviceCapabilities(device_id=self.device_id, backend_kind=BackendKind.PHYSICAL,
-                                  source=CapabilitySource.VERIFIED, supported_commands=frozenset({"stage.move_absolute"}),
-                                  axes=axes, evidence_ids=EVIDENCE + (EVIDENCE_FULL_RANGE if self._service.calibrated_box
+                                  source=CapabilitySource.VERIFIED, supported_commands=frozenset({"stage.move_absolute"}),  # noqa: E501
+                                  axes=axes, evidence_ids=EVIDENCE + (EVIDENCE_FULL_RANGE if self._service.calibrated_box  # noqa: E501
                                                                      else ()),
                                   note=f"X/Y moves at power-up speed inside the {kind}")
 
@@ -983,7 +1002,7 @@ class TelemetryService:
     def _z_move(self, link: DriveLink, target: int, ctx=None) -> str:
         """Z to `target` counts as Motor Gate 18 did (ADR-0053): target, ESTATE 8, completion on SRH bit 9 + ESTATEV 13 +
         CPOS = target, APOS within LCONVERGEBAND, then ESTATE 6 at rest. '' = done; otherwise why it stopped (Z's stop
-        sent). Never writes speed or acceleration."""
+        sent). Never writes speed or acceleration."""  # noqa: E501
         z = tp.VARS["Z"]
         st = {n: link.read(z[n]) for n in ("ESTATEV", "IINITONCEDONE", "APOS", "CPOS", "LCONVERGEBAND", "MER", "SRH")}
         band = st["LCONVERGEBAND"]
@@ -1053,17 +1072,40 @@ class TelemetryService:
         """Objective change as Motor Gate 19 rev 2 did it (ADR-0053): refuse unless the stage is centred and the turret is
         idle, off, error-free and at a known position; retract Z to 0; ITARGETPOS n + ESTATE 3; poll fast; done when the
         sensor reads n with the program idle and the motor off. Stuck flag, a position off the decreasing path, Z moving,
-        a timeout or STOP: the vendor's AXISOFF, once."""
+        a timeout or STOP: the vendor's AXISOFF, once."""  # noqa: E501
         ctx, n = job.ctx, job.position
         if self._stop_requested(ctx):
             ctx.mark_cancelled(None)
             return
+        cur, problems = self._turret_preconditions(link)
+        if problems:
+            ctx.fail("; ".join(problems) + "; nothing written", error_code="turret_precondition")
+            return
+        ctx.mark_started()
+        if cur == n:
+            ctx.complete(self._report_o(cur))
+            return
+        why = self._z_move(link, 0, ctx)  # fully retracted (Gate 18) before the objectives swing
+        if why:
+            if why == "stopped":
+                ctx.mark_cancelled(self._backend("motor.objective_turret").read_position())
+            else:
+                ctx.fail(f"Z could not retract to 0 before the turret change: {why}; turret not moved", error_code="focus")  # noqa: E501
+            return
+        why = self._turret_turn(link, ctx, cur, n)
+        if why:
+            self._turret_abort(link, ctx, why)
+            return
+        ctx.complete(self._report_o(n))
+
+    def _turret_preconditions(self, link: DriveLink) -> tuple[int, list[str]]:
+        """The turret's sensor position and every reason not to turn it now (empty: go)."""
         o = tp.VARS["O"]
         st = {k: link.read(o[k]) for k in ("ESTATEV", "ICURRENTPOSHF", "IHF", "IPENDINGMOVES", "ISTATUSFLAGS", "SRL",
                                             "MER")}
         xy = {ax: um_from_counts(ax, link.read(tp.VARS[ax]["APOS"])) / 1000.0 for ax in ("X", "Y")}
         cur = st["ICURRENTPOSHF"]
-        problems = [f"stage {ax} at {xy[ax]:.1f} mm, outside {lo:g}-{hi:g} mm: centre the stage before changing objectives"
+        problems = [f"stage {ax} at {xy[ax]:.1f} mm, outside {lo:g}-{hi:g} mm: centre the stage before changing objectives"  # noqa: E501
                     for ax, (lo, hi) in TURRET_STAGE_BOX_MM.items() if not lo <= xy[ax] <= hi]
         if problems:  # can the stage reach the centre at all? (audit APP-07)
             lim_max = {ax: link.read(tp.VARS[ax]["LPOSMAX"]) for ax in ("X", "Y")}
@@ -1080,67 +1122,62 @@ class TelemetryService:
             problems.append("turret motor is on at rest")
         if cur not in tp.O_POSITIONS:
             problems.append(f"turret position unknown (sensor {cur}); turn it onto an objective by hand")
-        if problems:
-            ctx.fail("; ".join(problems) + "; nothing written", error_code="turret_precondition")
-            return
-        if cur == n:
-            ctx.mark_started()
-            ctx.complete(self._report_o(cur))
-            return
-        ctx.mark_started()
-        why = self._z_move(link, 0, ctx)  # fully retracted (Gate 18) before the objectives swing
-        if why:
-            if why == "stopped":
-                ctx.mark_cancelled(self._backend("motor.objective_turret").read_position())
-            else:
-                ctx.fail(f"Z could not retract to 0 before the turret change: {why}; turret not moved", error_code="focus")
-            return
+        return cur, problems
+
+    @staticmethod
+    def _turret_path(cur: int, n: int) -> list[int]:
+        """The positions the sensor passes from `cur` to `n`: they DECREASE as the turret turns (Gate 19)."""
+        return [(cur - i - 2) % 5 + 1 for i in range((cur - n) % 5)]
+
+    @staticmethod
+    def _turret_off_path(pos: int, last: int, path: list[int]) -> bool:
+        """True when a newly seen position is not on the path or goes back along it."""
+        return pos not in path or (last in path and path.index(pos) < path.index(last))
+
+    def _turret_turn(self, link: DriveLink, ctx, cur: int, n: int) -> str:
+        """Start the turn from `cur` to `n` and poll it. '' = settled at n; otherwise why it was stopped."""
+        o = tp.VARS["O"]
         z0 = link.read(tp.VARS["Z"]["APOS"])
-        path = [(cur - i - 2) % 5 + 1 for i in range((cur - n) % 5)]  # positions DECREASE as it turns (Gate 19)
+        path = self._turret_path(cur, n)
         link.write(tp.o_target(n))
         link.write(tp.O_GOTO_FRAME)
         t0 = time.monotonic()
         deadline = t0 + len(path) * TURRET_STEP_S_MAX + 5.0
-        seen, done_polls, why = [cur], 0, ""
+        seen, done_polls = [cur], 0
         self._report_o(cur, moving=True)
         while True:
             self._sleep(MOVE_POLL_S)
             if self._stop_requested(ctx):
-                why = "stopped"
-                break
+                return "stopped"
             s = {k: link.read(o[k]) for k in ("ESTATEV", "ICURRENTPOSHF", "ISTATUSFLAGS", "IPENDINGMOVES", "SRL")}
             pos = s["ICURRENTPOSHF"]
             if pos in tp.O_POSITIONS and pos != seen[-1]:
-                if pos not in path or (seen[-1] in path and path.index(pos) < path.index(seen[-1])):
-                    why = f"turret reached position {pos}, not next on its path {cur} -> {path}"
-                    break
+                if self._turret_off_path(pos, seen[-1], path):
+                    return f"turret reached position {pos}, not next on its path {cur} -> {path}"
                 seen.append(pos)
                 self._report_o(pos, moving=True)
             if s["ISTATUSFLAGS"] & TURRET_STUCK_FLAG:
-                why = f"the drive flagged the turret stuck at position {pos}"
-                break
+                return f"the drive flagged the turret stuck at position {pos}"
             if abs(link.read(tp.VARS["Z"]["APOS"]) - z0) > 5:
-                why = "Z moved during the turret change"
-                break
+                return "Z moved during the turret change"
             done = pos == n and s["ESTATEV"] == 0 and s["IPENDINGMOVES"] == 0 and not s["SRL"] & 0x8000
             done_polls = done_polls + 1 if done else 0
             if done_polls >= 2:
-                break
+                return ""
             if time.monotonic() > deadline:
-                why = f"turret did not settle at position {n} in time (sensor {pos})"
-                break
-        if why:
-            link.write(tp.O_AXISOFF_FRAME)
-            if why == "stopped" and self._stop_request.is_set():
-                self._send_stop(link)
-            pos = self._report_o(link.read(o["ICURRENTPOSHF"]))
-            if why == "stopped":
-                ctx.mark_cancelled(pos)
-            else:
-                ctx.fail(f"{why}; turret motor switched off; power-cycle the instrument before the next change",
-                         error_code="turret")
-            return
-        ctx.complete(self._report_o(n))
+                return f"turret did not settle at position {n} in time (sensor {pos})"
+
+    def _turret_abort(self, link: DriveLink, ctx, why: str) -> None:
+        """The vendor's AXISOFF, once (and the X/Y stop on an operator STOP); then cancel or fail the command."""
+        link.write(tp.O_AXISOFF_FRAME)
+        if why == "stopped" and self._stop_request.is_set():
+            self._send_stop(link)
+        pos = self._report_o(link.read(tp.VARS["O"]["ICURRENTPOSHF"]))
+        if why == "stopped":
+            ctx.mark_cancelled(pos)
+        else:
+            ctx.fail(f"{why}; turret motor switched off; power-cycle the instrument before the next change",
+                     error_code="turret")
 
     def _run_carriage(self, link: DriveLink, job: _CarriageJob) -> None:
         """F to job.dest exactly as Motor Gates 11/12 did on the instrument (ADR-0051): refuse unless F is homed, idle,
@@ -1166,6 +1203,16 @@ class TelemetryService:
         stored = {"slot1": base["LCUBE1POS"], "slot2": base["LCUBE2POS"], "slot3": base["LCUBE3POS"],
                   "slot4": base["LCUBE4POS"], "mirror": base["LMIRROR1POS"]}
         target = stored[job.dest]
+        problems = self._carriage_problems(base, stored)
+        if problems:
+            job.message = "F not moved: " + "; ".join(problems)
+            return
+        self._carriage_move(link, job, base["APOS"], target, band)
+
+    @staticmethod
+    def _carriage_problems(base: dict, stored: dict) -> list[str]:
+        """Every reason not to move F now (empty: go)."""
+        band = base["LCONVERGEBAND"]
         problems = []
         if base["IINITONCEDONE"] != tp.INIT_DONE_MARKER:
             problems.append("F is not homed")
@@ -1181,10 +1228,11 @@ class TelemetryService:
             problems.append(f"F not at rest (APOS {base['APOS']}, CPOS {base['CPOS']})")
         if base["MER"] & 0xFFFF:
             problems.append(f"F error register MER 0x{base['MER'] & 0xFFFF:04X} not clear")
-        if problems:
-            job.message = "F not moved: " + "; ".join(problems)
-            return
-        start = base["APOS"]
+        return problems
+
+    def _carriage_move(self, link: DriveLink, job: _CarriageJob, start: int, target: int, band: int) -> None:
+        """F from `start` to the stored `target` of job.dest; the outcome in job.ok / job.message."""
+        f = tp.VARS["F"]
         if abs(start - target) <= band:
             job.ok, job.message = True, f"F already at {job.dest} (APOS {start})"
             return
@@ -1237,138 +1285,175 @@ class TelemetryService:
 
     def _move_leg(self, link: DriveLink, job: _MoveJob, leg: list[str], now: dict, start: dict) -> bool:
         """Move the axes in `leg` (one, under SEQUENTIAL_XY) to their targets. True when done and verified; else the
-        command has been failed or cancelled and False is returned."""
-        ctx = job.ctx
+        command has been failed or cancelled and False is returned. Steps (audit APP-16): speed, target, start,
+        supervise to motion complete, the drive's flags, the still axis' encoder, the landing, the stop at rest."""
         preset = self.speed_preset if self.speed_control else None
+        speed = self._leg_speeds(link, leg, now, preset)
+        for ax in leg:
+            link.write(tp.move_target(ax, job.targets[ax]))
+        self.monitor.begin_move({ax: job.targets[ax] for ax in leg}, start)
+        # runaway watchdog, shadow mode (ADR-0047): watches and records, never acts
+        label = preset if preset is not None else "fast"  # the power-up speed is the fast preset (ADR-0032)
+        run = _Leg(job.ctx, leg, job.targets, start, speed,
+                   {ax: watchdog.LegWatch(ax, start[ax], job.targets[ax], label, time.monotonic()) for ax in leg})
+        try:
+            for ax in leg:
+                link.write(tp.move_request(ax))
+            if not (self._supervise_leg(link, run) and self._leg_flags_ok(link, run)
+                    and self._leg_still_axis_ok(link, run) and self._leg_landed(link, run)):
+                return False
+            for ax in leg:  # the watchdog's cross-check at rest: POSERR against CPOS - APOS (ADR-0047)
+                run.rest[ax] = {n: link.read(tp.VARS[ax][n]) for n in ("POSERR", "CPOS", "APOS")}
+            self._stop_axes(link, leg)  # back to drive state 0 with the verified stop at rest (as the Motor Gates do)
+            run.outcome = "done"
+            return True
+        finally:
+            self.monitor.end_move(leg, run.outcome)
+            self._watch_end(run.watches, run.outcome, run.rest)
+
+    def _leg_speeds(self, link: DriveLink, leg: list[str], now: dict, preset: str | None) -> dict[str, float]:
+        """The selected speed (ADR-0032), written only when the drive holds another value; each axis' speed in mm/s."""
         speed = {}
-        for ax in leg:  # the selected speed (ADR-0032), written only when the drive holds another value
+        for ax in leg:
             if preset is not None and now[ax]["CSPDCMD"] != tp.speed_raw(preset):
                 link.write(tp.speed_write(ax, preset))
                 now[ax]["CSPDCMD"] = tp.speed_raw(preset)
                 self._speed_changed = True
             speed[ax] = max(now[ax]["CSPDCMD"], 1) / 65536 / tp.SPEED_SAMPLE_S / tp.COUNTS_PER_MM[ax]  # mm/s
-        for ax in leg:
-            link.write(tp.move_target(ax, job.targets[ax]))
-        self.monitor.begin_move({ax: job.targets[ax] for ax in leg}, start)
-        outcome = "link error"
-        # runaway watchdog, shadow mode (ADR-0047): watches and records, never acts
-        label = preset if preset is not None else "fast"  # the power-up speed is the fast preset (ADR-0032)
-        watches = {ax: watchdog.LegWatch(ax, start[ax], job.targets[ax], label, time.monotonic()) for ax in leg}
-        rest: dict[str, dict] = {}
-        extra = itertools.cycle(("POSERR", "IQ"))
-        try:
-            for ax in leg:
-                link.write(tp.move_request(ax))
-            longest_s = max(abs(job.targets[a] - start[a]) / tp.COUNTS_PER_MM[a] / speed[a] for a in leg)
-            deadline = time.monotonic() + longest_s * 1.2 + 3.0
-            last_report, live, done, tick = 0.0, dict(start), set(), time.monotonic()
-            while len(done) < len(leg):
-                self._sleep(max(0.0, MOVE_POLL_S - (time.monotonic() - tick)))
-                tick = time.monotonic()
-                if self._stop_request.is_set() or getattr(ctx, "cancel_requested", False):
-                    outcome = "stopped"
-                    self._send_stop(link)
-                    ctx.mark_cancelled(self._position_now(link))
-                    return False
-                live["X"], live["Y"] = self._fast_sample(link)  # both encoders, every tick (~20 Hz)
-                if self.monitor.latched:  # the still axis changed while this leg moved (or anything else tripped)
-                    outcome = "stopped by the drift monitor"
-                    for ax in leg:
-                        for frame in tp.stop_frames(ax):
-                            link.write(frame)
-                    rule = self.monitor.latch.rule if self.monitor.latch else "stage_latched"
-                    ctx.fail(f"{rule}: {self.monitor.refusal()}; controlled stop sent", error_code=rule)
-                    return False
-                for ax in leg:  # the watchdog's signals: encoder every tick, POSERR and IQ on alternate ticks
-                    if ax not in done:
-                        watches[ax].apos(live[ax], tick)
-                        name = next(extra)
-                        getattr(watches[ax], name.lower())(link.read(tp.VARS[ax][name]), time.monotonic())
-                for ax in leg:
-                    if ax in done:
-                        continue
-                    target, apos = job.targets[ax], live[ax]
-                    # Wrong-way guard (2026-11-13: Y commanded to 0 ran to the far end, 77.7 mm). Moving AWAY from the
-                    # target by more than WRONG_WAY_COUNTS means the axis is not under control: stop now and latch.
-                    if abs(target - apos) > abs(target - start[ax]) + WRONG_WAY_COUNTS:
-                        outcome = "wrong direction"
-                        self._send_stop(link)
-                        self.monitor.trip("wrong_direction", ax, f"{ax} moved away from its target ({start[ax]} -> "
-                                                                 f"{apos}, target {target})",
-                                          {"start": start[ax], "apos": apos, "target": target})
-                        self._on_latch(link)
-                        ctx.fail(f"wrong_direction: {ax} moved away from its target ({start[ax]} -> {apos}, target "
-                                 f"{target}); controlled stop sent; stage locked: {RECOVERY}",
-                                 error_code="wrong_direction")
-                        return False
-                    if link.read(tp.VARS[ax]["SRH"]) & tp.SRH_MOTION_COMPLETE_BIT:
-                        done.add(ax)
-                if time.monotonic() - last_report > 0.25:  # live position while moving (the poll is paused)
-                    last_report = time.monotonic()
-                    self._report_live(live)
-                if len(done) < len(leg) and time.monotonic() > deadline:
-                    outcome = "timeout"
-                    self._send_stop(link)
-                    ctx.fail(f"{', '.join(a for a in leg if a not in done)} did not complete in time; controlled "
-                             "stop sent", error_code="timeout")
-                    return False
-            for ax in leg:  # the drive's own record of this move (plan §6.7), before the stop at rest
-                if self.monitor.after_move(ax, link.read(tp.VARS[ax]["ISTATUSFLAGS"]),
-                                           link.read(tp.VARS[ax]["SRL"])) is not None:
-                    outcome = "drive flags"
-                    self._on_latch(link)
-                    self._send_stop(link)
-                    rule = self.monitor.latch.rule if self.monitor.latch else "stage_latched"
-                    ctx.fail(f"{rule}: {self.monitor.refusal()}; stop sent", error_code=rule)
-                    return False
-            for other in tp.MOTION_AXES:  # backstop: the still axis' encoder against where it was before this leg
-                if other in leg:
-                    continue
-                o_apos = link.read(tp.VARS[other]["APOS"])
-                if abs(o_apos - start[other]) > DRIFT_MAX_COUNTS:
-                    outcome = "cross-axis drift"
-                    self.monitor.trip("cross_axis_encoder_drift", other,
-                                      f"{other} changed {o_apos - start[other]:+d} counts while {'+'.join(leg)} moved",
-                                      {"start": start[other], "apos": o_apos, "moving": leg})
-                    self._on_latch(link)
-                    for ax in leg:
-                        for frame in tp.stop_frames(ax):
-                            link.write(frame)
-                    ctx.fail(f"cross_axis_encoder_drift: {self.monitor.refusal()}",
+        return speed
+
+    @staticmethod
+    def _stop_axes(link: DriveLink, axes: list[str]) -> None:
+        """The verified controlled stop on these axes only."""
+        for ax in axes:
+            for frame in tp.stop_frames(ax):
+                link.write(frame)
+
+    def _supervise_leg(self, link: DriveLink, run: _Leg) -> bool:
+        """Poll until every axis of the leg reports motion complete. False: stopped or failed (the command ended)."""
+        longest_s = max(abs(run.targets[a] - run.start[a]) / tp.COUNTS_PER_MM[a] / run.speed[a] for a in run.axes)
+        run.deadline = time.monotonic() + longest_s * 1.2 + 3.0
+        run.live, tick = dict(run.start), time.monotonic()
+        while len(run.done) < len(run.axes):
+            self._sleep(max(0.0, MOVE_POLL_S - (time.monotonic() - tick)))
+            tick = time.monotonic()
+            if not self._leg_tick(link, run, tick):
+                return False
+        return True
+
+    def _leg_tick(self, link: DriveLink, run: _Leg, tick: float) -> bool:
+        """One poll of a moving leg: STOP/cancel, the drift monitor, the watchdog's signals, the wrong-way guard,
+        completion, the live position and the timeout. False: the command has ended."""
+        ctx = run.ctx
+        if self._stop_request.is_set() or getattr(ctx, "cancel_requested", False):
+            run.outcome = "stopped"
+            self._send_stop(link)
+            ctx.mark_cancelled(self._position_now(link))
+            return False
+        run.live["X"], run.live["Y"] = self._fast_sample(link)  # both encoders, every tick (~20 Hz)
+        if self.monitor.latched:  # the still axis changed while this leg moved (or anything else tripped)
+            run.outcome = "stopped by the drift monitor"
+            self._stop_axes(link, run.axes)
+            rule = self.monitor.latch.rule if self.monitor.latch else "stage_latched"
+            ctx.fail(f"{rule}: {self.monitor.refusal()}; controlled stop sent", error_code=rule)
+            return False
+        for ax in run.axes:  # the watchdog's signals: encoder every tick, POSERR and IQ on alternate ticks
+            if ax not in run.done:
+                run.watches[ax].apos(run.live[ax], tick)
+                name = next(run.extra)
+                getattr(run.watches[ax], name.lower())(link.read(tp.VARS[ax][name]), time.monotonic())
+        for ax in run.axes:
+            if ax in run.done:
+                continue
+            if self._leg_wrong_way(link, run, ax):
+                return False
+            if link.read(tp.VARS[ax]["SRH"]) & tp.SRH_MOTION_COMPLETE_BIT:
+                run.done.add(ax)
+        if time.monotonic() - run.last_report > 0.25:  # live position while moving (the poll is paused)
+            run.last_report = time.monotonic()
+            self._report_live(run.live)
+        if len(run.done) < len(run.axes) and time.monotonic() > run.deadline:
+            run.outcome = "timeout"
+            self._send_stop(link)
+            ctx.fail(f"{', '.join(a for a in run.axes if a not in run.done)} did not complete in time; controlled "
+                     "stop sent", error_code="timeout")
+            return False
+        return True
+
+    def _leg_wrong_way(self, link: DriveLink, run: _Leg, ax: str) -> bool:
+        """Wrong-way guard (2026-11-13: Y commanded to 0 ran to the far end, 77.7 mm). Moving AWAY from the target by
+        more than WRONG_WAY_COUNTS means the axis is not under control: stop now and latch. True: it tripped."""
+        target, apos, start = run.targets[ax], run.live[ax], run.start[ax]
+        if abs(target - apos) <= abs(target - start) + WRONG_WAY_COUNTS:
+            return False
+        run.outcome = "wrong direction"
+        self._send_stop(link)
+        self.monitor.trip("wrong_direction", ax,
+                          f"{ax} moved away from its target ({start} -> {apos}, target {target})",
+                          {"start": start, "apos": apos, "target": target})
+        self._on_latch(link)
+        run.ctx.fail(f"wrong_direction: {ax} moved away from its target ({start} -> {apos}, target {target}); "
+                     f"controlled stop sent; stage locked: {RECOVERY}", error_code="wrong_direction")
+        return True
+
+    def _leg_flags_ok(self, link: DriveLink, run: _Leg) -> bool:
+        """The drive's own record of this move (plan §6.7), before the stop at rest. False: latched and failed."""
+        for ax in run.axes:
+            if self.monitor.after_move(ax, link.read(tp.VARS[ax]["ISTATUSFLAGS"]),
+                                       link.read(tp.VARS[ax]["SRL"])) is not None:
+                run.outcome = "drive flags"
+                self._on_latch(link)
+                self._send_stop(link)
+                rule = self.monitor.latch.rule if self.monitor.latch else "stage_latched"
+                run.ctx.fail(f"{rule}: {self.monitor.refusal()}; stop sent", error_code=rule)
+                return False
+        return True
+
+    def _leg_still_axis_ok(self, link: DriveLink, run: _Leg) -> bool:
+        """Backstop: the still axis' encoder against where it was before this leg. False: latched and failed."""
+        for other in tp.MOTION_AXES:
+            if other in run.axes:
+                continue
+            o_apos, o_start = link.read(tp.VARS[other]["APOS"]), run.start[other]
+            if abs(o_apos - o_start) > DRIFT_MAX_COUNTS:
+                run.outcome = "cross-axis drift"
+                self.monitor.trip("cross_axis_encoder_drift", other,
+                                  f"{other} changed {o_apos - o_start:+d} counts while {'+'.join(run.axes)} moved",
+                                  {"start": o_start, "apos": o_apos, "moving": run.axes})
+                self._on_latch(link)
+                self._stop_axes(link, run.axes)
+                run.ctx.fail(f"cross_axis_encoder_drift: {self.monitor.refusal()}",
                              error_code="cross_axis_encoder_drift")
-                    return False
-            for ax in leg:
-                target = job.targets[ax]
-                apos = link.read(tp.VARS[ax]["APOS"])
-                if abs(apos - target) > SETTLE_BAND_COUNTS and abs(apos - start[ax]) <= SETTLE_BAND_COUNTS:
-                    # Commanded, but the encoder never moved, with the power stage reading on (the flags above). Not
-                    # latched (operator decision 2026-11-14); the status poll latches if the power stage turns off.
-                    outcome = "no motion"
-                    self._send_stop(link)
-                    ctx.fail(f"{ax} did not move at all (still at {apos}, target {target}): its power stage may be "
-                             "off after a drive protection trip; power-cycle the instrument to recover",
-                             error_code="no_motion")
-                    return False
-                if abs(apos - target) > SETTLE_BAND_COUNTS:  # landing error (plan §6.3): latch
-                    outcome = "landing error"
-                    self.monitor.trip("landing_error", ax, f"{ax} ended at {apos}, {apos - target:+d} counts from its "
-                                                           f"target {target} (band {SETTLE_BAND_COUNTS})",
-                                      {"start": start[ax], "apos": apos, "target": target})
-                    self._on_latch(link)
-                    self._send_stop(link)
-                    ctx.fail(f"{ax} ended at {apos}, target {target} (band {SETTLE_BAND_COUNTS}); stop sent; stage "
-                             f"locked: {RECOVERY}", error_code="readback")
-                    return False
-            for ax in leg:  # the watchdog's cross-check at rest: POSERR against CPOS - APOS (ADR-0047)
-                rest[ax] = {n: link.read(tp.VARS[ax][n]) for n in ("POSERR", "CPOS", "APOS")}
-            for ax in leg:  # back to drive state 0 with the verified stop at rest (as the Motor Gates do)
-                for frame in tp.stop_frames(ax):
-                    link.write(frame)
-            outcome = "done"
-            return True
-        finally:
-            self.monitor.end_move(leg, outcome)
-            self._watch_end(watches, outcome, rest)
+                return False
+        return True
+
+    def _leg_landed(self, link: DriveLink, run: _Leg) -> bool:
+        """Each moved axis' encoder against its target. False: no motion at all (failed), or a landing error (latched
+        and failed)."""
+        ctx = run.ctx
+        for ax in run.axes:
+            target, start = run.targets[ax], run.start[ax]
+            apos = link.read(tp.VARS[ax]["APOS"])
+            if abs(apos - target) > SETTLE_BAND_COUNTS and abs(apos - start) <= SETTLE_BAND_COUNTS:
+                # Commanded, but the encoder never moved, with the power stage reading on (the flags above). Not
+                # latched (operator decision 2026-11-14); the status poll latches if the power stage turns off.
+                run.outcome = "no motion"
+                self._send_stop(link)
+                ctx.fail(f"{ax} did not move at all (still at {apos}, target {target}): its power stage may be "
+                         "off after a drive protection trip; power-cycle the instrument to recover",
+                         error_code="no_motion")
+                return False
+            if abs(apos - target) > SETTLE_BAND_COUNTS:  # landing error (plan §6.3): latch
+                run.outcome = "landing error"
+                self.monitor.trip("landing_error", ax, f"{ax} ended at {apos}, {apos - target:+d} counts from its "
+                                                       f"target {target} (band {SETTLE_BAND_COUNTS})",
+                                  {"start": start, "apos": apos, "target": target})
+                self._on_latch(link)
+                self._send_stop(link)
+                ctx.fail(f"{ax} ended at {apos}, target {target} (band {SETTLE_BAND_COUNTS}); stop sent; stage "
+                         f"locked: {RECOVERY}", error_code="readback")
+                return False
+        return True
 
     def _watch_end(self, watches: dict, outcome: str, rest: dict) -> None:
         """One motion-profile row per leg (ADR-0047 Phase 1): kept in memory, appended to the profile file on the
