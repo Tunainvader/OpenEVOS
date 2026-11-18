@@ -235,6 +235,14 @@ REVIEWED_MAINTENANCE: dict[str, dict] = {
         "writes": "Z (axis 4) only: CPOSCMD 0, 8200 (1 mm) or 41000 (5 mm), ESTATE 8 (move, drive-clamped) and ESTATE 6 (stop at rest); "  # noqa: E501
                   "speed, acceleration and limits never written",
     },
+    "motor.xy_rehome": {
+        "vid_pid": (0x0403, 0x6001), "commands": frozenset({0x21B3}),
+        "adr": "ADR-0058", "module": "maintenance/motor_gate20_xy_rehome.py",
+        "review": "docs/evidence/fl1_v1.6_xy_software_rehome_research.md",
+        "writes": "X/Y only: ESTATE 19 (STATE_19_HOME_DOUBLE, the power-up homing routine; PearlScope's own "
+                  "XYStageHome frames), one axis at a time, X before Y; RAM only, no variable/limit/speed write, "
+                  "no stop while homing; Z must be at home",
+    },
 }
 
 #: Device writes the APP itself may send (not maintenance tools), each through the router and safety layer.
