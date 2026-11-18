@@ -191,6 +191,9 @@ class SystemBasicSettings(BaseModel):
     #: Settings › Interface: changing camera switches the light off (operator, 2026-11-18); off = the light keeps its
     #: on/off state across the switch
     light_off_on_camera_switch: bool = True
+    #: Settings › Interface: a USB gamepad (XInput) drives stage jog, focus, capture and light while the app window is
+    #: active (operator, 2026-11-18); off = the gamepad is ignored
+    gamepad_enabled: bool = True
     #: Capture › Z focus: per-objective safe height (µm from home), keyed by turret slot. Above it the panel shows an
     #: amber warning and a held pad stops; set by the operator at the Z where that objective nears the vessel
     focus_limit_um: dict[str, float] = Field(default_factory=dict)

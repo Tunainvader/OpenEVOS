@@ -65,6 +65,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="do not start the LED board application at launch. By default, a board found in its "
                          "bootloader (0DAD:0057, its power-up state) is started with the reviewed version query + "
                          "StartApp steps, as the vendor software does every session (ADR-0055)")
+    ap.add_argument("--no-gamepad", action="store_true",
+                    help="ignore a connected USB gamepad. By default an XInput pad jogs the stage, focuses, captures "
+                         "and switches the light while the window is active (Settings › Interface turns it off too)")
     ap.add_argument("--no-limits-autoload", action="store_true",
                     help="with --motor-control: do not load the calibrated X/Y limits at launch. By default, drives "
                          "still on their power-up limits (0-22 mm) get Motor Gate 7's reviewed limit writes, no motion "
@@ -194,6 +197,11 @@ def main(argv: list[str] | None = None) -> int:
     win.show()
     win.start_precheck()  # read-only; opens the precheck only when something needs attention
     win.pages["capture"].route_light_path_when_ready()  # F to the mirror if the app opened on the colour camera
+    if not args.no_gamepad:
+        from openevos.ui.gamepad import GamepadBridge
+
+        gamepad = GamepadBridge(win)  # held here for the life of app.exec()
+        gamepad.start()  # read-only polling; a no-op without XInput
     try:
         return app.exec()
     finally:
