@@ -104,8 +104,10 @@ def _monitor(session) -> list[Check]:
         st = mon.state()
         port = getattr(svc, "port_label", "") or "motor port"
         if st.get("latched"):
-            out.append(Check("monitor", f"X/Y drift monitor ({port})", "fault",
-                             f"latched: {st.get('message', '')}", st.get("recovery", RECOVER_FIX)))
+            fix = ("Small drift: Microscope › Release stage lock (it checks X and Y first; ADR-0057). Otherwise: "
+                   if st.get("releasable") else "") + st.get("recovery", RECOVER_FIX)
+            out.append(Check("monitor", f"X/Y drift monitor ({port})", "fault", f"latched: {st.get('message', '')}",
+                             fix))
         elif st.get("warnings"):
             out.append(Check("monitor", f"X/Y drift monitor ({port})", "warn", "; ".join(map(str, st["warnings"])),
                              "Watch the stage; the monitor latches if the drift continues"))

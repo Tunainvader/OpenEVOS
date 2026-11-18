@@ -53,6 +53,10 @@ class PrecheckDialog(QDialog):
         self.scroll.setFrameShape(QFrame.NoFrame)
         lay.addWidget(self.scroll, 1)
         row = QHBoxLayout()
+        self.btn_release = QPushButton("Release stage lock…")
+        self.btn_release.setToolTip("Shown when the drift monitor holds a small lock that fresh reads can release")
+        self.btn_release.clicked.connect(lambda: self.win.release_stage_lock())
+        row.addWidget(self.btn_release)
         self.btn_heights = QPushButton("Set safe heights…")
         self.btn_recheck = QPushButton("Check again")
         self.btn_close = QPushButton("Close")
@@ -102,6 +106,7 @@ class PrecheckDialog(QDialog):
         g.setRowStretch(len(order), 1)
         self.scroll.setWidget(body)
         w = pc.worst(self.checks)
+        self.btn_release.setVisible(self.win._release_why() == "")
         self.lbl_summary.setText(pc.summary(self.checks))
         self.lbl_summary.setStyleSheet(f"color: {status_color(w) if w in ('fault', 'warn') else theme.TEXT};")
         return self.checks

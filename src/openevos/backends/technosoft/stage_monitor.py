@@ -16,8 +16,9 @@ What it does (no serial I/O and no Qt; the TelemetryService feeds it from its ow
     - wrong_direction, landing_error, cross_axis_encoder_drift: reported by the move loop through `trip()`
 * while latched, every X/Y move is refused, whichever axis;
 * the latch never clears itself, not even when APOS and CPOS agree again (the electrical phase can still be wrong).
-  Only an observed re-initialisation of both X and Y clears it: IINITONCEDONE leaves 12345 and comes back, which is
-  the power-on homing seen while OpenEVOS is connected. With an evidence folder the latch survives app restarts;
+  An observed re-initialisation of both X and Y clears it: IINITONCEDONE leaves 12345 and comes back, which is
+  the power-on homing seen while OpenEVOS is connected. A small drift latch can also be released by the operator
+  (`release`, ADR-0057) after fresh reads pass. With an evidence folder the latch survives app restarts;
 * 10 s after a latch it writes the evidence: a JSON (latch, thresholds, status polls, commands, extra drive reads)
   and a CSV in the `y_drift_correlate.py` format (t, x_apos, y_apos, x_cpos, y_cpos, x_cmd, y_cmd).
 
@@ -53,6 +54,13 @@ THRESHOLDS = {"idle_drift_max_counts": IDLE_DRIFT_MAX_COUNTS, "move_drift_max_co
               "settle_s": SETTLE_S, "fast_period_s": FAST_PERIOD_S, "ring_s": RING_S, "post_event_s": POST_EVENT_S}
 RECOVERY = ("power-cycle the microscope while OpenEVOS stays running and connected: it watches X and Y re-home, "
             "then clears the lock")
+#: Operator release without a power cycle (ADR-0057, amends ADR-0040; operator 2026-11-18: "can't we manually control
+#: the stage even after lock"). Only drift-type latches, only a small recorded drift (well under the ~14-count
+#: commutation reversal), and only when fresh reads show both axes homed, idle, fault-free, powered and within
+#: MOVE_DRIFT_MAX_COUNTS of their command (else the next move's pre-move check would latch again).
+RELEASABLE_RULES = frozenset({"idle_encoder_drift", "command_mismatch", "cross_axis_encoder_drift"})
+RELEASE_MAX_DRIFT_COUNTS = 10
+RELEASE_READS = ("IINITONCEDONE", "ESTATEV", "SRH", "SRL", "ISTATUSFLAGS", "APOS", "CPOS")
 #: extra reads taken the moment a latch is set, before anything else is sent (plan T0 read order)
 EXTRA_READS = ("ISTATUSFLAGS", "SRL", "MER", "IIQMAX", "IIQMIN", "IQ", "LCOMMERRPOS", "APOS", "CPOS")
 
@@ -118,8 +126,67 @@ class StageMonitor:
                    "fast_samples": self.sample_count, "recording": str(self.record_path or "")}
             if self.latch is not None:
                 out.update(rule=self.latch.rule, axis=self.latch.axis, message=self.latch.message,
-                           since_utc=self.latch.at_utc, evidence=self.latch.evidence, recovery=RECOVERY)
+                           since_utc=self.latch.at_utc, evidence=self.latch.evidence, recovery=RECOVERY,
+                           releasable=self._release_blocker() == "")
             return out
+
+    def latch_drift(self) -> int | None:
+        """The drift (counts) the latch recorded: encoder vs its reference (idle) or vs its command (pre-move)."""
+        v = self.latch.values if self.latch else {}
+        if "apos" in v and "reference" in v:
+            return int(v["apos"]) - int(v["reference"])
+        if "apos" in v and "start" in v:  # cross-axis drift during the other axis' move
+            return int(v["apos"]) - int(v["start"])
+        if "apos" in v and "cpos" in v:
+            return int(v["apos"]) - int(v["cpos"])
+        if "drift" in v:
+            return int(v["drift"])
+        return None
+
+    def _release_blocker(self) -> str:
+        if self.latch is None:
+            return "the stage is not locked"
+        if self.latch.rule not in RELEASABLE_RULES:
+            return f"a {self.latch.rule} lock cannot be released from the app: {RECOVERY}"
+        d = self.latch_drift()
+        if d is None:
+            return f"the lock recorded no drift value: {RECOVERY}"
+        if abs(d) > RELEASE_MAX_DRIFT_COUNTS:
+            return (f"the recorded drift {d:+d} counts is over {RELEASE_MAX_DRIFT_COUNTS} (commutation risk near ~14): "
+                    f"{RECOVERY}")
+        return ""
+
+    def release(self, values: dict[str, dict[str, int]], who: str = "operator") -> str:
+        """Operator release of a small drift latch (see RELEASABLE_RULES). `values`: fresh RELEASE_READS of X and Y,
+        read by the service just now. '' = released (evidence written); otherwise why not (the latch stays)."""
+        with self._lock:
+            why = self._release_blocker()
+            if why:
+                return why
+            problems = []
+            for ax in AXES:
+                v = values.get(ax) or {}
+                if any(n not in v for n in RELEASE_READS):
+                    problems.append(f"{ax}: reads missing")
+                    continue
+                if v["IINITONCEDONE"] != tp.INIT_DONE_MARKER:
+                    problems.append(f"{ax} not homed")
+                if v["ESTATEV"] not in (0, 13) or not v["SRH"] & tp.SRH_MOTION_COMPLETE_BIT:
+                    problems.append(f"{ax} not idle (state {v['ESTATEV']})")
+                hit = self._flag_rule(ax, v["ISTATUSFLAGS"], v["SRL"])
+                if hit:
+                    problems.append(hit[2])
+                d = v["APOS"] - v["CPOS"]
+                if abs(d) > MOVE_DRIFT_MAX_COUNTS:
+                    problems.append(f"{ax} is {d:+d} counts from its command (> {MOVE_DRIFT_MAX_COUNTS}): its next move "
+                                    "would lock again")
+            if problems:
+                return "; ".join(problems) + f": {RECOVERY}"
+            self.latch.values["release_reads"] = {ax: dict(values[ax]) for ax in AXES}
+            self._clear(f"{who} release: {self.latch.rule} on {self.latch.axis}, recorded drift "
+                        f"{self.latch_drift():+d} counts; X and Y read homed, idle, fault-free, powered and within "
+                        f"{MOVE_DRIFT_MAX_COUNTS} counts of their command")
+            return ""
 
     # ------------------------------------------------------------------ feeding (service thread)
     def _now(self) -> float:

@@ -31,6 +31,7 @@ from dataclasses import dataclass
 
 from openevos.backends.technosoft import power_up_record, watchdog
 from openevos.backends.technosoft import protocol as tp
+from openevos.backends.technosoft import stage_monitor as sm
 from openevos.backends.technosoft.stage_monitor import (
     EXTRA_READS,
     FAST_PERIOD_S,
@@ -240,6 +241,16 @@ CARRIAGE_SPEED_COUNTS_S_MIN = 5000
 CARRIAGE_WRONG_WAY_COUNTS = 200
 CARRIAGE_WAIT_S = 40.0
 CARRIAGE_TIMEOUT_MARGIN_S = 5.0
+
+
+@dataclass
+class _ReleaseJob:
+    """Operator release of a small drift latch (ADR-0057): fresh X/Y reads on the service thread, then the monitor
+    decides. Reads only; nothing is written to any drive."""
+    done: threading.Event
+    who: str = "operator"
+    message: str = ""
+    ok: bool = False
 
 
 @dataclass
@@ -458,6 +469,22 @@ class TelemetryService:
     def request_stop(self, reason: str) -> None:
         self._stop_request.set()
         self._wake.set()
+
+    def release_latch(self, who: str = "operator", timeout_s: float = 10.0) -> tuple[bool, str]:
+        """Blocking, from any thread except the service's: release a small drift latch after fresh reads (ADR-0057).
+        Returns (released, message). Reads X/Y only; writes nothing."""
+        if threading.current_thread() is self._thread:
+            return False, "release_latch called from the telemetry thread"
+        if not self.monitor.latched:
+            return False, "the stage is not locked"
+        why = self.monitor._release_blocker()
+        if why:
+            return False, why
+        job = _ReleaseJob(threading.Event(), who)
+        self.submit(job)  # type: ignore[arg-type]
+        if not job.done.wait(timeout_s):
+            return False, f"no fresh X/Y reads within {timeout_s:g} s; the lock stays"
+        return job.ok, job.message
 
     def move_carriage(self, dest: str, timeout_s: float = CARRIAGE_WAIT_S) -> tuple[bool, str]:
         """Blocking, from any thread except the service's: F to 'slot1'..'slot4' or 'mirror' through the drive's own
@@ -683,6 +710,10 @@ class TelemetryService:
                 job.ok, job.message = False, f"F not moved: {why}"
                 job.done.set()
                 continue
+            if isinstance(job, _ReleaseJob):
+                job.ok, job.message = False, f"lock kept: {why}"
+                job.done.set()
+                continue
             job.ctx.fail(why, error_code="link")
 
     def _run_jobs(self, link: DriveLink) -> None:
@@ -694,6 +725,19 @@ class TelemetryService:
             if isinstance(job, _CarriageJob):
                 try:
                     self._run_carriage(link, job)
+                finally:
+                    job.done.set()
+                continue
+            if isinstance(job, _ReleaseJob):
+                try:
+                    reads = {ax: {n: link.read(tp.VARS[ax][n]) for n in sm.RELEASE_READS} for ax in ("X", "Y")}
+                    why = self.monitor.release(reads, job.who)
+                    job.ok, job.message = (not why), (why or "stage lock released; the drift monitor keeps watching")
+                    if not why:  # health back to normal at once (the router refuses moves while it is a warning)
+                        self.backends[0].report(health=Health.NORMAL, reason="stage lock released by the operator")
+                except (_LinkError, TransportError, OSError) as exc:
+                    job.ok, job.message = False, f"lock kept: X/Y reads failed ({exc})"
+                    raise
                 finally:
                     job.done.set()
                 continue

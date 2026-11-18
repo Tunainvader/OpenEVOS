@@ -391,6 +391,7 @@ class MainWindow(QMainWindow):
         self._cmd(m, "mic.vessel", "Vessel…", cap._vessel_expert, why=busy)
         self._cmd(m, "mic.lightcam", "Light and camera…", cap._light_camera, why=busy)
         m.addSeparator()
+        self._cmd(m, "mic.release", "Release stage lock…", self.release_stage_lock, why=self._release_why)
         self._cmd(m, "mic.precheck", "System precheck…", self.open_precheck)
         self._cmd(m, "mic.heights", "Objective safe heights…", self.open_safe_heights, why=busy)
         self._cmd(m, "mic.recover", "Recover device…", lambda: self.navigate("hardware"))
@@ -506,6 +507,45 @@ class MainWindow(QMainWindow):
                 self.model.add_log("error" if c.status == "fault" else "warn", f"Precheck · {c.title}: {c.detail}")
         if w in ("fault", "warn"):
             self.open_precheck()
+
+    # ================================================================== stage lock release (ADR-0057)
+    def _locked_monitors(self):
+        return [s for s in getattr(self.session, "telemetry", []) or []
+                if getattr(s, "monitor", None) is not None and s.monitor.latched]
+
+    def _release_why(self) -> str:
+        locked = self._locked_monitors()
+        if not locked:
+            return "the stage is not locked"
+        return locked[0].monitor._release_blocker()
+
+    def release_stage_lock(self) -> None:
+        """Operator release of a small drift lock without a power cycle: confirm, then fresh X/Y reads decide."""
+        from PySide6.QtWidgets import QApplication, QMessageBox
+
+        locked = self._locked_monitors()
+        if not locked:
+            self.model.add_log("info", "Release stage lock: the stage is not locked")
+            return
+        svc = locked[0]
+        st, drift = svc.monitor.state(), svc.monitor.latch_drift()
+        text = (f"The drift monitor locked the stage: {st.get('message', '')}.\n\nRecorded drift: {drift:+d} counts "
+                f"(about {abs(drift) * 0.44:.1f} µm; the commutation risk starts near 14 counts).\n\n"
+                "OpenEVOS reads X and Y now and releases the lock only if both are homed, idle, free of drive faults, "
+                "powered and within 3 counts of their command. The monitor keeps watching: if the stage creeps again "
+                "it locks again. Release the lock?") if drift is not None else st.get("message", "")
+        if QMessageBox.question(self, "Release stage lock", text) != QMessageBox.Yes:
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            ok, msg = svc.release_latch("operator (Microscope › Release stage lock)")
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.model.add_log("info" if ok else "warn", f"Release stage lock: {msg}")
+        (QMessageBox.information if ok else QMessageBox.warning)(self, "Release stage lock", msg)
+        dlg = getattr(self, "_precheck_dlg", None)
+        if dlg is not None and dlg.isVisible():
+            dlg.refresh()
 
     def open_precheck(self):
         from openevos.ui.precheck_dialog import PrecheckDialog
