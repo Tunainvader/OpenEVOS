@@ -72,6 +72,8 @@ POLL_INTERVAL_S = 1.0
 REOPEN_INTERVAL_S = 5.0
 MOVE_POLL_S = 0.05
 SETTLE_BAND_COUNTS = 5  # the drives' LCONVERGEBAND (Gate 4)
+#: putting a knocked axis back approaches its target from this far (44 um), so the drive moves for real
+CORRECT_APPROACH_COUNTS = 100
 POWER_UP_SETTLE_S = 5.0  # the power-up record waits this long after X and Y report homed (ADR-0040 §9)
 #: max |APOS - CPOS| before a move and for an idle axis after another moves (ADR-0030: 1 count = 6.25 deg
 #: electrical on these closed-loop steppers; ~14 counts reverses torque)
@@ -1217,14 +1219,56 @@ class TelemetryService:
                 for ax in tp.MOTION_AXES:  # fresh, right before this leg: the previous leg moved the other axis
                     start[ax] = link.read(tp.VARS[ax]["APOS"])
                 for ax in leg:
-                    drift = self.monitor.pre_move(ax, start[ax], link.read(tp.VARS[ax]["CPOS"]))
+                    cpos = link.read(tp.VARS[ax]["CPOS"])
+                    knocked = self.monitor.disturbed.get(ax)
+                    if knocked is not None and abs(start[ax] - cpos) <= sm.CROSS_AXIS_TOLERANCE_COUNTS:
+                        # knocked by the previous leg (tracked): this leg moves it and the landing check proves it
+                        self.monitor.note(f"{ax} leg starts {start[ax] - cpos:+d} counts off its command after the "
+                                          f"knock ({knocked:+d}); moving it puts it right")
+                        continue
+                    drift = self.monitor.pre_move(ax, start[ax], cpos)
                     if drift:
                         ctx.fail(f"{ax}: {drift}; the stage is now locked: {RECOVERY}; {ax} not moved",
                                  error_code="encoder_drift")
                         return
             if not self._move_leg(link, job, leg, now, start):
                 return
+        if not self._correct_knocked(link, job, now):
+            return
         ctx.complete(self._position_now(link))
+
+    def _correct_knocked(self, link: DriveLink, job: _MoveJob, now: dict) -> bool:
+        """Put back an axis the move knocked off its requested position (within CROSS_AXIS_TOLERANCE_COUNTS; more
+        latched during the move). One axis at a time: a short verified leg CORRECT_APPROACH_COUNTS past the target,
+        then a verified leg onto it, so the drive really moves even if its command never followed the knock; both legs
+        have every leg check (flags, the still axis, the landing). False: the command has been failed or cancelled."""
+        self.monitor.take_disturbed()
+        for ax in tp.MOTION_AXES:
+            target = job.targets[ax]
+            off = link.read(tp.VARS[ax]["APOS"]) - target
+            if abs(off) <= SETTLE_BAND_COUNTS:
+                continue
+            if abs(off) > sm.CROSS_AXIS_TOLERANCE_COUNTS:  # not a knock this service tracks: the landing check's job
+                continue
+            lo, hi = link.read(tp.VARS[ax]["LPOSMIN"]), link.read(tp.VARS[ax]["LPOSMAX"])
+            via = target - CORRECT_APPROACH_COUNTS if off > 0 else target + CORRECT_APPROACH_COUNTS
+            if not lo <= via <= hi:
+                via = 2 * target - via  # the other side
+            self.monitor.note(f"putting {ax} back: {off:+d} counts off its target {target} after the move (via {via})")
+            for step in (via, target):
+                self._settle_between_legs(link, job.ctx)
+                if self._stop_request.is_set() or getattr(job.ctx, "cancel_requested", False):
+                    self._send_stop(link)
+                    job.ctx.mark_cancelled(self._position_now(link))
+                    return False
+                if self.monitor.latched:
+                    job.ctx.fail(f"{ax} not put back: {self.monitor.refusal()}", error_code="stage_latched")
+                    return False
+                start = {a: link.read(tp.VARS[a]["APOS"]) for a in tp.MOTION_AXES}
+                fix = _MoveJob(f"{job.command_id}-put-back-{ax}", job.ctx, {**start, ax: step}, job.target_um)
+                if not self._move_leg(link, fix, [ax], now, start):
+                    return False
+        return True
 
     # ------------------------------------------------------------------ Z focus and objective turret (ADR-0053)
     def _backend(self, device_id: str) -> TelemetryBackend:
@@ -1691,6 +1735,12 @@ class TelemetryService:
             if other in run.axes:
                 continue
             o_apos, o_start = link.read(tp.VARS[other]["APOS"]), run.start[other]
+            if DRIFT_MAX_COUNTS < abs(o_apos - o_start) <= sm.CROSS_AXIS_TOLERANCE_COUNTS:
+                # a bounded knock from this leg: tracked, and put back after the move (_correct_knocked)
+                self.monitor.record_disturbed(other, o_apos - o_start)
+                self.monitor.note(f"{other} knocked {o_apos - o_start:+d} counts while {'+'.join(run.axes)} moved; "
+                                  "it is put back after the move")
+                continue
             if abs(o_apos - o_start) > DRIFT_MAX_COUNTS:
                 run.outcome = "cross-axis drift"
                 self.monitor.trip("cross_axis_encoder_drift", other,

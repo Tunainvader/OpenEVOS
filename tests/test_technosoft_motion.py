@@ -197,12 +197,12 @@ def test_cross_axis_drift_stops_the_move_and_latches_both_axes():
     """Plan v3 §6.7 fault injection: Y's count jumps while only X moves -> latch within one sample; X stopped."""
     inst, svc, chain = _instrument()
     try:
-        chain.drift_on_move = {"Y": -9}
+        chain.drift_on_move = {"Y": -15}  # beyond the tracked-knock bound (10, 2026-11-19)
         _jog(inst, "x", 1000.0)
         assert _wait(lambda: svc.monitor.latched)
         assert _audited(inst, "idle_encoder_drift")
         assert svc.monitor.latch.rule == "idle_encoder_drift" and svc.monitor.latch.axis == "Y"
-        assert "-9" in svc.monitor.latch.message and "while X moved" in svc.monitor.latch.message
+        assert "-15" in svc.monitor.latch.message and "while X moved" in svc.monitor.latch.message
         assert svc.monitor.extra["Y"]["ISTATUSFLAGS"] == 0xD000  # the drive's record, read at the latch
         chain.drift_on_move = {}
         chain.values[("Y", "APOS")] = 0  # even back on its command, the stage stays locked (the phase may be wrong)
@@ -220,7 +220,7 @@ def test_latch_clears_only_after_x_and_y_are_seen_to_re_home():
     from openevos.core.models import Health
     inst, svc, chain = _instrument()
     try:
-        chain.drift_on_move = {"Y": -9}
+        chain.drift_on_move = {"Y": -15}  # beyond the tracked-knock bound (10, 2026-11-19)
         _jog(inst, "x", 1000.0)
         assert _wait(lambda: svc.monitor.latched)
         chain.drift_on_move = {}

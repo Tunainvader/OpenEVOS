@@ -58,7 +58,10 @@ def test_the_still_axis_is_watched_while_the_other_moves_the_moving_one_is_not()
         clk.t += 0.05
         assert m.fast(x, 0) is None
     clk.t += 0.05
-    latch = m.fast(20000, -3)
+    # 2026-11-19: a knock up to CROSS_AXIS_TOLERANCE_COUNTS while X moves is tracked (put back by the service)
+    assert m.fast(20000, -3) is None and m.disturbed == {"Y": -3}
+    clk.t += 0.05
+    latch = m.fast(20000, -(sm.CROSS_AXIS_TOLERANCE_COUNTS + 1))
     assert latch.rule == "idle_encoder_drift" and "while X moved" in latch.message
 
 
@@ -84,7 +87,8 @@ def test_a_still_axis_gets_its_reference_from_the_fresh_pre_move_read_at_once():
     m.begin_move({"X": 2268}, {"X": 0, "Y": 0})
     assert m.ref["Y"] == 0
     clk.t += 0.05
-    assert m.fast(500, -9).rule == "idle_encoder_drift"  # checked even inside the settle time
+    # checked even inside the settle time (beyond the tracked-knock bound)
+    assert m.fast(500, -(sm.CROSS_AXIS_TOLERANCE_COUNTS + 1)).rule == "idle_encoder_drift"
 
 
 def test_unhomed_axes_are_not_judged():
@@ -162,13 +166,13 @@ def test_evidence_is_written_ten_seconds_after_the_latch_in_the_correlate_format
     m.begin_move({"X": 20000}, {"X": 0, "Y": 0})
     for i in range(40):
         clk.t += 0.05
-        m.fast(i * 500, 0 if i < 30 else -4)
+        m.fast(i * 500, 0 if i < 30 else -14)  # beyond the tracked-knock bound (10)
     assert m.latched and not m.evidence_due()
     assert m.write_evidence() is None  # too early
     m.add_extra({"Y": {"ISTATUSFLAGS": 0xD000, "IIQMAX": 1200}})
     for _ in range(int(sm.POST_EVENT_S / 0.05) + 2):  # keeps logging after the event
         clk.t += 0.05
-        m.fast(20000, -4)
+        m.fast(20000, -14)
     assert m.evidence_due()
     path = m.write_evidence()
     rec = json.loads(path.read_text(encoding="utf-8"))
@@ -178,7 +182,7 @@ def test_evidence_is_written_ten_seconds_after_the_latch_in_the_correlate_format
         rows = list(csv.DictReader(fh))
     assert list(rows[0]) == list(sm.CSV_COLUMNS)
     assert {"t", "x_apos", "y_apos", "y_cpos"} <= set(rows[0])  # what y_drift_correlate.py reads
-    assert all(float(r["t"]) >= 0 for r in rows) and rows[-1]["y_apos"] == "-4" and rows[-1]["y_cpos"] == "0"
+    assert all(float(r["t"]) >= 0 for r in rows) and rows[-1]["y_apos"] == "-14" and rows[-1]["y_cpos"] == "0"
     assert any(r["x_cmd"] == "1" for r in rows)
     assert json.loads((tmp_path / sm.LATCH_FILE).read_text(encoding="utf-8"))["evidence"] == str(path)
 

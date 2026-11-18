@@ -244,6 +244,8 @@ class SimulatedDriveChain:
         self._homing: dict[str, int] = {}
         for ax in tp.MOTION_AXES:
             self.values[(ax, "HOMEDONE")] = 1
+        #: tests: knock these still axes by n counts when the next move of another axis finishes (once)
+        self.knock: dict[str, int] = {}
         self.o_steps_per_read = 0  # 0: a turret change completes at once; n: one position per n reads (tests)
         self.o_stuck = False
         self._o_turn: list | None = None  # [reads left, start]
@@ -299,6 +301,8 @@ class SimulatedDriveChain:
             for other, counts in self.drift_on_move.items():  # tests: the idle axis' encoder creeps (2026-11-13)
                 if other != axis:
                     self.values[(other, "APOS")] += counts
+            for other in [a for a in self.knock if a != axis]:  # once: Y's knock while X passes ~33-41 mm (2026-11-18)
+                self.values[(other, "APOS")] += self.knock.pop(other)  # the encoder only: the drive's CPOS stays put
             if self.moves_complete and self.speed_counts_s:  # travel at a real speed (manual-control demos)
                 self._ramps[axis] = (time.monotonic(), self.values[(axis, "APOS")], target)
                 self.values[(axis, "SRH")] = 0x013F

@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from openevos.backends.technosoft import protocol as tp
+from openevos.backends.technosoft import stage_monitor as sm
 from openevos.backends.technosoft import telemetry as tm
 from openevos.backends.technosoft import watchdog
 from openevos.backends.technosoft.transport import SimulatedDriveChain
@@ -81,7 +82,10 @@ def test_still_axis_backstop_latches_on_drift_and_stops_the_moving_axis_only():
     chain, svc, link = _setup({("Y", "APOS"): tm.DRIFT_MAX_COUNTS})
     run = _leg(["X"], {"X": 20000}, {"X": 0, "Y": 0})
     assert svc._leg_still_axis_ok(link, run)  # at the bound: fine
-    chain.values[("Y", "APOS")] = tm.DRIFT_MAX_COUNTS + 1
+    # 2026-11-19: a knock up to CROSS_AXIS_TOLERANCE_COUNTS is tracked and put back after the move, not latched
+    chain.values[("Y", "APOS")] = sm.CROSS_AXIS_TOLERANCE_COUNTS
+    assert svc._leg_still_axis_ok(link, run) and not svc.monitor.latched
+    chain.values[("Y", "APOS")] = sm.CROSS_AXIS_TOLERANCE_COUNTS + 1
     assert not svc._leg_still_axis_ok(link, run)
     assert run.outcome == "cross-axis drift" and svc.monitor.latch.rule == "cross_axis_encoder_drift"
     assert run.ctx.calls[-1][2] == "cross_axis_encoder_drift"

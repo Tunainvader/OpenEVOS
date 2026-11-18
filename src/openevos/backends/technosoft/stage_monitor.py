@@ -40,6 +40,10 @@ from openevos.backends.technosoft import protocol as tp
 
 #: protected thresholds (plan §6.3): recorded with every snapshot; changing one needs an ADR
 IDLE_DRIFT_MAX_COUNTS = 2
+#: a still axis knocked by the OTHER axis' move up to this far is tracked and put back, not latched (operator
+#: 2026-11-19: "when we already know the creep, can't we keep track and correct it"). The same bound as the operator
+#: release (ADR-0057), well under the ~14-count commutation reversal (ADR-0030). At rest the 2-count rule stays.
+CROSS_AXIS_TOLERANCE_COUNTS = 10
 MOVE_DRIFT_MAX_COUNTS = 3
 SETTLE_S = 0.5  # after OpenEVOS ends a move, the axis' reference is taken this much later
 RING_S = 40.0  # 30 s before an event + the 10 s written after it
@@ -110,6 +114,8 @@ class StageMonitor:
         self._record = None
         self.record_path: Path | None = None
         self.carried_over = False  # the latch came from the latch file (an earlier session), not from this one
+        #: still axes knocked (within CROSS_AXIS_TOLERANCE_COUNTS) by the move in progress: axis -> largest change
+        self.disturbed: dict[str, int] = {}
         self._load_latch()
         if record and self.evidence_dir is not None:
             self._open_record()
@@ -282,8 +288,16 @@ class StageMonitor:
                         self.ref[ax] = v
                     continue
                 d = v - ref
+                others = sorted(a for a in self.moving if a != ax)
+                if others and IDLE_DRIFT_MAX_COUNTS < abs(d) <= CROSS_AXIS_TOLERANCE_COUNTS:
+                    # a known, bounded knock from the other axis' move (2026-11-18: Y -2..-6 counts each time X passed
+                    # ~33-41 mm at full speed): tracked, and corrected by the stage service after the move
+                    if abs(d) > abs(self.disturbed.get(ax, 0)):
+                        self.disturbed[ax] = d
+                        self.commands.append((round(t, 3), (f"{ax} knocked {d:+d} counts while {'+'.join(others)} "
+                                                            "moved (tracked; corrected after the move)")))
+                    continue
                 if abs(d) > IDLE_DRIFT_MAX_COUNTS:
-                    others = sorted(a for a in self.moving if a != ax)
                     when = f"while {'+'.join(others)} moved" if others else "while the stage was at rest"
                     return self._trip("idle_encoder_drift", ax,
                                       f"{ax} encoder changed {d:+d} counts {when} with no {ax} command ({ref} -> {v})",
@@ -351,7 +365,23 @@ class StageMonitor:
                 self.moving.discard(ax)
                 self.ref[ax] = None
                 self.settle_until[ax] = t + SETTLE_S
+            if not self.moving:  # a knocked still axis takes a fresh reference (the service puts it back)
+                for ax in self.disturbed:
+                    self.ref[ax] = None
+                    self.settle_until[ax] = t + SETTLE_S
             self.commands.append((round(t, 3), f"move {'+'.join(axes)} ended: {why}"))
+
+    def record_disturbed(self, axis: str, d: int) -> None:
+        """The stage service's end-of-leg backstop saw `axis` knocked by `d` counts (within the tolerance)."""
+        with self._lock:
+            if abs(d) > abs(self.disturbed.get(axis, 0)):
+                self.disturbed[axis] = d
+
+    def take_disturbed(self) -> dict[str, int]:
+        """The still axes knocked by the move just finished (and forget them)."""
+        with self._lock:
+            out, self.disturbed = dict(self.disturbed), {}
+            return out
 
     def pre_move(self, axis: str, apos: int, cpos: int) -> str:
         """Rule 2 on an axis about to move: refuse (and latch) when its encoder is off its command."""

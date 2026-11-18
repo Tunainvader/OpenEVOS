@@ -474,7 +474,7 @@ def test_a_go_to_stops_before_y_when_y_drifts_during_the_x_leg():
     try:
         svc = s.telemetry[0]
         chain = svc.simulated_chain
-        chain.drift_on_move = {"Y": -9}  # Y's count jumps while X moves
+        chain.drift_on_move = {"Y": -15}  # Y's count jumps while X moves, beyond the tracked-knock bound (10)
         t = s.controller.move_stage(1000.0, 2000.0)
         assert t.wait(10) is CommandStatus.FAILED
         assert "idle_encoder_drift" in t.record.message

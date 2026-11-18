@@ -104,7 +104,7 @@ src/openevos/
     data/               # SDK signature table, documented EVOS profile (no unverified IDs)
   ai/                   # response schema, register validation, provider interface (NullProvider)
   hal/status_model.py   # runtime state (separate axis from evidence stage; ADR-0004)
-docs/decisions/         # ADR-0001 … ADR-0057 (index below) (0005 product direction; 0006 STOP keeps the incubator
+docs/decisions/         # ADR-0001 … ADR-0059 (index below) (0005 product direction; 0006 STOP keeps the incubator
                         #   running; 0007 runtime state axes; 0008 core execution model; 0009 firmware
                         #   safety; 0010 the desktop UI runs on the command core; 0011 Gate 1 LED
                         #   bootloader version query; 0012 LED StartApp maintenance tool; 0013 Gate 2
@@ -175,6 +175,8 @@ All 56 architecture decision records in [`docs/decisions`](docs/decisions), newe
 - [ADR-0055](docs/decisions/ADR-0055-led-board-autostart-at-launch.md): Start the LED board application at app launch (amends ADR-0012)
 - [ADR-0056](docs/decisions/ADR-0056-xy-limits-autoload-at-launch.md): Load the calibrated X/Y limits at app launch (amends ADR-0022)
 - [ADR-0057](docs/decisions/ADR-0057-operator-stage-lock-release.md): Operator release of a small stage-drift lock (amends ADR-0040)
+- [ADR-0058](docs/decisions/ADR-0058-xy-software-rehome.md): X/Y software re-home during a stage lock (amends ADR-0040)
+- [ADR-0059](docs/decisions/ADR-0059-track-and-correct-cross-axis-knock.md): Track and correct a small cross-axis knock instead of locking (amends ADR-0040)
 
 ## AI assistant link (MCP, read-only)
 
