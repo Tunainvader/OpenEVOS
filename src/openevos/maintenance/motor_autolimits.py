@@ -35,6 +35,20 @@ class AutolimitsResult:
         return self.outcome in ("pass", "already_loaded")
 
 
+def _limits_match(res, scans: Path) -> bool:
+    """True when Gate 7's baseline read shows X and Y already holding the calibrated limits it planned."""
+    base = getattr(res, "baseline", None) or {}
+    before, src = base.get("before") or {}, base.get("calibration_file")
+    p = Path(scans) / src if src else None
+    if not before or p is None or not p.exists():
+        return False
+    lim, problems = g7.load_limits(p)
+    if problems:
+        return False
+    return all((before.get(ax, {}).get("LPOSMIN"), before.get(ax, {}).get("LPOSMAX")) == tuple(lim[ax])
+               for ax, _ in g7.AXES)
+
+
 def autoload(*, scans: Path, run=g7.run) -> AutolimitsResult:
     dry = run(send=False, scans=scans)
     if dry.outcome != "dry_run" or dry.port is None:
@@ -43,6 +57,8 @@ def autoload(*, scans: Path, run=g7.run) -> AutolimitsResult:
     ev = g7.write_evidence(res, scans).name if res.port_state_read_back else ""
     if res.outcome == "pass":
         return AutolimitsResult("pass", "calibrated X/Y limits loaded and read back (no motion)", ev)
-    if res.outcome == "already_loaded":
+    if res.outcome == "already_loaded" or _limits_match(res, scans):
+        # Gate 7 refuses "not at home" before it looks at the limits; limits that already equal the calibration
+        # (the stage was moved since they were loaded) need nothing either
         return AutolimitsResult("already_loaded", "calibrated X/Y limits already loaded; nothing written", ev)
     return AutolimitsResult(res.outcome, f"calibrated X/Y limits not loaded: {res.message}", ev)

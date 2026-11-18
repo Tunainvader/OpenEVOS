@@ -40,3 +40,22 @@ def test_already_loaded_and_refusals_write_nothing_more(tmp_path, monkeypatch):
     run, calls = fake_run(["dry_run", "baseline_refused"])  # e.g. the stage was moved off home
     r = ma.autoload(scans=tmp_path, run=run)
     assert not r.stage_free and "not loaded" in r.message
+
+
+def test_moved_stage_with_limits_already_loaded_counts_as_loaded(tmp_path, monkeypatch):
+    """2026-11-18: Gate 7 refused 'not at home' although X/Y already held the calibrated limits (no power cycle since
+    they were loaded); the launch line said 'not loaded'."""
+    monkeypatch.setattr(g7, "write_evidence", lambda res, d: tmp_path / "e.json")
+    (tmp_path / "cal.json").write_text("{}", "utf-8")
+    monkeypatch.setattr(g7, "load_limits", lambda p: ({"X": (-4000, 266000), "Y": (-4000, 173000)}, []))
+
+    def run(**kw):
+        before = {"X": {"LPOSMIN": -4000, "LPOSMAX": 266000}, "Y": {"LPOSMIN": -4000, "LPOSMAX": 173000}}
+        out = "dry_run" if not kw.get("send") else "baseline_refused"
+        return SimpleNamespace(outcome=out, message="X not at home", port=SimpleNamespace(device="COM3"),
+                               port_state_read_back=kw.get("send", False),
+                               baseline={"calibration_file": "cal.json", "before": before})
+    r = ma.autoload(scans=tmp_path, run=run)
+    assert r.outcome == "already_loaded" and r.stage_free
+    monkeypatch.setattr(g7, "load_limits", lambda p: ({"X": (-4000, 266001), "Y": (-4000, 173000)}, []))
+    assert not ma.autoload(scans=tmp_path, run=run).stage_free  # power-up or other limits: still not loaded
