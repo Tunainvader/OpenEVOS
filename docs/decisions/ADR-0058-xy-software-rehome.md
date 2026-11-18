@@ -1,7 +1,8 @@
 # ADR-0058: X/Y software re-home during a stage lock (amends ADR-0040)
 
-- **Status:** Proposed (2026-11-19). Part 1 (Motor Gate 20) implemented, tested against a fake drive chain, and **run on
-  the instrument 2026-11-19: PASS** (X homed in 17.7 s, Y in 10.6 s; research note §11). Part 2 (the app action) not yet built.
+- **Status:** Accepted (2026-11-19). Part 1 (Motor Gate 20) **run on the instrument 2026-11-19: PASS** (X homed in
+  17.7 s, Y in 10.6 s; research note §11). Part 2 (the app action) implemented and tested on the simulated drive chain;
+  not yet used on the instrument.
 - **Asked for by:** the operator, 2026-11-19: "i want to be able to re home (as in powercycle) during stage lock (of
   course with a notification about stage lock rehoming), and then reach to the old position". Option A of the
   research note approved by the operator the same day.
@@ -9,7 +10,13 @@
   `YAxis.sw` and `MotorController64.dll`).
 - **Amends:** ADR-0040 (a lock that is not drift-releasable cleared only through a power cycle).
 - **Code (part 1):** `maintenance/motor_gate20_xy_rehome.py`; registered as `REVIEWED_MAINTENANCE["motor.xy_rehome"]`.
-- **Tests:** `tests/test_maintenance_motor_gate20_xy_rehome.py`.
+- **Code (part 2):** `backends/technosoft/protocol.py` (`XY_HOME_FRAMES`, `home_frame`); `stage_monitor.py`
+  (`rehome_blocker`, `begin_rehome`, `end_rehome`, `rehome_done`, `REHOME_READS`); `telemetry.py` (`rehome_stage`,
+  `_RehomeJob`, `_run_rehome`); `transport.py` (the simulated drive homes on `ESTATE` 19); `ui/shell.py`
+  (Microscope › Re-home stage…, offered from the Stage pill, a refused move and Release stage lock);
+  `ui/precheck_dialog.py`; `acquisition/precheck.py`.
+- **Tests:** `tests/test_maintenance_motor_gate20_xy_rehome.py`, `tests/test_stage_rehome.py`,
+  `tests/test_stage_lock_prompt.py`.
 
 ## Decision
 - **The request:** `ESTATE` = 19 on X or Y (`STATE_19_HOME_DOUBLE`). It calls the same homing routine the drive runs at
@@ -28,10 +35,27 @@
   them). The app will pass them only as `extra_writes` for the duration of one re-home, as ADR-0056 does for the limit
   writes.
 
-## Part 2 (to follow, after the first gate run)
-The app's "Re-home stage" action from the stage-lock prompt: notify with the lock reason, remember X/Y, re-home through
-the telemetry service with the monitor watching (a new monitor rule clears the lock on an app-started home seen to
-finish, since `ESTATE` 19 leaves `IINITONCEDONE` at 12,345), wait for both axes, then return X then Y.
+## Part 2: the app action
+- **Where:** Microscope › Re-home stage…; and wherever the app offers the lock release (the Stage pill, a move refused
+  by the lock, Microscope › Release stage lock, the precheck dialog): a lock the release cannot clear now leads to the
+  re-home instead of a dead end. Small drift locks keep the ADR-0057 release.
+- **Notification:** a confirmation names the lock (rule, axis, message), says the stage re-homes X then Y as after a
+  power cycle, where it will return to, that Z must be at 0, and that Stop cannot interrupt an axis while it homes.
+- **On the service thread (`_run_rehome`):**
+  1. fresh reads; **refuse, sending nothing**, if X/Y are not idle (state 0 or 13; state 13 hands `ESTATE` on like
+     idle, `XAxis.sw` 0x4388), have `MER` ≠ 0 or the `SRH` fault bit, Z is not at 0 (±5 counts), or P/F/O is busy;
+  2. remember X/Y (`APOS`);
+  3. for X, then Y: register the home frame as `extra_writes` for that one write, send it, follow `ESTATEV`/`HOMEDONE`
+     (started ≤ 5 s, done ≤ 120 s); the monitor treats the axis as moving meanwhile; a stop request before Y ends
+     the re-home; any fault ends it with nothing more sent and the lock kept;
+  4. **the monitor's new clear rule** (`rehome_done`): fresh `REHOME_READS` of both axes must show initialised, homed
+     (`HOMEDONE` bit 0, state 0), no interrupted/over-current/oscillation/comm-abort flag, `MER` 0, powered, `APOS` and
+     `CPOS` within 5 counts of 0. Only then is the latch cleared (`stage-latch-cleared-*.json`);
+  5. a fresh poll, so the ADR-0056 path reloads the calibrated limits if the drives hold the power-up ones;
+  6. the return to the remembered X/Y with the ordinary verified move (`_run_move`: X then Y, pre-move drift check,
+     landing check), refused if the target is outside the drives' current limits (the stage then stays home).
+- **Evidence:** `stage-rehome-<time>-<outcome>.json` with the lock, before/after reads, each axis' homing trace and the
+  return.
 
 ## Consequences
 - A software re-home does not clear latched drive faults (`MER`) and is not a reboot; those still need a power cycle.

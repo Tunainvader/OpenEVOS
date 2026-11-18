@@ -61,6 +61,11 @@ RECOVERY = ("power-cycle the microscope: with OpenEVOS running it watches X and 
 RELEASABLE_RULES = frozenset({"idle_encoder_drift", "command_mismatch", "cross_axis_encoder_drift"})
 RELEASE_MAX_DRIFT_COUNTS = 10
 RELEASE_READS = ("IINITONCEDONE", "ESTATEV", "SRH", "SRL", "ISTATUSFLAGS", "APOS", "CPOS")
+#: Software re-home (ADR-0058, amends ADR-0040): the latch also clears when the stage service sent X and Y the drives'
+#: own home request (ESTATE 19, the power-up homing routine) and fresh reads show both homed, idle, fault-free,
+#: powered and at 0. ESTATE 19 leaves IINITONCEDONE at 12345, so the power-cycle rule above cannot see it.
+REHOME_READS = ("IINITONCEDONE", "ESTATEV", "HOMEDONE", "ISTATUSFLAGS", "SRL", "SRH", "MER", "APOS", "CPOS")
+REHOME_HOME_BAND = 5
 #: extra reads taken the moment a latch is set, before anything else is sent (plan T0 read order)
 EXTRA_READS = ("ISTATUSFLAGS", "SRL", "MER", "IIQMAX", "IIQMIN", "IQ", "LCOMMERRPOS", "APOS", "CPOS")
 
@@ -187,6 +192,59 @@ class StageMonitor:
             self._clear(f"{who} release: {self.latch.rule} on {self.latch.axis}, recorded drift "
                         f"{self.latch_drift():+d} counts; X and Y read homed, idle, fault-free, powered and within "
                         f"{MOVE_DRIFT_MAX_COUNTS} counts of their command")
+            return ""
+
+    # ------------------------------------------------------------------ software re-home (ADR-0058)
+    def rehome_blocker(self) -> str:
+        """'' when the latch may be cleared by an app-started re-home of X and Y (any lock: it re-runs the drives'
+        power-up homing, ESTATE 19); otherwise why not."""
+        with self._lock:
+            if self.latch is None:
+                return "the stage is not locked"
+            return ""
+
+    def begin_rehome(self, axis: str) -> None:
+        """The stage service is about to send `axis` its home request: the axis moves with no move command, so the
+        idle-drift rule must not watch it."""
+        with self._lock:
+            self.moving.add(axis)
+            self.ref[axis] = None
+            self.commands.append((round(self._now(), 3), f"software re-home of {axis} requested (ESTATE 19)"))
+
+    def end_rehome(self, axis: str, why: str) -> None:
+        self.end_move([axis], f"re-home: {why}")
+
+    def rehome_done(self, values: dict[str, dict[str, int]], who: str = "operator") -> str:
+        """Both axes' fresh reads (REHOME_READS) right after the service saw each one home (HOMEDONE cleared by the
+        request, then set again with ESTATEV 0). '' = the latch is cleared (evidence written); else why it stays."""
+        with self._lock:
+            problems = []
+            for ax in AXES:
+                v = values.get(ax) or {}
+                if any(n not in v for n in REHOME_READS):
+                    problems.append(f"{ax}: reads missing")
+                    continue
+                if v["IINITONCEDONE"] != tp.INIT_DONE_MARKER:
+                    problems.append(f"{ax} not initialised")
+                if not v["HOMEDONE"] & 1 or v["ESTATEV"] != 0:
+                    problems.append(f"{ax} not homed (HOMEDONE {v['HOMEDONE']}, state {v['ESTATEV']})")
+                if v["ISTATUSFLAGS"] & tp.ISF_HOME_INTERRUPTED:
+                    problems.append(f"{ax} homing was interrupted (ISTATUSFLAGS 0x{v['ISTATUSFLAGS']:04X})")
+                if v["MER"]:
+                    problems.append(f"{ax} drive fault MER 0x{v['MER']:04X}")
+                hit = self._flag_rule(ax, v["ISTATUSFLAGS"], v["SRL"])
+                if hit:
+                    problems.append(hit[2])
+                if abs(v["APOS"]) > REHOME_HOME_BAND or abs(v["CPOS"]) > REHOME_HOME_BAND:
+                    problems.append(f"{ax} not at home after homing (APOS {v['APOS']}, CPOS {v['CPOS']})")
+            if problems:
+                return "; ".join(problems)
+            if self.latch is not None:
+                self.latch.values["rehome_reads"] = {ax: dict(values[ax]) for ax in AXES}
+                self._clear(f"software re-home of X and Y by {who} (ESTATE 19, ADR-0058): both homed, idle, "
+                            "fault-free, powered and at 0")
+            for ax in AXES:
+                self.homed[ax] = True
             return ""
 
     # ------------------------------------------------------------------ feeding (service thread)

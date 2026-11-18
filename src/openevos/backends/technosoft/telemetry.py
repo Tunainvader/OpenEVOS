@@ -31,6 +31,7 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any
 
 from openevos.backends.technosoft import power_up_record, watchdog
 from openevos.backends.technosoft import protocol as tp
@@ -294,6 +295,62 @@ class _ReleaseJob:
 
 
 @dataclass
+class _RehomeJob:
+    """Software re-home of X and Y during a stage lock (ADR-0058): remember X/Y, send each axis the drives' own home
+    request (ESTATE 19) in turn, watch it finish, let the monitor clear the lock, then return X then Y. `stage` is a
+    one-line progress text for the UI; `done` is set at the end, whatever happened."""
+    done: threading.Event
+    who: str = "operator"
+    stage: str = "queued"
+    ok: bool = False
+    message: str = ""
+    homed: bool = False  # both axes homed and the lock cleared (the return may still have failed)
+    remembered: dict[str, int] = field(default_factory=dict)  # counts
+    returned_um: tuple[float, float] | None = None
+    record: dict = field(default_factory=dict)
+
+
+def _set_extra_writes(link: DriveLink, frames: frozenset) -> None:
+    """Register exact extra frames on the port for one operation (ADR-0056/0058); the transport's last check uses it."""
+    port: Any = link.port
+    port.extra_writes = frames
+
+
+class _ReturnCtx:
+    """The minimal command context `_run_move` needs, for the re-home's own return move (no router command)."""
+
+    def __init__(self) -> None:
+        self.cancel_requested = False
+        self.started = False
+        self.ok: bool | None = None
+        self.message = ""
+        self.position: Position | None = None
+
+    def mark_started(self) -> None:
+        self.started = True
+
+    def complete(self, position=None) -> None:
+        if self.ok is None:
+            self.ok, self.position, self.message = True, position, "returned"
+
+    def fail(self, message: str, error_code: str = "") -> None:
+        if self.ok is None:
+            self.ok, self.message = False, message
+
+    def mark_cancelled(self, position=None) -> None:
+        if self.ok is None:
+            self.ok, self.position, self.message = False, position, "return cancelled by a stop"
+
+
+#: the re-home's limits (Gate 20 on the unit: started at the first poll, done in 10.6-17.7 s)
+REHOME_START_S = 5.0
+REHOME_AXIS_TIMEOUT_S = 120.0
+REHOME_POLL_S = 0.2
+REHOME_Z_BAND = 5  # Z must be at home (counts), as Gate 20
+REHOME_PRE_READS = ("ESTATEV", "IINITONCEDONE", "SRH", "SRL", "MER", "ISTATUSFLAGS", "APOS", "CPOS", "HOMEDONE")
+
+
+@dataclass
 class _FocusJob:
     """Z to an absolute target in counts (ADR-0053)."""
     command_id: str
@@ -496,6 +553,9 @@ class TelemetryService:
         self.emulated = False
         self._limits_attempted = False  # once per homing; reset when X or Y re-initialises
         self.limits_reloads: list[dict] = []
+        self._rehome: _RehomeJob | None = None  # the latest software re-home (ADR-0058)
+        self.rehome_start_s = REHOME_START_S
+        self.rehome_timeout_s = REHOME_AXIS_TIMEOUT_S
 
     @property
     def speed_mm_s(self) -> float:
@@ -545,6 +605,27 @@ class TelemetryService:
         if not job.done.wait(timeout_s):
             return False, f"no fresh X/Y reads within {timeout_s:g} s; the lock stays"
         return job.ok, job.message
+
+    def rehome_blocker(self) -> str:
+        """'' when the operator may start a software re-home now (ADR-0058); otherwise why not."""
+        if not self.motion:
+            return "motor control is not enabled in this session"
+        if self._rehome is not None and not self._rehome.done.is_set():
+            return "a re-home is already running"
+        return self.monitor.rehome_blocker()
+
+    def rehome_stage(self, who: str = "operator") -> _RehomeJob | str:
+        """Start a software re-home of X and Y (ADR-0058), from any thread except the service's. Returns the running
+        job (poll `stage`, wait on `done`), or why it cannot start. The service re-checks everything on its thread."""
+        if threading.current_thread() is self._thread:
+            return "rehome_stage called from the telemetry thread"
+        why = self.rehome_blocker()
+        if why:
+            return why
+        job = _RehomeJob(threading.Event(), who)
+        self._rehome = job
+        self.submit(job)  # type: ignore[arg-type]
+        return job
 
     def move_carriage(self, dest: str, timeout_s: float = CARRIAGE_WAIT_S) -> tuple[bool, str]:
         """Blocking, from any thread except the service's: F to 'slot1'..'slot4' or 'mirror' through the drive's own
@@ -858,6 +939,10 @@ class TelemetryService:
                 job.ok, job.message = False, f"lock kept: {why}"
                 job.done.set()
                 continue
+            if isinstance(job, _RehomeJob):
+                job.ok, job.message, job.stage = False, f"re-home not started: {why}", "not started"
+                job.done.set()
+                continue
             job.ctx.fail(why, error_code="link")
 
     def _run_jobs(self, link: DriveLink) -> None:
@@ -883,6 +968,19 @@ class TelemetryService:
                     job.ok, job.message = False, f"lock kept: X/Y reads failed ({exc})"
                     raise
                 finally:
+                    job.done.set()
+                continue
+            if isinstance(job, _RehomeJob):
+                try:
+                    self._run_rehome(link, job)
+                except (_LinkError, TransportError, OSError, tp.ProtocolRefused) as exc:
+                    job.ok, job.stage = False, "failed"
+                    job.message = (f"motor link error during the re-home ({exc}); nothing more was sent. "
+                                   f"The lock stays unless both axes were seen to home: {RECOVERY}")
+                    raise
+                finally:
+                    _set_extra_writes(link, frozenset())
+                    self._write_rehome_record(job)
                     job.done.set()
                 continue
             if isinstance(job, (_FocusJob, _TurretJob)):
@@ -915,6 +1013,149 @@ class TelemetryService:
             return  # the next poll reports it
         self.backends[0].report(position=pos, activity=Activity.MOVING if moving else Activity.IDLE,
                                 reason="move ended")
+
+    # ------------------------------------------------------------------ software re-home (ADR-0058)
+    def _run_rehome(self, link: DriveLink, job: _RehomeJob) -> None:
+        """Remember X/Y, home X then Y with ESTATE 19 (Gate 20's frames), let the monitor clear the lock on fresh reads,
+        reload the calibrated limits if needed (ADR-0056 path), then return X then Y with the ordinary move. Anything
+        off: refuse (before sending) or stop sending, keep the lock, say why."""
+        job.stage = "checking X, Y and Z"
+        job.record = {"utc": datetime.now(timezone.utc).isoformat(timespec="milliseconds"), "who": job.who,
+                      "lock": self.monitor.refusal(), "frames": {ax: f.hex(" ") for ax, f in tp.XY_HOME_FRAMES.items()}}
+        why = self.monitor.rehome_blocker()
+        if why:
+            job.stage, job.message = "refused", f"re-home not started: {why}"
+            return
+        pre = {ax: {n: link.read(tp.VARS[ax][n]) for n in REHOME_PRE_READS} for ax in tp.MOTION_AXES}
+        z = {n: link.read(tp.VARS["Z"][n]) for n in ("ESTATEV", "APOS", "CPOS")}
+        others = {ax: link.read(tp.VARS[ax]["ESTATEV"]) for ax in ("P", "F", "O")}
+        job.record["before"] = {"XY": pre, "Z": z, "ESTATEV_PFO": others}
+        problems = []
+        for ax, v in pre.items():
+            if v["ESTATEV"] not in (0, 13) or not v["SRH"] & tp.SRH_MOTION_COMPLETE_BIT:
+                problems.append(f"{ax} is not idle (state {v['ESTATEV']})")
+            if v["MER"]:
+                problems.append(f"{ax} has a latched drive fault (MER 0x{v['MER']:04X}) that only a power cycle clears")
+            if v["SRH"] & 0x8000:
+                problems.append(f"{ax} reports a drive fault (SRH 0x{v['SRH']:04X}); power-cycle instead")
+        if z["ESTATEV"] != 0 or abs(z["APOS"]) > REHOME_Z_BAND or abs(z["CPOS"]) > REHOME_Z_BAND:
+            problems.append(f"the objective is not lowered to 0 (Z at {um_from_counts('Z', z['APOS']):.0f} µm): lower "
+                            "it fully first, the stage travels to its home corner")
+        problems += [f"{ax} is not idle (state {s})" for ax, s in others.items() if s != 0]
+        if problems:
+            job.stage, job.message = "refused", "re-home refused, nothing sent: " + "; ".join(problems)
+            return
+        job.remembered = {ax: pre[ax]["APOS"] for ax in tp.MOTION_AXES}
+        self.monitor.note("software re-home: remembered X {X}, Y {Y} (counts)".format(**job.remembered))
+        for ax in tp.MOTION_AXES:
+            if self._stop_request.is_set():
+                self._send_stop(link)
+                job.stage, job.message = "stopped", (f"re-home stopped before {ax} by a stop request; the lock stays: "
+                                                     f"{RECOVERY}")
+                return
+            job.stage = f"homing {ax}"
+            self.backends[0].report(activity=Activity.MOVING, reason=f"software re-home: homing {ax} (ESTATE 19)")
+            ok, msg = self._rehome_axis(link, job, ax)
+            if not ok:
+                job.stage, job.message = "failed", f"{msg}. Nothing more was sent; the lock stays: {RECOVERY}"
+                self.backends[0].report(reason=f"software re-home failed: {msg}")
+                return
+        job.stage = "verifying"
+        reads = {ax: {n: link.read(tp.VARS[ax][n]) for n in sm.REHOME_READS} for ax in tp.MOTION_AXES}
+        job.record["after"] = reads
+        why = self.monitor.rehome_done(reads, job.who)
+        if why:
+            job.stage, job.message = "failed", f"X and Y homed but the lock stays: {why}. {RECOVERY}"
+            return
+        job.homed = True
+        self.backends[0].report(health=Health.NORMAL, reason="stage lock cleared by a software re-home (ADR-0058)")
+        values = self.poll_once(link)  # fresh state; the ADR-0056 path reloads calibrated limits if needed
+        if values is not None:
+            if self.monitor.status(values) is not None:
+                self._on_latch(link)
+            self._publish(values)
+            self._maybe_reload_limits(link, values)
+        self._rehome_return(link, job)
+
+    def _rehome_axis(self, link: DriveLink, job: _RehomeJob, ax: str) -> tuple[bool, str]:
+        """One home request and its follow-up: started (ESTATEV 19 or HOMEDONE cleared), then done (ESTATEV 0 with
+        HOMEDONE set). No stop is possible meanwhile: the drive reads ESTATE only after homing."""
+        frame = tp.home_frame(ax)
+        self.monitor.begin_rehome(ax)
+        trace: list = []
+        outcome = "failed"
+        t0 = time.monotonic()
+        try:
+            _set_extra_writes(link, frozenset({frame}))
+            try:
+                link.write(frame)
+            finally:
+                _set_extra_writes(link, frozenset())
+            started = False
+            while True:
+                est = link.read(tp.VARS[ax]["ESTATEV"])
+                hd = link.read(tp.VARS[ax]["HOMEDONE"])
+                apos = link.read(tp.VARS[ax]["APOS"])
+                t = time.monotonic() - t0
+                trace.append([round(t, 3), est, hd, apos])
+                if not started and (est == tp.HOME_STATE or not hd & 1):
+                    started = True
+                if started and est == 0:
+                    if not hd & 1:
+                        return False, f"{ax} homing ended without completing (interrupted or over-current)"
+                    outcome = "homed"
+                    return True, f"{ax} homed in {t:.1f} s"
+                if not started and t > self.rehome_start_s:
+                    return False, f"{ax} did not start homing within {self.rehome_start_s:g} s"
+                if t > self.rehome_timeout_s:
+                    return False, f"{ax} still homing after {self.rehome_timeout_s:g} s"
+                self._sleep(REHOME_POLL_S)
+        finally:
+            job.record.setdefault("axes", {})[ax] = {"outcome": outcome, "seconds": round(time.monotonic() - t0, 3),
+                                                     "trace": trace}
+            self.monitor.end_rehome(ax, outcome)
+
+    def _rehome_return(self, link: DriveLink, job: _RehomeJob) -> None:
+        """Back to the remembered X/Y with the ordinary verified move (X then Y, pre-move and landing checks)."""
+        targets = dict(job.remembered)
+        um = (um_from_counts("X", targets["X"]), um_from_counts("Y", targets["Y"]))
+        lim = {ax: (link.read(tp.VARS[ax]["LPOSMIN"]), link.read(tp.VARS[ax]["LPOSMAX"])) for ax in tp.MOTION_AXES}
+        outside = [f"{ax} {targets[ax]} outside {lo}..{hi}" for ax, (lo, hi) in lim.items()
+                   if not lo <= targets[ax] <= hi]
+        if outside:
+            job.stage, job.message = "homed, not returned", (
+                "Stage re-homed and the lock cleared, but the old position is outside the drives' current limits ("
+                + "; ".join(outside) + "): the stage stays at home. Move it from the Capture page")
+            return
+        job.stage = "returning X then Y"
+        self.backends[0].report(activity=Activity.MOVING,
+                                reason=f"software re-home: returning to X {um[0] / 1000:.3f}, Y {um[1] / 1000:.3f} mm")
+        ctx = _ReturnCtx()
+        self._run_move(link, _MoveJob("rehome-return", ctx, targets, um))
+        self._report_settled(link)
+        job.record["return"] = {"targets": targets, "ok": ctx.ok, "message": ctx.message}
+        if ctx.ok:
+            job.ok, job.stage, job.returned_um = True, "done", um
+            job.message = ("Stage re-homed (X then Y), the lock cleared, and the stage is back at "
+                           f"X {um[0] / 1000:.3f}, Y {um[1] / 1000:.3f} mm")
+        else:
+            job.stage = "homed, return failed"
+            job.message = f"Stage re-homed and the lock cleared, but the return move did not finish: {ctx.message}"
+
+    def _write_rehome_record(self, job: _RehomeJob) -> None:
+        job.record.update(stage=job.stage, ok=job.ok, homed=job.homed, message=job.message,
+                          remembered=job.remembered)
+        self.monitor.note(f"software re-home: {job.stage}: {job.message}")
+        folder = self.monitor.evidence_dir
+        if folder is None:
+            return
+        try:
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / f"stage-rehome-{stamp}-{'pass' if job.ok else job.stage.replace(' ', '_')}.json").write_text(
+                json.dumps(job.record, indent=1, default=str), encoding="utf-8")
+        except OSError:
+            pass
 
     def _run_move(self, link: DriveLink, job: _MoveJob) -> None:
         ctx = job.ctx

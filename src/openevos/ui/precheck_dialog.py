@@ -57,6 +57,11 @@ class PrecheckDialog(QDialog):
         self.btn_release.setToolTip("Shown when the drift monitor holds a small lock that fresh reads can release")
         self.btn_release.clicked.connect(lambda: self.win.release_stage_lock())
         row.addWidget(self.btn_release)
+        self.btn_rehome = QPushButton("Re-home stage…")
+        self.btn_rehome.setToolTip("Shown when the stage is locked and cannot be released: X then Y re-run their "
+                                   "power-up homing, then the stage returns to where it was (ADR-0058)")
+        self.btn_rehome.clicked.connect(lambda: self.win.rehome_stage())
+        row.addWidget(self.btn_rehome)
         self.btn_heights = QPushButton("Set safe heights…")
         self.btn_recheck = QPushButton("Check again")
         self.btn_close = QPushButton("Close")
@@ -107,6 +112,8 @@ class PrecheckDialog(QDialog):
         self.scroll.setWidget(body)
         w = pc.worst(self.checks)
         self.btn_release.setVisible(self.win._release_why() == "")
+        rehome = getattr(self.win, "_rehome_why", None)
+        self.btn_rehome.setVisible(rehome is not None and rehome() == "" and self.win._release_why() != "")
         self.lbl_summary.setText(pc.summary(self.checks))
         self.lbl_summary.setStyleSheet(f"color: {status_color(w) if w in ('fault', 'warn') else theme.TEXT};")
         return self.checks

@@ -400,6 +400,7 @@ class MainWindow(QMainWindow):
         self._cmd(m, "mic.lightcam", "Light and camera…", cap._light_camera, why=busy)
         m.addSeparator()
         self._cmd(m, "mic.release", "Release stage lock…", self.release_stage_lock, why=self._release_why)
+        self._cmd(m, "mic.rehome", "Re-home stage…", lambda: self.rehome_stage(), why=self._rehome_why)
         self._cmd(m, "mic.precheck", "System precheck…", self.open_precheck)
         self._cmd(m, "mic.heights", "Objective safe heights…", self.open_safe_heights, why=busy)
         self._cmd(m, "mic.recover", "Recover device…", lambda: self.navigate("hardware"))
@@ -543,9 +544,8 @@ class MainWindow(QMainWindow):
         svc = locked[0]
         st, drift = svc.monitor.state(), svc.monitor.latch_drift()
         blocker = svc.monitor._release_blocker()
-        if blocker:  # cannot be released from the app: say why and what to do instead of a dead button
-            QMessageBox.information(self, "Stage locked", f"The drift monitor locked the stage: {st.get('message', '')}."  # noqa: E501
-                                    f"\n\nIt cannot be released from the app: {blocker}.")
+        if blocker:  # not a small drift: offer the software re-home (ADR-0058) instead of a dead end
+            self.rehome_stage(reason=f"{st.get('message', '')} (it cannot be released: {blocker})")
             return
         text = (f"The drift monitor locked the stage: {st.get('message', '')}.\n\nRecorded drift: {drift:+d} counts "
                 f"(about {abs(drift) * 0.44:.1f} µm; the commutation risk starts near 14 counts).\n\n"
@@ -564,6 +564,76 @@ class MainWindow(QMainWindow):
         dlg = getattr(self, "_precheck_dlg", None)
         if dlg is not None and dlg.isVisible():
             dlg.refresh()
+
+    # ================================================================== software re-home (ADR-0058)
+    def _rehome_service(self):
+        return next((s for s in getattr(self.session, "telemetry", []) or [] if hasattr(s, "rehome_stage")), None)
+
+    def _rehome_why(self) -> str:
+        svc = self._rehome_service()
+        return "no physical stage in this session" if svc is None else svc.rehome_blocker()
+
+    def rehome_stage(self, reason: str = "") -> None:
+        """Re-home X and Y from software during a stage lock, as a power cycle would, then return to the position
+        before (ADR-0058; operator 2026-11-19: "re home (as in powercycle) during stage lock (with a notification
+        about stage lock rehoming), and then reach to the old position"). Confirm with the lock reason, start the
+        service's job, report its progress in the log and the result in a box; the UI is not blocked meanwhile."""
+        from PySide6.QtWidgets import QMessageBox
+
+        svc = self._rehome_service()
+        why = self._rehome_why()
+        if why:
+            QMessageBox.information(self, "Re-home stage", f"The stage cannot be re-homed from the app now: {why}.")
+            return
+        if not reason:
+            st = svc.monitor.state()
+            reason = st.get("message", "") or "operator request"
+        xy = self.session.controller.stage_xy()
+        back = f"X {xy[0] / 1000:.2f}, Y {xy[1] / 1000:.2f} mm" if xy else "where it was"
+        text = (f"Stage locked: {reason}.\n\nRe-home the stage now? X, then Y, each drive runs its own power-up "
+                "homing: it drives to its hard stop and finds its index, as after switching the microscope on (about "
+                f"10–20 s per axis). The lock clears when both are seen homed, and the stage then returns to {back} "
+                "(X, then Y).\n\nFirst lower the objective fully (Z at 0): the stage travels to its home corner. Keep "
+                "hands clear of the stage. Stop cannot interrupt an axis while it homes; the microscope's power switch "
+                "can. A drive fault that "
+                "survives homing still needs a power cycle.")
+        if QMessageBox.question(self, "Re-home stage", text) != QMessageBox.StandardButton.Yes:
+            return
+        job = svc.rehome_stage("operator (Re-home stage)")
+        if isinstance(job, str):
+            self.model.add_log("warn", f"Re-home stage: not started: {job}")
+            QMessageBox.warning(self, "Re-home stage", f"Not started: {job}")
+            return
+        self.model.add_log("warn", f"Re-home stage: started ({reason}); the stage returns to {back} after homing")
+        self._watch_rehome(job)
+
+    def _watch_rehome(self, job) -> None:
+        from PySide6.QtWidgets import QMessageBox
+
+        last: dict[str, str | None] = {"stage": None}
+        timer = QTimer(self)
+        timer.setInterval(250)
+
+        def tick() -> None:
+            stage = getattr(job, "stage", "")
+            if stage != last["stage"]:
+                last["stage"] = stage
+                if stage:
+                    self.model.add_log("info", f"Re-home stage: {stage}")
+            if not job.done.is_set():
+                return
+            timer.stop()
+            timer.deleteLater()
+            ok, msg = bool(getattr(job, "ok", False)), getattr(job, "message", "") or "finished"
+            self.model.add_log("info" if ok else "warn", f"Re-home stage: {msg}")
+            (QMessageBox.information if ok else QMessageBox.warning)(self, "Re-home stage", msg)
+            dlg = getattr(self, "_precheck_dlg", None)
+            if dlg is not None and dlg.isVisible():
+                dlg.refresh()
+
+        timer.timeout.connect(tick)
+        timer.start()
+        self._rehome_timer = timer  # held for the life of the job
 
     def open_precheck(self):
         from openevos.ui.precheck_dialog import PrecheckDialog
@@ -694,7 +764,7 @@ class MainWindow(QMainWindow):
             state, text = describe_snapshot(snap)
             tip = f"{did}: {snap.note or ''}" if snap else did
             if did == self.session.profile.stage_device and self._locked_monitors():
-                tip += "\n\nStage locked by the drift monitor: click to release"
+                tip += "\n\nStage locked by the drift monitor: click to release or re-home it"
             pill.set_state(state, text, tip)
             self.health.refresh()
 

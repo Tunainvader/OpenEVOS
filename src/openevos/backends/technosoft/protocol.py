@@ -300,6 +300,22 @@ _FIXED_WRITES = frozenset({f for ax in MOTION_AXES for f in (move_request(ax), *
                           | _F_WRITES | _ZO_WRITES)
 
 
+#: X/Y software re-home (Motor Gate 20, ADR-0058): ESTATE = 19, STATE_19_HOME_DOUBLE, the drive's power-up homing
+#: routine and PearlScope's own XYStageHome frames (run on the unit 2026-11-19: X 17.7 s, Y 10.6 s). Not in
+#: is_motion_write: a port accepts one only while the stage service registers it for one re-home (`extra_writes`).
+HOME_STATE = 19
+XY_HOME_FRAMES = {"X": bytes.fromhex("06 00 10 21 B3 00 13 FD"), "Y": bytes.fromhex("06 00 20 21 B3 00 13 0D")}
+#: ISTATUSFLAGS bit 3: the drive's homing was interrupted (XAxis.sw _H30_INTERRUPTED_SETFLAG)
+ISF_HOME_INTERRUPTED = 0x0008
+
+
+def home_frame(axis: str) -> bytes:
+    if axis not in XY_HOME_FRAMES:
+        raise ProtocolRefused(f"no home request for axis {axis}")
+    assert XY_HOME_FRAMES[axis] == _w16(axis, _ESTATE, HOME_STATE)
+    return XY_HOME_FRAMES[axis]
+
+
 #: X/Y position-limit writes (Motor Gate 7, ADR-0022/0056): LPOSMIN 25 B4, LPOSMAX 25 B6
 LIMIT_OPS = {"LPOSMIN": 0x25B4, "LPOSMAX": 0x25B6}
 POWER_UP_LIMITS = (0, 50000)

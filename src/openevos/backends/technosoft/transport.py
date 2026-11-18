@@ -237,6 +237,13 @@ class SimulatedDriveChain:
         self.values.update({("Z", "LPOSMIN"): -1779, ("Z", "LPOSMAX"): 67000, ("Z", "LCONVERGEBAND"): 5,
                             ("O", "ICURRENTPOSHF"): 1, ("O", "IHF"): 4, ("O", "ITARGETPOS"): 1, ("O", "SRL"): 0x4400,
                             ("O", "ISTATUSFLAGS"): 0x1000})
+        # X/Y software re-home (ADR-0058, ESTATE 19): finishes after `home_reads` reads; `home_fault` "overcurrent"
+        # ends it interrupted (ISTATUSFLAGS bits 0+3, HOMEDONE 0), "stuck" never ends, "ignore" never starts
+        self.home_reads = 3
+        self.home_fault: str | None = None
+        self._homing: dict[str, int] = {}
+        for ax in tp.MOTION_AXES:
+            self.values[(ax, "HOMEDONE")] = 1
         self.o_steps_per_read = 0  # 0: a turret change completes at once; n: one position per n reads (tests)
         self.o_stuck = False
         self._o_turn: list | None = None  # [reads left, start]
@@ -262,7 +269,16 @@ class SimulatedDriveChain:
             self._zo_motion(data)
             return
         axis = "X" if data[2] == 0x10 else "Y"
-        if data[3:5] in (bytes([0x25, 0xB4]), bytes([0x25, 0xB6])):  # LPOSMIN / LPOSMAX (Gate 7)
+        if data == tp.XY_HOME_FRAMES[axis]:  # STATE_19_HOME_DOUBLE (Gate 20)
+            if self.home_fault != "ignore":
+                vals = self.values
+                vals[(axis, "ESTATEV")], vals[(axis, "SRH")] = tp.HOME_STATE, 0x013F
+                vals[(axis, "HOMEDONE")] &= ~1
+                vals[(axis, "ISTATUSFLAGS")] &= 0x1FFE
+                vals[(axis, "SRL")] |= 0x8000  # HOMETOHARDSTOP: AXISON
+                self._ramps.pop(axis, None)
+                self._homing[axis] = self.home_reads
+        elif data[3:5] in (bytes([0x25, 0xB4]), bytes([0x25, 0xB6])):  # LPOSMIN / LPOSMAX (Gate 7)
             v = data[5:9]
             name = "LPOSMIN" if data[4] == 0xB4 else "LPOSMAX"
             self.values[(axis, name)] = int.from_bytes(v[2:4] + v[0:2], "big", signed=True)
@@ -384,6 +400,7 @@ class SimulatedDriveChain:
             else:
                 self._advance()
                 self._o_step()
+                self._home_step()
                 v = self._by_frame[bytes(data)]
                 val = self.values[(v.axis, v.name)]
                 if v.bits == 16:
@@ -396,6 +413,25 @@ class SimulatedDriveChain:
                 framed = bytes([len(body)]) + body
                 self._pending = b"O" + framed + bytes([tp.checksum(framed)])
         return len(data)
+
+    def _home_step(self) -> None:
+        """Advance X/Y homing one read: the axis travels towards its hard stop, then ends at 0 (or interrupted)."""
+        for axis in list(self._homing):
+            if self.home_fault == "stuck":
+                continue
+            v = self.values
+            if self._homing[axis] > 0:
+                self._homing[axis] -= 1
+                v[(axis, "APOS")] = v[(axis, "APOS")] // 2
+                continue
+            del self._homing[axis]
+            if self.home_fault == "overcurrent":
+                v[(axis, "ISTATUSFLAGS")] |= 0x0009
+                v[(axis, "SRL")] &= ~0x8000
+            else:
+                v[(axis, "APOS")] = v[(axis, "CPOS")] = 0
+                v[(axis, "HOMEDONE")] |= 1
+            v[(axis, "ESTATEV")], v[(axis, "SRH")] = 0, 0x033F
 
     def _advance(self) -> None:
         """Move ramping axes along at speed_counts_s; finish them at their target."""

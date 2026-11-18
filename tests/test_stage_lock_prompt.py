@@ -61,15 +61,53 @@ def test_pill_click_and_refused_move_offer_the_release(win, monkeypatch):
     assert calls == ["prompt", "prompt"]
 
 
-def test_unreleasable_lock_explains_instead_of_asking(win, monkeypatch):
+def test_unreleasable_lock_offers_the_rehome_with_its_reason(win, monkeypatch):
+    """ADR-0058: a lock the release cannot clear offers the software re-home, naming the lock; No sends nothing."""
     from PySide6.QtWidgets import QMessageBox
 
+    from openevos.backends.technosoft import protocol as tp
+
     app, w, s = win
-    shown = []
-    monkeypatch.setattr(QMessageBox, "information", lambda *a: shown.append(a[2]))
-    monkeypatch.setattr(QMessageBox, "question", lambda *a: pytest.fail("must not ask"))
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: (asked.append(a[2]), QMessageBox.StandardButton.No)[1])
     svc = s.telemetry[0]
     svc.monitor.trip("overcurrent_trip", "Y", "Y drive over-current trip recorded")
     pump(app, 0.2)
+    n = len(svc.simulated_chain.writes)
     w.release_stage_lock()
-    assert shown and "cannot be released from the app" in shown[0] and "power-cycle" in shown[0]
+    assert asked and "Y drive over-current trip recorded" in asked[0] and "cannot be released" in asked[0]
+    assert "Re-home" in asked[0] and "Z at 0" in asked[0]
+    pump(app, 0.3)
+    assert not [f for f in svc.simulated_chain.writes[n:] if f in tp.XY_HOME_FRAMES.values()]
+    assert svc.monitor.latched
+    assert w._rehome_why() == ""
+
+
+def test_rehome_from_the_ui_clears_the_lock_and_returns(win, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    from openevos.backends.technosoft import protocol as tp
+
+    app, w, s = win
+    svc = s.telemetry[0]
+    chain = svc.simulated_chain
+    for ax, c in (("X", 20000), ("Y", 30000)):
+        chain.values[(ax, "APOS")] = chain.values[(ax, "CPOS")] = c
+    pump(app, 0.3)
+    results = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: results.append(("ok", a[2])))
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: results.append(("warn", a[2])))
+    svc.monitor.trip("landing_error", "Y", "Y ended at 12, +12 counts from its target 0 (band 5)")
+    pump(app, 0.2)
+    n = len(chain.writes)
+    w.rehome_stage()
+    deadline = time.monotonic() + 20
+    while not results and time.monotonic() < deadline:
+        pump(app, 0.1)
+    assert results and results[0][0] == "ok", results
+    assert not svc.monitor.latched
+    sent = [f for f in chain.writes[n:] if f in tp.XY_HOME_FRAMES.values()]
+    assert sent == [tp.XY_HOME_FRAMES["X"], tp.XY_HOME_FRAMES["Y"]]
+    assert (chain.values[("X", "APOS")], chain.values[("Y", "APOS")]) == (20000, 30000)
+    assert w._rehome_why() == "the stage is not locked"
