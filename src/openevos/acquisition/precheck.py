@@ -130,7 +130,32 @@ def _frames(session) -> Check | None:
     if age.total_seconds() > FRAME_STALE_S:
         return Check("frames", title, "warn", f"last frame {age.total_seconds():.0f} s ago",
                      "Live view is paused or the camera stopped sending; press Live, or restart the app")
+    level = frame_level(frame.data)
+    if level is not None and level < DARK_FRACTION:
+        exp = frame.metadata.exposure_ms
+        return Check("frames", title, "warn",
+                     f"frames arriving from {frame.metadata.device_id} but the image is almost black "
+                     f"({level * 100:.1f} % of full scale" + (f", exposure {exp:g} ms)" if exp else ")"),
+                     "Turn the light on (Light button or the channel), and raise the Light slider: on the colour "
+                     "camera it lengthens the exposure (gain is fixed at 1x)")
     return Check("frames", title, "ok", f"frames arriving from {frame.metadata.device_id}")
+
+
+#: a live frame whose 99th-percentile level is under this fraction of full scale reads as "black" to the operator
+DARK_FRACTION = 0.02
+
+
+def frame_level(data) -> float | None:
+    """99th-percentile pixel level as a fraction of full scale (8-bit colour, or the 16-bit container of a mono
+    frame scaled by its own 12-bit range when it fits). Cheap: every 8th pixel."""
+    import numpy as np
+
+    a = np.asarray(data)
+    if a.size == 0:
+        return None
+    s = a[::8, ::8]
+    top = 255.0 if a.dtype == np.uint8 else (4095.0 if int(s.max(initial=0)) <= 4095 else 65535.0)
+    return float(np.percentile(s, 99)) / top
 
 
 #: the X/Y drives' power-up LPOSMAX: still in place = the calibrated limits (Gate 7) were not loaded since power-on

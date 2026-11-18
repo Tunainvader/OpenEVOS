@@ -300,6 +300,23 @@ _FIXED_WRITES = frozenset({f for ax in MOTION_AXES for f in (move_request(ax), *
                           | _F_WRITES | _ZO_WRITES)
 
 
+#: X/Y position-limit writes (Motor Gate 7, ADR-0022/0056): LPOSMIN 25 B4, LPOSMAX 25 B6
+LIMIT_OPS = {"LPOSMIN": 0x25B4, "LPOSMAX": 0x25B6}
+POWER_UP_LIMITS = (0, 50000)
+
+
+def limit_write(axis: str, var: str, value: int) -> bytes:
+    """Gate 7's frame, byte for byte (tests compare it with motor_gate7_xy_limits.build_limit_write): X/Y LPOSMIN or
+    LPOSMAX, 32-bit, vendor word order. Not in is_motion_write: a port accepts these only while the stage service
+    registers exactly the validated calibration values (transport `extra_writes`)."""
+    if axis not in ("X", "Y") or var not in LIMIT_OPS:
+        raise ProtocolRefused(f"no limit write for {axis} {var}")
+    op = LIMIT_OPS[var]
+    b = int(value).to_bytes(4, "big", signed=True)
+    body = bytes([0x08, 0x00, (1 if axis == "X" else 2) << 4, op >> 8, op & 0xFF]) + b[2:4] + b[0:2]
+    return body + bytes([sum(body) & 0xFF])
+
+
 def is_motion_write(frame: bytes) -> bool:
     """True only for the reviewed X/Y motion writes: a fixed request/stop frame, or a move target
     whose value is within TARGET_BOUNDS (rebuilt and compared byte for byte)."""

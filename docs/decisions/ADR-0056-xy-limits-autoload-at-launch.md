@@ -25,6 +25,23 @@
 - **Output:** each attempt that opened the port writes Gate 7's evidence record. The app prints one `Stage limits:`
   line, and the start-up precheck reports power-up limits if they are still in place.
 
+## Amendment (2026-11-18, same day): reload after homing, inside the running app
+- **What happened:** the operator power-cycled to clear a drift lock while the app ran (the lock's own recovery). X
+  and Y came back on the power-up limits, and the launch-time load cannot help a running app. A relaunch right after
+  the power cycle then met `not_idle` (X still homing, ESTATEV 1). The stage stayed in 0–22 mm, and the operator saw
+  it as "locked".
+- **The fix:** the stage service (the owner of COM3) now runs the same four frames itself, once per homing. It does
+  so only when X and Y are homed, idle, at home (|APOS|, |CPOS| ≤ 5) and on exactly the power-up limits, and no job
+  is queued.
+  - The frames come from `protocol.limit_write`, which a test checks byte for byte against Gate 7's builder.
+  - The values come from the same validation as Gate 7 (`calibrated_limits_counts`).
+  - The port accepts these frames only while the service registers them for this one operation
+    (`transport.check_write(extra=...)`), and only with motor control.
+  - Each value is read back. A mismatch stops the writes and reports a stage fault.
+  - Evidence goes to `stage-monitor/limits-reload-<time>-pass|fail.json`.
+- **Single instance:** a second copy of the app on real hardware now shows "already running" and exits before
+  touching anything. Two copies started 6 s apart that day.
+
 ## Not changed
 - No firmware, EEPROM, setup or speed write. The PC-side travel box and the drift monitor (ADR-0040) are unchanged.
 - The import guard allows exactly this module and `led_autostart` from `ui/app.py`, and nothing else from the

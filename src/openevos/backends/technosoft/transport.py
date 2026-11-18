@@ -32,12 +32,15 @@ class TransportError(RuntimeError):
     pass
 
 
-def check_write(data: bytes, allow_motion: bool) -> None:
+def check_write(data: bytes, allow_motion: bool, extra: frozenset = frozenset()) -> None:
     """Last gate before the wire: telemetry reads always; the reviewed X/Y motion writes only when the
-    session enabled motor control (ADR-0024). Anything else raises."""
+    session enabled motor control (ADR-0024); `extra` = exact frames the stage service registered for one
+    operation (the validated Gate 7 limit writes, ADR-0056), and only with motor control. Anything else raises."""
     if data in tp.ALLOWED_REQUESTS:
         return
     if allow_motion and tp.is_motion_write(data):
+        return
+    if allow_motion and data in extra:
         return
     raise tp.ProtocolRefused(f"request {data.hex(' ')} is not allowed on this port")
 
@@ -129,6 +132,7 @@ class WinSerialPort:
 
     def __init__(self, name: str, *, allow_motion: bool = False):
         self.allow_motion = allow_motion
+        self.extra_writes: frozenset = frozenset()  # set by the stage service for one operation only
         if sys.platform != "win32":
             raise TransportError("the Technosoft serial transport needs Windows")
         if not name.upper().startswith("COM"):
@@ -178,7 +182,7 @@ class WinSerialPort:
         _k32.PurgeComm(self._h, 0x0008)
 
     def write(self, data: bytes) -> int:
-        check_write(bytes(data), self.allow_motion)
+        check_write(bytes(data), self.allow_motion, self.extra_writes)
         n = wintypes.DWORD(0)
         buf = ctypes.create_string_buffer(bytes(data), len(data))
         if not _k32.WriteFile(self._h, buf, len(data), ctypes.byref(n), None):
@@ -241,6 +245,7 @@ class SimulatedDriveChain:
         self._pending = b""
         self.writes: list[bytes] = []
         self.closed = False
+        self.extra_writes: frozenset = frozenset()
 
     def configure(self, baud: int) -> None:
         pass
@@ -257,7 +262,11 @@ class SimulatedDriveChain:
             self._zo_motion(data)
             return
         axis = "X" if data[2] == 0x10 else "Y"
-        if data[3:5] == bytes([0x25, 0xD4]):
+        if data[3:5] in (bytes([0x25, 0xB4]), bytes([0x25, 0xB6])):  # LPOSMIN / LPOSMAX (Gate 7)
+            v = data[5:9]
+            name = "LPOSMIN" if data[4] == 0xB4 else "LPOSMAX"
+            self.values[(axis, name)] = int.from_bytes(v[2:4] + v[0:2], "big", signed=True)
+        elif data[3:5] == bytes([0x25, 0xD4]):
             v = data[5:9]
             self.values[(axis, "CPOSCMD")] = int.from_bytes(v[2:4] + v[0:2], "big", signed=True)
         elif data[3:5] == bytes([0x25, 0xD6]):  # CSPDCMD (ADR-0032)
@@ -363,7 +372,7 @@ class SimulatedDriveChain:
         self._pending = b"O"
 
     def write(self, data: bytes) -> int:
-        check_write(bytes(data), self.allow_motion)
+        check_write(bytes(data), self.allow_motion, self.extra_writes)
         with self._lock:
             self.writes.append(bytes(data))
             if data not in tp.ALLOWED_REQUESTS:

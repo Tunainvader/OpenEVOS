@@ -23,11 +23,13 @@ and Y never move together: a target that changes both runs as two legs, X then Y
 from __future__ import annotations
 
 import itertools
+import json
 import queue
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from openevos.backends.technosoft import power_up_record, watchdog
 from openevos.backends.technosoft import protocol as tp
@@ -111,6 +113,24 @@ def calibrated_travel_box(parsed_calibration) -> tuple[dict[str, tuple[float, fl
             return None, f"{ax} calibration limits fail validation"
         box[ax.lower()] = (0.0, round(um_from_counts(ax, hi) - CALIBRATION_MARGIN_UM, 1))
     return box, ""
+def calibrated_limits_counts(parsed_calibration) -> tuple[dict[str, tuple[int, int]] | None, str]:
+    """The X/Y drive limits Gate 7 loads (counts), validated exactly as Gate 7's load_limits does: lMin within
+    (-2 mm, 0], span within 0.5 mm of the stored span, lMax wider than the power-up 50,000. (None, why) otherwise."""
+    from pathlib import Path
+
+    try:
+        mb = json.loads(Path(parsed_calibration).read_text(encoding="utf-8"))["motor_base"]
+        lim = {ax: (int(mb[f"{ax}AxisPositionLimits.lMin"]), int(mb[f"{ax}AxisPositionLimits.lMax"]))
+               for ax in ("X", "Y")}
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return None, f"calibration unreadable: {exc}"
+    for ax, (lo, hi) in lim.items():
+        cpm = tp.COUNTS_PER_MM[ax]
+        if not -2.0 * cpm < lo <= 0 or abs((hi - lo) / cpm - EXPECTED_SPAN_MM[ax]) > 0.5 or hi <= tp.POWER_UP_LIMITS[1]:
+            return None, f"{ax} calibration limits fail validation"
+    return lim, ""
+
+
 #: the slow status poll; X/Y also give the drift monitor their power stage (SRL) and program flags (ADR-0040)
 READ_ORDER = {ax: [n for n in ("ESTATEV", "IINITONCEDONE", "SRH", "SRL", "ISTATUSFLAGS", "BDOAXISOFF", "APOS", "CPOS",
                                "LPOSMIN", "LPOSMAX", "ICURRENTPOSHF") if n in tp.VARS[ax]] for ax in tp.AXIS_IDS}
@@ -436,6 +456,11 @@ class TelemetryService:
         self.carriage_control = False
         #: Z focus moves and objective-turret changes from the app (ADR-0053); only with motor control
         self.zo_control = False
+        #: ADR-0056: the validated calibrated X/Y limits (counts). With motor control the service loads them (Gate 7's
+        #: frames) once X and Y finish homing on their power-up limits, e.g. after a power cycle while the app runs
+        self.calibrated_limits: dict[str, tuple[int, int]] | None = None
+        self._limits_attempted = False  # once per homing; reset when X or Y re-initialises
+        self.limits_reloads: list[dict] = []
 
     @property
     def speed_mm_s(self) -> float:
@@ -601,6 +626,7 @@ class TelemetryService:
                     self._on_latch(link)
                 self._publish(values)
                 self._power_up_check(link, values)
+                self._maybe_reload_limits(link, values)
                 self._idle(link, self.poll_interval_s)
             except (_LinkError, TransportError, OSError, tp.ProtocolRefused) as exc:
                 self.last_error = str(exc)
@@ -643,6 +669,69 @@ class TelemetryService:
             if b.spec.device_id == "motor.stage":
                 self._with_monitor(obs)
             b.report(**obs)
+
+    def _maybe_reload_limits(self, link: DriveLink, values: dict) -> None:
+        """ADR-0056: after X and Y finish homing on their power-up limits (a power cycle, with the app running or
+        before it started), load the calibrated limits with Gate 7's four frames, each read back. Only with motor
+        control, a validated calibration, no queued job, and X and Y homed, idle, at home (|APOS|, |CPOS| <= 5) and on
+        exactly the power-up limits. Once per homing; nothing is retried. No motion."""
+        if not self.motion or not self.calibrated_limits:
+            return
+        xy = {ax: values.get(ax) or {} for ax in ("X", "Y")}
+        if any(v.get("IINITONCEDONE") != tp.INIT_DONE_MARKER for v in xy.values()):
+            self._limits_attempted = False  # (re-)homing: try once more when it is done
+            return
+        if self._limits_attempted or not self._jobs.empty():
+            return
+        if any("LPOSMIN" not in v or "LPOSMAX" not in v for v in xy.values()):
+            return
+        if all((v["LPOSMIN"], v["LPOSMAX"]) == tuple(self.calibrated_limits[ax]) for ax, v in xy.items()):
+            self._limits_attempted = True  # already loaded
+            return
+        for v in xy.values():
+            if (v["LPOSMIN"], v["LPOSMAX"]) != tp.POWER_UP_LIMITS:
+                self._limits_attempted = True  # neither power-up nor calibrated: leave them alone
+                self.backends[0].report(reason=f"X/Y limits {v['LPOSMIN']}..{v['LPOSMAX']} are neither power-up nor "
+                                               "the calibration; not changed")
+                return
+            if v.get("ESTATEV") != 0 or not v.get("SRH", 0) & tp.SRH_MOTION_COMPLETE_BIT:
+                return  # still settling after homing: next poll
+            if abs(v.get("APOS", 99)) > 5 or abs(v.get("CPOS", 99)) > 5:
+                self._limits_attempted = True  # moved off home on the power-up limits: the precheck says what to do
+                return
+        self._limits_attempted = True
+        frames = [(ax, var, val, tp.limit_write(ax, var, val))
+                  for ax in ("X", "Y") for var, val in zip(("LPOSMIN", "LPOSMAX"), self.calibrated_limits[ax],
+                                                           strict=True)]
+        port = link.port
+        record = {"utc": datetime.now(timezone.utc).isoformat(timespec="milliseconds"), "writes": [], "ok": False}
+        port.extra_writes = frozenset(f for *_r, f in frames)
+        try:
+            for ax, var, val, frame in frames:
+                link.write(frame)
+                got = link.read(tp.VARS[ax][var])
+                record["writes"].append({"axis": ax, "var": var, "value": val, "read_back": got})
+                if got != val:
+                    raise _LinkError(f"{ax} {var} read back {got}, wrote {val}")
+            record["ok"] = True
+        except (_LinkError, TransportError, OSError) as exc:
+            record["error"] = str(exc)
+            self.backends[0].report(health=Health.FAULT, reason=f"calibrated limit reload failed: {exc}; no further "
+                                                                 "write. Power-cycle the instrument")
+        finally:
+            port.extra_writes = frozenset()
+        self.limits_reloads.append(record)
+        self.monitor.note("calibrated X/Y limits " + ("reloaded after homing" if record["ok"] else "reload FAILED"))
+        if record["ok"]:
+            self.backends[0].report(reason="calibrated X/Y limits loaded after power-up homing (Gate 7 frames, "
+                                           "read back; no motion)")
+        if self.monitor.evidence_dir is not None:
+            try:
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+                (self.monitor.evidence_dir / f"limits-reload-{stamp}-{'pass' if record['ok'] else 'fail'}.json"
+                 ).write_text(json.dumps(record, indent=1), encoding="utf-8")
+            except OSError:
+                pass
 
     def _power_up_check(self, link: DriveLink, values: dict) -> None:
         """ADR-0040 §9: one read-only power-up record per homing (at connect, and after each re-home seen), taken
@@ -1340,6 +1429,10 @@ def create_telemetry(options: dict) -> TelemetryService:
     # ADR-0053: Z focus and the objective turret from the app, with motor control (set before the devices register,
     # so their capability records offer the commands)
     svc.zo_control = motion and bool(options.get("focus_turret", True))
+    # ADR-0056: with motor control, reload the calibrated limits after power-up homing (e.g. a power cycle mid-session)
+    if motion and options.get("calibration") and options.get("limits_reload", True):
+        lim, _why = calibrated_limits_counts(options["calibration"])
+        svc.calibrated_limits = lim
     for ax in locked:  # operator lock for this session (e.g. Y while its hardware fault is investigated)
         if ax in tp.MOTION_AXES:
             svc._drift_locked[ax] = "locked by the operator for this session (--lock-axis)"

@@ -115,6 +115,26 @@ def test_device_faults_name_the_fix(update, status, words):
         s.shutdown()
 
 
+def test_black_live_image_is_flagged_with_the_fix():
+    import numpy as np
+
+    assert pc.frame_level(np.zeros((64, 64, 3), np.uint8)) == 0.0
+    assert pc.frame_level(np.full((64, 64, 3), 128, np.uint8)) == pytest.approx(128 / 255)
+    assert pc.frame_level(np.full((64, 64), 2000, np.uint16)) == pytest.approx(2000 / 4095)
+    s = _session()
+    try:
+        from openevos.core.frame_transport import Frame, FrameMetadata
+
+        md = FrameMetadata(device_id="cam-colour", frame_index=0, synthetic=False, exposure_ms=5.0)
+        black = SimpleNamespace(data=np.full((96, 128, 3), 1, np.uint8), metadata=md)
+        s.core.transport.preview.latest = lambda: black
+        c = pc._frames(s)
+        assert c.status == "warn" and "almost black" in c.detail and "Light slider" in c.fix
+        assert Frame  # the real type exists; the stub mirrors its two fields
+    finally:
+        s.shutdown()
+
+
 def test_not_homed_is_a_fault():
     s = _session(telemetry=MOTORS)
     try:

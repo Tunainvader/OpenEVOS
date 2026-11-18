@@ -69,6 +69,26 @@ def main(argv: list[str] | None = None) -> int:
                          "still on their power-up limits (0-22 mm) get Motor Gate 7's reviewed limit writes, no motion "
                          "(ADR-0056)")
     args = ap.parse_args(argv)
+    # one app per instrument: a second copy would fight the first for COM3 and the LED board (2026-11-18: two copies
+    # started 6 s apart after a power cycle). Checked before anything touches the hardware.
+    instance_lock = None
+    real_hw = (args.motor_telemetry and str(args.motor_telemetry).lower() != "sim") or args.illumination == "real"
+    if real_hw and args.screenshot_dir is None:
+        from PySide6.QtCore import QLockFile
+
+        from openevos.instrument.settings import default_settings_path
+
+        lock_path = (args.settings or default_settings_path()).with_name("openevos-instrument.lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        instance_lock = QLockFile(str(lock_path))
+        if not instance_lock.tryLock(300):
+            from PySide6.QtWidgets import QApplication, QMessageBox
+
+            _app = QApplication.instance() or QApplication(sys.argv[:1])
+            QMessageBox.warning(None, "OpenEVOS", "OpenEVOS is already running on this instrument.\n\nUse the open "
+                                "window, or close it before starting another (only one program can own the motor port "
+                                "and the LED board).")
+            return 1
     launch_notes: list[tuple[str, str]] = []  # also written to the session fault log once it is open
 
     def note(step: str, text: str) -> None:
@@ -181,6 +201,8 @@ def main(argv: list[str] | None = None) -> int:
         session.shutdown()
         if fault_log is not None:
             fault_log.close()
+        if instance_lock is not None:
+            instance_lock.unlock()
 
 
 def _resolve_mono_camera(choice: str, *, screenshots: bool = False, probe=None) -> str | None:

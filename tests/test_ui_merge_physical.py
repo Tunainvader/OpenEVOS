@@ -208,8 +208,9 @@ def test_calibrated_travel_box_and_fallbacks(tmp_path):
 
 def test_wide_moves_need_the_calibrated_limits_in_the_drives(tmp_path):
     p, x, _y = _cal(tmp_path)
+    # the service's own reload after homing (ADR-0056 amendment) is off here: this test is about the refusal
     s = build_sim_session(ThreadClock(), fast=True, telemetry={"technosoft": {
-        "port": "sim", "poll_interval_s": 0.02, "motion": True, "calibration": str(p)}})
+        "port": "sim", "poll_interval_s": 0.02, "motion": True, "calibration": str(p), "limits_reload": False}})
     try:
         assert _wait(lambda: (st := s.core.store.get("motor.stage")) is not None and st.observed_position is not None)
         chain = s.telemetry[0].simulated_chain
@@ -221,6 +222,23 @@ def test_wide_moves_need_the_calibrated_limits_in_the_drives(tmp_path):
         t = s.controller.move_stage(30000.0, 0.0)
         assert t.wait(10) is CommandStatus.SUCCEEDED, t.record.message
         assert chain.values[("X", "APOS")] == round(30.0 * 2880 / 1.27)
+    finally:
+        s.shutdown()
+
+
+def test_the_service_loads_the_calibrated_limits_itself_after_homing(tmp_path):
+    """ADR-0056 amendment: with the reload on (the default), a drive on its power-up limits at home gets the
+    calibrated limits from the service, and the same 30 mm move then succeeds without a manual Gate 7."""
+    p, x, y = _cal(tmp_path)
+    s = build_sim_session(ThreadClock(), fast=True, telemetry={"technosoft": {
+        "port": "sim", "poll_interval_s": 0.02, "motion": True, "calibration": str(p)}})
+    try:
+        chain = s.telemetry[0].simulated_chain
+        assert _wait(lambda: (chain.values[("X", "LPOSMIN")], chain.values[("X", "LPOSMAX")]) == x)
+        assert (chain.values[("Y", "LPOSMIN")], chain.values[("Y", "LPOSMAX")]) == y
+        assert _wait(lambda: s.core.store.get("motor.stage").attr("limits_counts")[0] == x)
+        t = s.controller.move_stage(30000.0, 0.0)
+        assert t.wait(10) is CommandStatus.SUCCEEDED, t.record.message
     finally:
         s.shutdown()
 
