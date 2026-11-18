@@ -164,6 +164,7 @@ class MainWindow(QMainWindow):
         self._build_pages()
         self._build_menus()
         model.device_changed.connect(self._on_device)
+        model.command_event.connect(self._on_command_event)
         model.tasks.busy_changed.connect(lambda _b: self._tick())
         self._timer = QTimer(self)
         self._timer.setInterval(500)
@@ -194,6 +195,11 @@ class MainWindow(QMainWindow):
             if did:
                 pill = StatusPill(title)
                 self.pills[did] = pill
+        stage_pill = self.pills.get(p.stage_device)
+        if stage_pill is not None:  # a locked stage: clicking its pill offers the release (ADR-0057)
+            stage_pill.setCursor(Qt.PointingHandCursor)
+            stage_pill.setFocusPolicy(Qt.StrongFocus)
+            stage_pill.clicked.connect(self._stage_pill_clicked)
         env = StatusPill("Environment")
         env.set_state("unavailable", "UNAVAILABLE", "Onstage incubator: no control or telemetry path (bring-up record)")
         # one summary pill; the per-device pills open from it (UI audit 2026-11-17)
@@ -529,6 +535,11 @@ class MainWindow(QMainWindow):
             return
         svc = locked[0]
         st, drift = svc.monitor.state(), svc.monitor.latch_drift()
+        blocker = svc.monitor._release_blocker()
+        if blocker:  # cannot be released from the app: say why and what to do instead of a dead button
+            QMessageBox.information(self, "Stage locked", f"The drift monitor locked the stage: {st.get('message', '')}."
+                                    f"\n\nIt cannot be released from the app: {blocker}.")
+            return
         text = (f"The drift monitor locked the stage: {st.get('message', '')}.\n\nRecorded drift: {drift:+d} counts "
                 f"(about {abs(drift) * 0.44:.1f} µm; the commutation risk starts near 14 counts).\n\n"
                 "OpenEVOS reads X and Y now and releases the lock only if both are homed, idle, free of drive faults, "
@@ -672,8 +683,29 @@ class MainWindow(QMainWindow):
         pill = self.pills.get(did)
         if pill is not None:
             state, text = describe_snapshot(snap)
-            pill.set_state(state, text, f"{did}: {snap.note or ''}" if snap else did)
+            tip = f"{did}: {snap.note or ''}" if snap else did
+            if did == self.session.profile.stage_device and self._locked_monitors():
+                tip += "\n\nStage locked by the drift monitor: click to release"
+            pill.set_state(state, text, tip)
             self.health.refresh()
+
+    def _stage_pill_clicked(self) -> None:
+        if self._locked_monitors():
+            self.health.popup.hide()
+            self.release_stage_lock()
+
+    def _on_command_event(self, e) -> None:
+        """A stage move refused by the drift lock: offer the release once per lock (operator, 2026-11-18)."""
+        msg = getattr(e, "message", "") or ""
+        if getattr(e, "device_id", None) != self.session.profile.stage_device or "locked by the drift monitor" not in msg:
+            return
+        locked = self._locked_monitors()
+        if not locked:
+            return
+        key = locked[0].monitor.state().get("since_utc")
+        if key and key != getattr(self, "_lock_prompted", None):
+            self._lock_prompted = key
+            QTimer.singleShot(0, self.release_stage_lock)
 
     # ================================================================== pages
     def _build_pages(self) -> None:

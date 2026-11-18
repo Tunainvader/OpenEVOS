@@ -1053,11 +1053,33 @@ class CapturePage(QWidget):
             self.model.add_log("error", f"live view: {exc}")
         self._select_channel(self.channel, initial=True)  # keeps the light's on/off as it was
         self.model.settings_changed.emit()
-        if any(getattr(s, "carriage_control", False) for s in getattr(self.session, "telemetry", []) or []):
-            # the colour camera sees the sample only with F at the mirror (Gate 12): route the light path for `role`
-            self._run(f"Light path for the {role.value} camera", lambda: self.session.route_light_path(role),
-                      on_done=lambda msg: msg and self.model.add_log(
-                          "warn" if "not moved" in msg else "info", msg))
+        self.route_light_path(role)
+
+    def route_light_path(self, role: CameraRole | None = None) -> bool:
+        """The colour camera sees the sample only with F at the mirror (Gate 12): move F for `role` (default: the
+        active camera) in the background. True if a routing task was started."""
+        role = role or self.role
+        if not any(getattr(s, "carriage_control", False) for s in getattr(self.session, "telemetry", []) or []):
+            return False
+        return bool(self.submit_when_idle(
+            f"Light path for the {role.value} camera", lambda: self.session.route_light_path(role),
+            on_done=lambda msg: msg and self.model.add_log("warn" if "not moved" in msg else "info", msg)))
+
+    def route_light_path_when_ready(self, timeout_s: float = 30.0) -> None:
+        """At start-up: once the F carriage reports a position (the drives poll ~1 s after start), route F for the
+        camera the app opened on (2026-11-18: the app reopened on Colour with F at slot 1, and the image was black)."""
+        waited = [0.0]
+
+        def poll():
+            snap = self.session.core.store.get("motor.cube_carriage")
+            if snap is not None and snap.observed_position is not None:
+                self.route_light_path()
+                return
+            waited[0] += 0.5
+            if waited[0] < timeout_s:
+                QTimer.singleShot(500, poll)
+
+        QTimer.singleShot(500, poll)
 
     def _toggle_saturation(self, on: bool) -> None:
         self.settings.camera_settings(self.role).highlight_saturated = on

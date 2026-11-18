@@ -192,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     win.show()
     win.start_precheck()  # read-only; opens the precheck only when something needs attention
+    win.pages["capture"].route_light_path_when_ready()  # F to the mirror if the app opened on the colour camera
     try:
         return app.exec()
     finally:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, QSize, Qt
+from PySide6.QtCore import QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import QWidget
 
@@ -10,6 +10,19 @@ from openevos.ui import theme
 
 
 class StatusPill(QWidget):
+    #: the operator clicked (or pressed Enter/Space on) the pill; the shell decides what that offers
+    clicked = Signal()
+
+    def mousePressEvent(self, e):
+        self.clicked.emit()
+        super().mousePressEvent(e)
+
+    def keyPressEvent(self, e):
+        if e.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space) and self.focusPolicy() != Qt.NoFocus:
+            self.clicked.emit()
+            return
+        super().keyPressEvent(e)
+
     def __init__(self, title: str, parent=None):
         super().__init__(parent)
         self.title = title

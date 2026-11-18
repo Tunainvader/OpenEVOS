@@ -46,6 +46,37 @@ def test_colour_routes_f_to_the_mirror_and_mono_brings_it_back():
         s.shutdown()
 
 
+def test_app_opened_on_colour_routes_f_once_the_carriage_reports(monkeypatch):
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from openevos.ui.session_model import SessionModel
+    from openevos.ui.shell import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    settings = AppSettings()
+    settings.active_camera = CameraRole.COLOR
+    s = build_sim_session(ThreadClock(), fast=True, fps=30, settings=settings,
+                          telemetry={"technosoft": {"port": "sim", "poll_interval_s": 0.02, "motion": True}})
+    s.telemetry[0].carriage_control = True
+    w = MainWindow(SessionModel(s))
+    try:
+        w.pages["capture"].route_light_path_when_ready(timeout_s=5)
+        end = time.monotonic() + 8
+        chain = s.telemetry[0].simulated_chain
+        while time.monotonic() < end and chain.values[("F", "APOS")] != tp.F_EXPECTED_POS["mirror"]:
+            app.processEvents()
+            time.sleep(0.02)
+        assert chain.values[("F", "APOS")] == tp.F_EXPECTED_POS["mirror"]
+    finally:
+        w.close()
+        s.shutdown()
+        w.deleteLater()
+        app.processEvents()
+
+
 def test_no_carriage_control_means_nothing_moves():
     s = build_sim_session(ThreadClock(), fast=True, fps=30, settings=AppSettings(),
                           telemetry={"technosoft": {"port": "sim", "poll_interval_s": 0.02, "motion": True}})
