@@ -109,6 +109,7 @@ def test_overcurrent_lock_rehomes_x_then_y_and_returns(tmp_path):
     ({("Y", "MER"): 0x0100}, "power cycle"),
     ({("Z", "APOS"): 20000, ("Z", "CPOS"): 20000}, "objective is not lowered"),
     ({("O", "ESTATEV"): 3}, "O is not idle"),
+    ({("O", "ICURRENTPOSHF"): 0}, "turret is not on an objective"),
 ])
 def test_refusals_send_nothing_and_keep_the_lock(values, why):
     chain = locked_chain()

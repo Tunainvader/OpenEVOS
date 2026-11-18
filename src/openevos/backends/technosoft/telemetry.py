@@ -1029,7 +1029,8 @@ class TelemetryService:
         pre = {ax: {n: link.read(tp.VARS[ax][n]) for n in REHOME_PRE_READS} for ax in tp.MOTION_AXES}
         z = {n: link.read(tp.VARS["Z"][n]) for n in ("ESTATEV", "APOS", "CPOS")}
         others = {ax: link.read(tp.VARS[ax]["ESTATEV"]) for ax in ("P", "F", "O")}
-        job.record["before"] = {"XY": pre, "Z": z, "ESTATEV_PFO": others}
+        turret = link.read(tp.VARS["O"]["ICURRENTPOSHF"])
+        job.record["before"] = {"XY": pre, "Z": z, "ESTATEV_PFO": others, "O_position": turret}
         problems = []
         for ax, v in pre.items():
             if v["ESTATEV"] not in (0, 13) or not v["SRH"] & tp.SRH_MOTION_COMPLETE_BIT:
@@ -1042,6 +1043,11 @@ class TelemetryService:
             problems.append(f"the objective is not lowered to 0 (Z at {um_from_counts('Z', z['APOS']):.0f} µm): lower "
                             "it fully first, the stage travels to its home corner")
         problems += [f"{ax} is not idle (state {s})" for ax, s in others.items() if s != 0]
+        if turret not in tp.O_POSITIONS:
+            # between positions an objective may stand part-way up its swing; homing drives the stage to its 0, 0
+            # corner, where an objective struck the stage on 2026-11-17 (Gate 19 run 1)
+            problems.append(f"the turret is not on an objective (sensor {turret}): an objective may stand part-way up "
+                            "and the stage homes to its 0, 0 corner; seat the turret on an objective first")
         if problems:
             job.stage, job.message = "refused", "re-home refused, nothing sent: " + "; ".join(problems)
             return
