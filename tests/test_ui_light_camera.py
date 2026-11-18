@@ -222,6 +222,31 @@ def test_no_gamma_and_the_histogram_toggles(app, window):
     assert cap.btn_auto.isEnabled()
 
 
+def test_camera_switch_turns_the_light_off_unless_the_setting_is_off(app, window):
+    cap = window.pages["capture"]
+    s = window.session
+    assert s.settings.basic.light_off_on_camera_switch is True  # default
+    cap.btn_power.setChecked(True)
+    assert wait_for(app, lambda: s.controller.light.enabled)
+    cap.switch_camera(CameraRole.COLOR)
+    assert _settled(app, cap)
+    assert not cap.btn_power.isChecked() and wait_for(app, lambda: not s.controller.light.enabled)
+    s.settings.basic.light_off_on_camera_switch = False
+    cap.btn_power.setChecked(True)
+    assert wait_for(app, lambda: s.controller.light.enabled)
+    assert _settled(app, cap)
+    pump(app, 0.5)
+    assert cap.btn_power.isChecked() and s.controller.light.enabled, list(window.model.log)[-8:]
+    cap.switch_camera(CameraRole.MONO)
+    assert _settled(app, cap)
+    ok = wait_for(app, lambda: cap.btn_power.isChecked() and s.controller.light.enabled, 5.0)
+    assert ok, (cap.channel, s.controller.light, cap.btn_power.isChecked(), list(window.model.log)[-8:])
+    settings_page = next(p for p in window.pages.values() if hasattr(p, "chk_light_off_switch"))
+    settings_page.chk_light_off_switch.setChecked(False)
+    settings_page.chk_light_off_switch.setChecked(True)
+    assert s.settings.basic.light_off_on_camera_switch is True
+
+
 def test_actual_mode_controls_reach_devices_and_read_back(app, window):
 
     cap = window.pages["capture"]

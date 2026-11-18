@@ -1051,7 +1051,14 @@ class CapturePage(QWidget):
             self.ctl.start_live(role)
         except Exception as exc:  # noqa: BLE001
             self.model.add_log("error", f"live view: {exc}")
-        self._select_channel(self.channel, initial=True)  # keeps the light's on/off as it was
+        if self.settings.basic.light_off_on_camera_switch and self.btn_power.isChecked():
+            # Settings › "Switch the light off when changing camera" (on by default)
+            self.btn_power.blockSignals(True)
+            self.btn_power.setChecked(False)
+            self.btn_power.blockSignals(False)
+            self.btn_power.setText("Light off")
+            self.session.capture.light_power = False
+        self._select_channel(self.channel, initial=True)  # applies the light's on/off (off after the line above)
         self.model.settings_changed.emit()
         self.route_light_path(role)
 

@@ -905,6 +905,12 @@ class SettingsPage(QWidget):
         sci.setChecked(b.scientific_display)
         sci.toggled.connect(lambda v: setattr(b, "scientific_display", v))
         form.addRow("", sci)
+        self.chk_light_off_switch = QCheckBox("Switch the light off when changing camera")
+        self.chk_light_off_switch.setChecked(b.light_off_on_camera_switch)
+        self.chk_light_off_switch.setToolTip("On: Mono ↔ Colour turns the light off; turn it on again for the new "
+                                             "camera. Off: the light keeps its on/off state across the switch")
+        self.chk_light_off_switch.toggled.connect(lambda v: setattr(b, "light_off_on_camera_switch", v))
+        form.addRow("", self.chk_light_off_switch)
         form.addRow(label("Auto fine adjustment, capture focus nominal and vessel alignment are in Calibration; gas "
                           "connections and temperature offset are in Environment.", "caption", wrap=True))
         return w

@@ -188,6 +188,9 @@ class SystemBasicSettings(BaseModel):
     scientific_display: bool = True  # linear display transforms only; display log saved with images
     #: Capture › Histogram toolbar toggle: the levels histogram and Auto range under the live image
     show_histogram: bool = True
+    #: Settings › Interface: changing camera switches the light off (operator, 2026-11-18); off = the light keeps its
+    #: on/off state across the switch
+    light_off_on_camera_switch: bool = True
     #: Capture › Z focus: per-objective safe height (µm from home), keyed by turret slot. Above it the panel shows an
     #: amber warning and a held pad stops; set by the operator at the Z where that objective nears the vessel
     focus_limit_um: dict[str, float] = Field(default_factory=dict)
