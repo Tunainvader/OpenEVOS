@@ -214,6 +214,13 @@ REVIEWED_MAINTENANCE: dict[str, dict] = {
         "writes": "Y: Gate 15's AXISOFF only. X: Gate 10 speed presets, CACCCMD 190/1573/1.0 (RAM, restored), Gate 8 "
                   "targets, move request and Gate 3 stop",
     },
+    "led_bootloader.start_app_at_launch": {
+        # the same Gate 1 query + StartApp as the two tools above, run by the app's launch path before the command
+        # core exists, with the operator's standing approval instead of typed phrases (ADR-0055, amends ADR-0012)
+        "vid_pid": (0x0DAD, 0x0057), "commands": frozenset({0x0A, 0x08}), "adr": "ADR-0055",
+        "module": "maintenance/led_autostart.py",
+        "review": "docs/decisions/ADR-0055-led-board-autostart-at-launch.md",
+    },
     "motor.o_turret_goto_position": {
         "vid_pid": (0x0403, 0x6001), "commands": frozenset({0x21CC, 0x21B1, 0x0002}),
         "adr": "ADR-0052", "module": "maintenance/motor_gate19_o_turret.py",

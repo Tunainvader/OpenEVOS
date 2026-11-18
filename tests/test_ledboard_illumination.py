@@ -219,7 +219,8 @@ def test_bootloader_only_is_quarantined_and_nothing_opened():
     dev, obs = make(board)
     dev.connect()
     assert board.opened == 0 and board.sent == []
-    assert obs[-1]["firmware_mode"] is FirmwareMode.BOOTLOADER and "led_startapp" in obs[-1]["reason"]
+    # the app itself still opens nothing on a bootloader board; the launch path starts it (ADR-0055)
+    assert obs[-1]["firmware_mode"] is FirmwareMode.BOOTLOADER and "led_autostart" in obs[-1]["reason"]
     dev.disconnect()
 
 

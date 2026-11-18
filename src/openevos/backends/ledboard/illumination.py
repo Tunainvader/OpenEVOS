@@ -370,9 +370,9 @@ class RealLedIllumination:
                 if boot and not apps:
                     self._obs(connection=Connection.DISCONNECTED, firmware_mode=FirmwareMode.BOOTLOADER,
                               health=Health.FAULT, activity=Activity.IDLE,
-                              reason="LED board is in its bootloader (0DAD:0057): start it with the reviewed tools "
-                                     "(python -m openevos.maintenance.led_bootloader, then led_startapp), then "
-                                     "restart the app", fault="LED board in bootloader")
+                              reason="LED board is in its bootloader (0DAD:0057): restart the app, which starts it "
+                                     "at launch (ADR-0055), or run python -m openevos.maintenance.led_autostart",
+                              fault="LED board in bootloader")
                     return
                 if len(apps) != 1 or alt:
                     self._obs(connection=Connection.DISCONNECTED, health=Health.FAULT, activity=Activity.IDLE,

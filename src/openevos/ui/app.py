@@ -60,7 +60,21 @@ def main(argv: list[str] | None = None) -> int:
                     help="serve the READ-ONLY MCP link for AI assistants on http://127.0.0.1:PORT/mcp (default "
                          "8765) with a bearer token; prints the `claude mcp add` command. The assistant can read "
                          "state, events, telemetry and images and can command nothing (ADR-0003, ADR-0054)")
+    ap.add_argument("--no-led-autostart", action="store_true",
+                    help="do not start the LED board application at launch. By default, a board found in its "
+                         "bootloader (0DAD:0057, its power-up state) is started with the reviewed version query + "
+                         "StartApp steps, as the vendor software does every session (ADR-0055)")
     args = ap.parse_args(argv)
+    if (args.illumination != "sim" and not args.no_led_autostart and args.screenshot_dir is None
+            and sys.platform == "win32"):
+        from openevos.maintenance.led_autostart import autostart
+
+        try:
+            r = autostart(evidence_dir=args.scans_dir)
+            print(f"LED board: {r.message}" + (f" (evidence: {', '.join(r.evidence)})" if r.evidence else ""),
+                  file=sys.stderr, flush=True)
+        except Exception as exc:  # noqa: BLE001 - the app still starts; the precheck reports the light
+            print(f"LED board auto-start failed: {exc}", file=sys.stderr, flush=True)
     illumination = _resolve_illumination(args.illumination, screenshots=args.screenshot_dir is not None)
     mono_camera =_resolve_mono_camera(args.mono_camera, screenshots=args.screenshot_dir is not None)
     colour_camera = _resolve_colour_camera(args.colour_camera, screenshots=args.screenshot_dir is not None)
@@ -128,6 +142,7 @@ def main(argv: list[str] | None = None) -> int:
         session.shutdown()
         return 0
     win.show()
+    win.start_precheck()  # read-only; opens the precheck only when something needs attention
     try:
         return app.exec()
     finally:

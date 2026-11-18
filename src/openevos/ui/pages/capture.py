@@ -664,11 +664,12 @@ class CapturePage(QWidget):
         self.model.add_log("info", f"Z safe height for {self._focus_limit()[0]} set to {fmt_um(z)} µm")
         self._refresh_focus()
 
-    def _clear_focus_limit(self) -> None:
-        slot = self.ctl.objective_slot()
+    def _clear_focus_limit(self, slot: int | None = None) -> None:
+        slot = slot or self.ctl.objective_slot()
         if slot and self.settings.basic.focus_limit_um.pop(str(slot), None) is not None:
             self.session.save_settings()
-            self.model.add_log("info", f"Z safe height for {self._focus_limit()[0]} cleared")
+            obj = self.profile.objective(slot)
+            self.model.add_log("info", f"Z safe height for {obj.short if obj else slot} cleared")
         self._refresh_focus()
 
     def _fov_mm(self):

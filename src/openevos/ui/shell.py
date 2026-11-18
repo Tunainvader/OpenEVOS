@@ -391,6 +391,8 @@ class MainWindow(QMainWindow):
         self._cmd(m, "mic.vessel", "Vessel…", cap._vessel_expert, why=busy)
         self._cmd(m, "mic.lightcam", "Light and camera…", cap._light_camera, why=busy)
         m.addSeparator()
+        self._cmd(m, "mic.precheck", "System precheck…", self.open_precheck)
+        self._cmd(m, "mic.heights", "Objective safe heights…", self.open_safe_heights, why=busy)
         self._cmd(m, "mic.recover", "Recover device…", lambda: self.navigate("hardware"))
         self._cmd(m, "mic.stop", "Stop all", self.stop_all, shortcut="Esc")
 
@@ -472,6 +474,63 @@ class MainWindow(QMainWindow):
         CommandPalette(self).exec()
 
     # ================================================================== theme / navigation / chrome actions
+    # ================================================================== system precheck
+    def start_precheck(self, timeout_s: float = 10.0) -> None:
+        """Start-up precheck (app.py): wait until every mapped device has reported (or `timeout_s`), give the live
+        view a moment, then run it once. It opens the precheck dialog only when something needs attention; a clean
+        pass is one log line."""
+        from openevos.acquisition import precheck as pc
+
+        self._pc_waited = 0.0
+        self._pc_timer = QTimer(self)
+        self._pc_timer.setInterval(250)
+
+        def poll():
+            self._pc_waited += 0.25
+            if not pc.ready(self.session) and self._pc_waited < timeout_s:
+                return
+            self._pc_timer.stop()
+            QTimer.singleShot(1500, self._precheck_once)  # live frames start after the devices
+
+        self._pc_timer.timeout.connect(poll)
+        self._pc_timer.start()
+
+    def _precheck_once(self) -> None:
+        from openevos.acquisition import precheck as pc
+
+        checks = pc.run_precheck(self.session)
+        w = pc.worst(checks)
+        self.model.add_log("info" if w in ("ok", "info") else "warn", pc.summary(checks))
+        for c in checks:
+            if c.status in ("fault", "warn"):
+                self.model.add_log("error" if c.status == "fault" else "warn", f"Precheck · {c.title}: {c.detail}")
+        if w in ("fault", "warn"):
+            self.open_precheck()
+
+    def open_precheck(self):
+        from openevos.ui.precheck_dialog import PrecheckDialog
+
+        dlg = getattr(self, "_precheck_dlg", None)
+        if dlg is None:
+            dlg = self._precheck_dlg = PrecheckDialog(self)
+        else:
+            dlg.refresh()
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+        return dlg
+
+    def open_safe_heights(self):
+        from openevos.ui.precheck_dialog import SafeHeightsDialog
+
+        dlg = getattr(self, "_heights_dlg", None)
+        if dlg is None or not dlg.isVisible():
+            dlg = self._heights_dlg = SafeHeightsDialog(self)
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+        return dlg
+
     def set_theme(self, name: str) -> None:
         self.session.settings.basic.theme = name
         app = QApplication.instance()

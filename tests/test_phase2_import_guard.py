@@ -107,11 +107,22 @@ def test_dynamic_backend_loading_is_limited_to_registered_backends():
     assert users == ["core/instrument.py"]
 
 
+#: the one exception (ADR-0055, amends ADR-0012): the app's launch path starts the LED board from its bootloader,
+#: before the command core exists. No other application module may reach a maintenance tool.
+LAUNCH_EXCEPTION = ("ui/app.py", "openevos.maintenance.led_autostart")
+
+
 def test_maintenance_tools_are_unreachable_from_the_application():
-    """ADR-0011: reviewed device reads run only as operator CLI tools, never from the core or UI."""
+    """ADR-0011: reviewed device reads run only as operator CLI tools, never from the core or UI (one launch-path
+    exception, ADR-0055)."""
+    seen = []
     for path in FILES:
         for line, name in _imports(ast.parse(path.read_text("utf-8"))):
+            if (_rel(path).replace("\\", "/"), name) == LAUNCH_EXCEPTION:
+                seen.append(line)
+                continue
             assert not name.startswith("openevos.maintenance"), f"{_rel(path)}:{line} imports {name}"
+    assert len(seen) == 1, "the LED auto-start import exists exactly once, in ui/app.py"
 
 
 def test_ai_layer_cannot_reach_the_command_path():
