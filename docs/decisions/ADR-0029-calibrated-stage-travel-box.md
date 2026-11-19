@@ -17,5 +17,6 @@
 
 ## Consequences
 - **What the controls can reach:** the Hardware page's fixed steps and the Capture joystick can reach the whole verified envelope.
-- **Vessel-map moves stay disabled** for the physical stage (no vessel ↔ stage calibration).
+- **Vessel-map moves stay disabled** for the physical stage (no vessel ↔ stage calibration). *Superseded by ADR-0060
+  (2026-11-20): enabled once a saved plate alignment exists.*
 - **A future decision:** loading the limits at app start-up, as PearlScope does.

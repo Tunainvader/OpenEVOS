@@ -18,7 +18,7 @@ from openevos.core.clock import Clock
 from openevos.core.device_manager import OwnershipRegistry
 from openevos.instrument.profile import InstrumentProfile, load_profile
 from openevos.instrument.settings import AppSettings
-from openevos.instrument.vessels import Vessel, VesselLibrary, VesselStageMap
+from openevos.instrument.vessels import Vessel, VesselLibrary, VesselStageMap, solve_plate_alignment
 
 
 @dataclass
@@ -53,6 +53,15 @@ class Session:
 
     # ------------------------------------------------------------------ calibration application
     def _apply_vessel_offset(self) -> None:
+        if self.physical_stage:
+            # the real stage: the operator's plate alignment, one for every standard-footprint vessel; without it
+            # the map is unverified and the Capture page shows no position and moves nothing
+            a = self.calibration.plate_alignment
+            self.stage_map = VesselStageMap(
+                stage_frame=self.profile.stage_device, offset_x=a["offset_x"], offset_y=a["offset_y"],
+                sign_x=a["sign_x"], sign_y=a["sign_y"], verified=True) if a else self.nominal_map.model_copy(
+                update={"verified": False})
+            return
         off = self.calibration.vessel_offset_um.get(self.vessel.vessel_id)
         self.stage_map = self.nominal_map.model_copy(update={
             "offset_x": off[0] if off else 0.0, "offset_y": off[1] if off else 0.0, "verified": bool(off)})
@@ -133,6 +142,22 @@ class Session:
     @property
     def simulated(self) -> bool:
         return self.profile.backend == "simulation"
+
+    def set_plate_alignment(self, wells: list[tuple[str, tuple[float, float], tuple[float, float]]]) -> float:
+        """Two wells centred on the physical stage: [(region_id, vessel mm, stage µm)] x2. Solves, saves to the
+        calibration file and applies it at once. Returns the residual (µm); raises PlateAlignmentError."""
+        (_, v1, s1), (_, v2, s2) = wells
+        m, residual = solve_plate_alignment(v1, s1, v2, s2, self.profile.stage_device)
+        self.calibration.plate_alignment = {
+            "sign_x": m.sign_x, "sign_y": m.sign_y, "offset_x": round(m.offset_x, 1), "offset_y": round(m.offset_y, 1),
+            "residual_um": round(residual, 1), "vessel_id": self.vessel.vessel_id,
+            "wells": [{"region": r, "vessel_mm": list(v), "stage_um": [round(s[0], 1), round(s[1], 1)]}
+                      for r, v, s in wells]}
+        self.calibration.touch("plate_alignment")
+        self._apply_vessel_offset()
+        for fn in list(self.listeners):
+            fn("vessel")
+        return residual
 
     def select_vessel(self, vessel_id: str) -> Vessel:
         self.vessel = self.vessels.get(vessel_id)

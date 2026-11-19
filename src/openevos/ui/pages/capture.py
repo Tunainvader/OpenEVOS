@@ -221,6 +221,27 @@ class CapturePage(QWidget):
         self.lbl_well = label("", "caption", wrap=True)  # wraps instead of clipping in the narrow column (APP-10)
         lay.addWidget(self.lbl_pos)
         lay.addWidget(self.lbl_well)
+        # the real stage: a one-time plate alignment (two wells centred by the operator), saved and used for every
+        # standard-footprint vessel; until then the map shows no position and moves nothing (operator 2026-11-20:
+        # "since these plates are standard can we do it once and save automatically")
+        self._align: list | None = None
+        self.btn_align = QPushButton("Align plate…")
+        self.btn_align.setToolTip("Once for all standard plates: centre the first well, then the last well, in the "
+                                  "live image and record each. Saved; the map then shows the stage and a click on a "
+                                  "well moves there.")
+        self.btn_align_cancel = QPushButton("Cancel")
+        self.btn_align_cancel.setVisible(False)
+        self.lbl_align = label("", "caption", wrap=True)
+        self.lbl_align.setVisible(False)
+        arow = QHBoxLayout()
+        arow.addWidget(self.btn_align, 1)
+        arow.addWidget(self.btn_align_cancel)
+        self.align_row = QWidget()
+        self.align_row.setLayout(arow)
+        arow.setContentsMargins(0, 0, 0, 0)
+        self.align_row.setVisible(bool(getattr(self.session, "physical_stage", False)))
+        lay.addWidget(self.align_row)
+        lay.addWidget(self.lbl_align)
         lay.addWidget(label("Stage", "section"))
         self.joy = Joystick()
         self.jog_speed = QComboBox()
@@ -449,6 +470,8 @@ class CapturePage(QWidget):
         m.tasks.progress.connect(lambda n, i, t, msg: self.lbl_task.setText(f"{n}: {msg}"))
         self.btn_vessel.clicked.connect(self._vessel_expert)
         self.map.move_requested.connect(self._goto_vessel)
+        self.btn_align.clicked.connect(self._align_step)
+        self.btn_align_cancel.clicked.connect(self._align_cancel)
         self.joy.jog.connect(self._jog)
         self.joy.released.connect(self._joy_released)
         self.obj_group.idClicked.connect(self._objective)
@@ -614,20 +637,28 @@ class CapturePage(QWidget):
 
     def _refresh_state(self) -> None:
         xy = self.ctl.stage_xy()
-        if xy is not None and getattr(self.session, "physical_stage", False):
-            # the vessel map's geometry belongs to the simulator; no vessel<->stage mapping is calibrated
-            # for the physical stage, so show raw stage coordinates and say so (never a fake well)
+        phys = bool(getattr(self.session, "physical_stage", False))
+        smap = self.session.stage_map
+        if xy is not None and phys and not smap.verified:
+            # no plate alignment yet: show raw stage coordinates and say so (never a fake well)
+            self.map.position_mm = self.map.reachable_mm = None
             self.lbl_pos.setText(f"Stage X {xy[0] / 1000:.3f}  Y {xy[1] / 1000:.3f} mm")  # fits 1280 px (APP-10)
-            self.lbl_well.setText("Vessel map: simulator's, not calibrated")
-            self.lbl_well.setToolTip("Physical stage: the vessel ↔ stage mapping is not calibrated, so the map above is "  # noqa: E501
-                                     "the simulator's geometry and the position shows raw stage coordinates")
+            self.lbl_well.setText("Vessel map: plate not aligned (Align plate…, once)")
+            self.lbl_well.setToolTip("Physical stage: centre two wells once with Align plate…; the alignment is saved "
+                                     "and used for every standard plate")
         elif xy is not None:
-            vx, vy = self.session.stage_map.to_vessel(*xy)
+            vx, vy = smap.to_vessel(*xy)
             self.map.position_mm = (vx, vy)
             reg = self.session.vessel.region_at(vx, vy)
             self.lbl_pos.setText(f"X {vx:7.3f} mm   Y {vy:7.3f} mm")
-            self.lbl_well.setText((f"In {reg.region_id}" if reg else "Between regions")
-                                  + f"  ·  stage {xy[0]:.0f}, {xy[1]:.0f} µm")
+            where = f"stage {xy[0] / 1000:.3f}, {xy[1] / 1000:.3f} mm" if phys else f"stage {xy[0]:.0f}, {xy[1]:.0f} µm"
+            self.lbl_well.setText((f"In {reg.region_id}" if reg else "Between regions") + f"  ·  {where}")
+            if phys:
+                a = self.session.calibration.plate_alignment
+                self.lbl_well.setToolTip(f"Plate alignment from {' and '.join(w['region'] for w in a.get('wells', []))}"
+                                         f" (residual {a.get('residual_um', 0):.0f} µm), saved "
+                                         f"{self.session.calibration.status_of('plate_alignment')}")
+                self.map.reachable_mm = self._reachable_mm()
         slot = self.ctl.objective_slot()
         obj = self.profile.objective(slot) if slot else None
         if obj:
@@ -883,13 +914,92 @@ class CapturePage(QWidget):
             self.session.select_vessel(dlg.vessel_id)
             self.model.add_log("info", f"vessel: {self.session.vessel.display_name}")
 
+    def _reachable_mm(self) -> tuple[float, float, float, float] | None:
+        """The stage's travel box drawn on the vessel (vessel mm), from the controller's X/Y limits."""
+        lx = self.ctl.axis_limits(self.profile.stage_device, "x")
+        ly = self.ctl.axis_limits(self.profile.stage_device, "y")
+        if lx is None or ly is None:
+            return None
+        (ax, ay), (bx, by) = (self.session.stage_map.to_vessel(lx[0], ly[0]),
+                              self.session.stage_map.to_vessel(lx[1], ly[1]))
+        return (min(ax, bx), min(ay, by), max(ax, bx), max(ay, by))
+
     def _goto_vessel(self, x_mm: float, y_mm: float) -> None:
         if getattr(self.session, "physical_stage", False):
-            self.model.add_log("warn", "vessel map moves are disabled for the physical stage: its vessel mapping "
-                                       "is not calibrated (use the jog control)")
+            if not self.session.stage_map.verified:
+                self.model.add_log("warn", "Vessel map: the plate is not aligned yet, so the stage was not moved. "
+                                           "Press Align plate… and centre two wells once (use the jog control)")
+                return
+            sx, sy = self.session.stage_map.to_stage(x_mm, y_mm)
+            for axis, v in (("x", sx), ("y", sy)):
+                lim = self.ctl.axis_limits(self.profile.stage_device, axis)
+                if lim is not None and not lim[0] <= v <= lim[1]:
+                    self.model.add_log("warn", f"Vessel map: ({x_mm:.1f}, {y_mm:.1f}) mm on the plate is stage "
+                                               f"{axis.upper()} {v / 1000:.2f} mm, outside its travel "
+                                               f"{lim[0] / 1000:.2f}..{lim[1] / 1000:.2f} mm; not moved")
+                    return
+            # the stage service moves X, then Y (never together) with its usual checks; a locked stage refuses
+            self.coalesce.request("stage", lambda: self.ctl.move_stage(sx, sy))
             return
         sx, sy = self.session.stage_map.to_stage(x_mm, y_mm)
         self.coalesce.request("stage", lambda: self.ctl.move_stage(sx, sy))
+
+    # ================================================================== plate alignment (physical stage)
+    def _align_wells(self):
+        regs = self.session.vessel.regions
+        return (regs[0], regs[-1]) if len(regs) > 1 else None
+
+    def _align_ui(self) -> None:
+        wells, rec = self._align_wells(), self._align
+        busy = rec is not None and wells is not None
+        self.btn_align_cancel.setVisible(busy)
+        self.lbl_align.setVisible(busy)
+        if rec is None or wells is None:
+            self.btn_align.setText("Align plate…")
+            return
+        r = wells[len(rec)]
+        self.btn_align.setText(f"Record {r.region_id}")
+        self.lbl_align.setText(f"Plate alignment {len(rec) + 1} of 2: jog until well {r.region_id} is centred "
+                               f"in the live image, then press Record {r.region_id}.")
+
+    def _align_step(self) -> None:
+        from openevos.instrument.vessels import PlateAlignmentError
+
+        wells = self._align_wells()
+        if wells is None:
+            self.model.add_log("warn", "Plate alignment needs a multi-well plate: choose one in Vessel expert… (the "
+                                       "alignment then applies to every standard plate)")
+            return
+        if self._align is None:
+            self._align = []
+            self._align_ui()
+            return
+        xy = self.ctl.stage_xy()
+        if xy is None:
+            self.model.add_log("warn", "Plate alignment: stage position unknown; nothing recorded")
+            return
+        r = wells[len(self._align)]
+        self._align.append((r.region_id, (r.cx, r.cy), (float(xy[0]), float(xy[1]))))
+        if len(self._align) < 2:
+            self._align_ui()
+            return
+        recorded, self._align = self._align, None
+        try:
+            residual = self.session.set_plate_alignment(recorded)
+        except PlateAlignmentError as exc:
+            self.model.add_log("warn", f"Plate alignment not saved: {exc}")
+        else:
+            m = self.session.stage_map
+            self.model.add_log("info", f"Plate aligned from {recorded[0][0]} and {recorded[1][0]} (residual "
+                                       f"{residual:.0f} µm; stage X {'with' if m.sign_x > 0 else 'against'} the "
+                                       f"columns, Y {'with' if m.sign_y > 0 else 'against'} the rows). Saved and used "
+                                       "for every standard plate")
+        self._align_ui()
+        self._refresh_state()
+
+    def _align_cancel(self) -> None:
+        self._align = None
+        self._align_ui()
 
     def _jog(self, vx: float, vy: float) -> None:
         pc = getattr(self.model, "physical_control", None)

@@ -196,14 +196,56 @@ class VesselStageMap(BaseModel):
     offset_x: float = 0.0
     offset_y: float = 0.0
     verified: bool = False  # True only with a verified alignment calibration
+    #: +1 or -1: whether stage X/Y grows the same way as vessel x (columns) / y (rows); the physical stage's axes
+    #: are measured by the plate alignment (`solve_plate_alignment`), the simulator's run with the vessel
+    sign_x: float = 1.0
+    sign_y: float = 1.0
 
     def to_stage(self, x_mm: float, y_mm: float) -> tuple[float, float]:
-        return ((x_mm - self.vessel_w_mm / 2) * 1000.0 + self.offset_x,
-                (y_mm - self.vessel_h_mm / 2) * 1000.0 + self.offset_y)
+        return ((x_mm - self.vessel_w_mm / 2) * 1000.0 * self.sign_x + self.offset_x,
+                (y_mm - self.vessel_h_mm / 2) * 1000.0 * self.sign_y + self.offset_y)
 
     def to_vessel(self, sx: float, sy: float) -> tuple[float, float]:
-        return ((sx - self.offset_x) / 1000.0 + self.vessel_w_mm / 2,
-                (sy - self.offset_y) / 1000.0 + self.vessel_h_mm / 2)
+        return ((sx - self.offset_x) / 1000.0 * self.sign_x + self.vessel_w_mm / 2,
+                (sy - self.offset_y) / 1000.0 * self.sign_y + self.vessel_h_mm / 2)
+
+
+#: plate alignment on the physical stage: the two wells must be this far apart on each axis (mm), and the stage
+#: distance between them must match the plate's within this fraction (a wrong well, a slipped plate, swapped axes)
+ALIGN_MIN_SPAN_MM = 20.0
+ALIGN_SCALE_TOLERANCE = 0.03
+
+
+class PlateAlignmentError(ValueError):
+    pass
+
+
+def solve_plate_alignment(v1: tuple[float, float], s1: tuple[float, float], v2: tuple[float, float],
+                          s2: tuple[float, float], frame: str = "motor.stage") -> tuple[VesselStageMap, float]:
+    """Two well centres, each as vessel mm (`v`) and the stage position (µm) where the operator centred it (`s`):
+    the vessel <-> stage map (axis directions and offset) for every standard-footprint vessel, and its worst residual
+    (µm). Raises PlateAlignmentError when the wells are too close on an axis or the distances disagree."""
+    signs, offsets = [], []
+    for i, name in ((0, "X"), (1, "Y")):
+        dv = (v2[i] - v1[i]) * 1000.0
+        ds = s2[i] - s1[i]
+        if abs(dv) < ALIGN_MIN_SPAN_MM * 1000.0:
+            raise PlateAlignmentError(f"the two wells are only {abs(dv) / 1000:.1f} mm apart in {name}; use wells at "
+                                      f"opposite corners (at least {ALIGN_MIN_SPAN_MM:g} mm apart on each axis)")
+        scale = ds / dv
+        if abs(abs(scale) - 1.0) > ALIGN_SCALE_TOLERANCE:
+            raise PlateAlignmentError(
+                f"the stage moved {abs(ds) / 1000:.2f} mm in {name} between the wells, but they are "
+                f"{abs(dv) / 1000:.2f} mm apart on the plate: check the wells were centred and the plate did not move")
+        sign = 1.0 if scale > 0 else -1.0
+        half = (SBS_W if i == 0 else SBS_H) / 2
+        offs = [s[i] - (v[i] - half) * 1000.0 * sign for v, s in ((v1, s1), (v2, s2))]
+        signs.append(sign)
+        offsets.append(sum(offs) / 2)
+    m = VesselStageMap(stage_frame=frame, offset_x=offsets[0], offset_y=offsets[1], sign_x=signs[0],
+                       sign_y=signs[1], verified=True)
+    residual = max(math.hypot(m.to_stage(*v)[0] - s[0], m.to_stage(*v)[1] - s[1]) for v, s in ((v1, s1), (v2, s2)))
+    return m, residual
 
 
 def well_label_sort_key(region_id: str) -> tuple:

@@ -48,6 +48,10 @@ class CalibrationStore:
     vessel_offset_um: dict[str, tuple[float, float]] = field(default_factory=dict)  # vessel_id -> (dx, dy)
     hot_pixels: dict[str, list[tuple[int, int]]] = field(default_factory=dict)  # role -> [(y, x)]
     hot_pixel_correction: bool = True
+    #: the physical stage's plate alignment (two centred wells): {"sign_x", "sign_y", "offset_x", "offset_y" (stage
+    #: µm of the standard footprint's centre), "residual_um", "wells", "vessel_id", "at"}. One for every standard-
+    #: footprint vessel; empty = not aligned (the vessel map shows no position and moves nothing)
+    plate_alignment: dict = field(default_factory=dict)
     provenance: str = "measured on simulator"
     updated: dict[str, str] = field(default_factory=dict)  # procedure -> ISO time
     path: Path | None = None
@@ -62,7 +66,8 @@ class CalibrationStore:
                 "parcentric_um": {str(k): list(v) for k, v in self.parcentric_um.items()},
                 "vessel_offset_um": {k: list(v) for k, v in self.vessel_offset_um.items()},
                 "hot_pixels": {k: [list(p) for p in v] for k, v in self.hot_pixels.items()},
-                "hot_pixel_correction": self.hot_pixel_correction, "provenance": self.provenance,
+                "hot_pixel_correction": self.hot_pixel_correction, "plate_alignment": self.plate_alignment,
+                "provenance": self.provenance,
                 "updated": self.updated}
 
     def save(self) -> None:
@@ -82,13 +87,17 @@ class CalibrationStore:
             vessel_offset_um={k: (float(v[0]), float(v[1])) for k, v in d.get("vessel_offset_um", {}).items()},
             hot_pixels={k: [(int(p[0]), int(p[1])) for p in v] for k, v in d.get("hot_pixels", {}).items()},
             hot_pixel_correction=bool(d.get("hot_pixel_correction", True)),
+            plate_alignment=dict(d.get("plate_alignment") or {}),
             provenance=d.get("provenance", "measured"), updated=d.get("updated", {}), path=path)
 
+    def status_of(self, k: str) -> str:
+        """When procedure `k` last ran (local 'YYYY-MM-DD HH:MM'), or ''."""
+        t = self.updated.get(k)
+        return datetime.fromisoformat(t).astimezone().strftime("%Y-%m-%d %H:%M") if t else ""
+
     def status(self) -> dict[str, str]:
-        def when(k: str) -> str:
-            t = self.updated.get(k)
-            return datetime.fromisoformat(t).astimezone().strftime("%Y-%m-%d %H:%M") if t else ""
-        return {k: when(k) for k in ("pixel_size", "parfocality", "parcentration", "vessel_alignment", "hot_pixels")}
+        return {k: self.status_of(k) for k in ("pixel_size", "parfocality", "parcentration", "vessel_alignment",
+                                               "hot_pixels")}
 
 
 # ---------------------------------------------------------------------------------------------- helpers
