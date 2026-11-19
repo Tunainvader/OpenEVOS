@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import os
 import time
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 
 from openevos.acquisition.session import build_sim_session
+from openevos.backends.technosoft import protocol as tp
 from openevos.core.clock import ThreadClock
 from openevos.instrument.settings import AppSettings
 
@@ -76,7 +78,7 @@ def test_unreleasable_lock_offers_the_rehome_with_its_reason(win, monkeypatch):
     n = len(svc.simulated_chain.writes)
     w.release_stage_lock()
     assert asked and "Y drive over-current trip recorded" in asked[0] and "cannot be released" in asked[0]
-    assert "Re-home" in asked[0] and "Z at 0" in asked[0]
+    assert "Re-home" in asked[0] and "lowered fully" not in asked[0]  # Z already at 0: nothing to lower
     pump(app, 0.3)
     assert not [f for f in svc.simulated_chain.writes[n:] if f in tp.XY_HOME_FRAMES.values()]
     assert svc.monitor.latched
@@ -111,3 +113,63 @@ def test_rehome_from_the_ui_clears_the_lock_and_returns(win, monkeypatch):
     assert sent == [tp.XY_HOME_FRAMES["X"], tp.XY_HOME_FRAMES["Y"]]
     assert (chain.values[("X", "APOS")], chain.values[("Y", "APOS")]) == (20000, 30000)
     assert w._rehome_why() == "the stage is not locked"
+
+
+def _rehome_with_z_up(win, monkeypatch, *, focus_ok: bool):
+    from PySide6.QtWidgets import QMessageBox
+
+    from openevos.backends.technosoft import protocol as tp
+
+    app, w, s = win
+    svc = s.telemetry[0]
+    chain = svc.simulated_chain
+    for ax, c in (("X", 20000), ("Y", 30000), ("Z", 8000)):
+        chain.values[(ax, "APOS")] = chain.values[(ax, "CPOS")] = c
+    pump(app, 0.4)
+    z_up = s.controller.focus_z()
+    assert z_up and z_up > 100
+    asked, results = [], []
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: (asked.append(a[2]), QMessageBox.StandardButton.Yes)[1])
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: results.append(("ok", a[2])))
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: results.append(("warn", a[2])))
+    if not focus_ok:
+        from openevos.core.command_router import CommandRouter
+        real = CommandRouter.submit
+
+        def refuse_focus(self, cmd):  # the focus move fails: nothing may reach X or Y
+            if getattr(cmd, "device_id", "") == s.profile.focus_device:
+                cmd = cmd.model_copy(update={"z": 1e9})
+            return real(self, cmd)
+        monkeypatch.setattr(CommandRouter, "submit", refuse_focus)
+    svc.monitor.trip("landing_error", "Y", "Y ended at 53, +53 counts from its target 0 (band 5)")
+    pump(app, 0.2)
+    n = len(chain.writes)
+    w.rehome_stage()
+    deadline = time.monotonic() + 25
+    while not results and time.monotonic() < deadline:
+        pump(app, 0.1)
+    sent = [f for f in chain.writes[n:] if f in tp.XY_HOME_FRAMES.values()]
+    return SimpleNamespace(app=app, s=s, svc=svc, chain=chain, z_up=z_up, asked=asked, results=results, sent=sent)
+
+
+def test_rehome_lowers_z_itself_then_puts_it_back(win, monkeypatch):
+    """Operator 2026-11-19 ("cant [you] do this auto"): Re-home was refused with Z up; now it lowers Z to 0 first,
+    re-homes, returns X/Y and then Z."""
+    r = _rehome_with_z_up(win, monkeypatch, focus_ok=True)
+    assert "lowered fully" in r.asked[0]
+    assert r.results and r.results[0][0] == "ok", r.results
+    assert r.sent == [tp.XY_HOME_FRAMES["X"], tp.XY_HOME_FRAMES["Y"]]
+    assert not r.svc.monitor.latched
+    deadline = time.monotonic() + 10
+    while abs((r.s.controller.focus_z() or 0) - r.z_up) > 1 and time.monotonic() < deadline:
+        pump(r.app, 0.1)
+    assert abs(r.s.controller.focus_z() - r.z_up) <= 1
+    assert (r.chain.values[("X", "APOS")], r.chain.values[("Y", "APOS")]) == (20000, 30000)
+
+
+def test_rehome_sends_nothing_to_xy_when_z_cannot_be_lowered(win, monkeypatch):
+    r = _rehome_with_z_up(win, monkeypatch, focus_ok=False)
+    assert r.results and r.results[0][0] == "warn" and "lowering the objective" in r.results[0][1], r.results
+    assert r.sent == []
+    assert r.svc.monitor.latched

@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from openevos import __version__
-from openevos.core.models import Connection, Health
+from openevos.core.models import CommandStatus, Connection, Health
 from openevos.instrument.profile import CameraRole
 from openevos.instrument.settings import HotButtonAction
 from openevos.ui import theme
@@ -58,6 +58,9 @@ NAV = [
 SERVICE_TABS = (("hardware", "Hardware"), ("service", "Functions"), ("diagnostics", "Diagnostics"),
                 ("events", "Event log"))
 RAIL_BELOW_PX = 1440
+#: Re-home stage lowers the objective itself when Z is above this (the drive service refuses beyond 5 Z counts, 0.6 µm)
+REHOME_Z_LOWERED_UM = 0.5
+REHOME_Z_TIMEOUT_S = 40.0
 
 
 def describe_snapshot(snap) -> tuple[str, str]:
@@ -588,26 +591,59 @@ class MainWindow(QMainWindow):
         if not reason:
             st = svc.monitor.state()
             reason = st.get("message", "") or "operator request"
-        xy = self.session.controller.stage_xy()
+        ctl = self.session.controller
+        xy, z = ctl.stage_xy(), ctl.focus_z()
         back = f"X {xy[0] / 1000:.2f}, Y {xy[1] / 1000:.2f} mm" if xy else "where it was"
-        text = (f"Stage locked: {reason}.\n\nRe-home the stage now? X, then Y, each drive runs its own power-up "
-                "homing: it drives to its hard stop and finds its index, as after switching the microscope on (about "
-                f"10–20 s per axis). The lock clears when both are seen homed, and the stage then returns to {back} "
-                "(X, then Y).\n\nFirst lower the objective fully (Z at 0): the stage travels to its home corner. Keep "
-                "hands clear of the stage. Stop cannot interrupt an axis while it homes; the microscope's power switch "
-                "can. A drive fault that "
-                "survives homing still needs a power cycle.")
+        lower = z is not None and abs(z) > REHOME_Z_LOWERED_UM
+        first = (f"First the objective is lowered fully (Z {z:.0f} µm → 0), since the stage travels to its home "
+                 f"corner; it goes back to Z {z:.0f} µm after the stage is back. " if lower else "")
+        text = (f"Stage locked: {reason}.\n\nRe-home the stage now? {first}X, then Y, each drive runs its own "
+                "power-up homing: it drives to its hard stop and finds its index, as after switching the microscope on "
+                f"(about 10–20 s per axis). The lock clears when both are seen homed, and the stage then returns to "
+                f"{back} (X, then Y).\n\nKeep hands clear of the stage. Stop cannot interrupt an axis while it homes; "
+                "the microscope's power switch can. A drive fault that survives homing still needs a power cycle.")
         if QMessageBox.question(self, "Re-home stage", text) != QMessageBox.StandardButton.Yes:
             return
+        if not lower:
+            self._start_rehome(svc, reason, back, None)
+            return
+        # operator 2026-11-19 ("cant [you] do this auto"): Re-home was refused with Z up; lower it here, through the
+        # router (the focus device's own checks apply), then start the re-home once Z is verified at 0
+        self.model.add_log("info", f"Re-home stage: lowering the objective from Z {z:.0f} µm to 0 first")
+        ticket = ctl.move_focus(0.0, timeout_s=REHOME_Z_TIMEOUT_S)
+        timer = QTimer(self)
+        timer.setInterval(100)
+
+        def tick() -> None:
+            status = ticket.status
+            if not status.is_terminal:
+                return
+            timer.stop()
+            timer.deleteLater()
+            if status is not CommandStatus.SUCCEEDED:
+                msg = (f"not started: lowering the objective to Z 0 ended {status.value}"
+                       f"{': ' + ticket.record.message if ticket.record.message else ''}; nothing was sent to X or Y")
+                self.model.add_log("warn", f"Re-home stage: {msg}")
+                QMessageBox.warning(self, "Re-home stage", msg[0].upper() + msg[1:])
+                return
+            self._start_rehome(svc, reason, back, z)
+
+        timer.timeout.connect(tick)
+        timer.start()
+        self._rehome_z_timer = timer  # held until Z has landed
+
+    def _start_rehome(self, svc, reason: str, back: str, z_restore: float | None) -> None:
+        from PySide6.QtWidgets import QMessageBox
+
         job = svc.rehome_stage("operator (Re-home stage)")
         if isinstance(job, str):
             self.model.add_log("warn", f"Re-home stage: not started: {job}")
             QMessageBox.warning(self, "Re-home stage", f"Not started: {job}")
             return
         self.model.add_log("warn", f"Re-home stage: started ({reason}); the stage returns to {back} after homing")
-        self._watch_rehome(job)
+        self._watch_rehome(job, z_restore)
 
-    def _watch_rehome(self, job) -> None:
+    def _watch_rehome(self, job, z_restore: float | None = None) -> None:
         from PySide6.QtWidgets import QMessageBox
 
         last: dict[str, str | None] = {"stage": None}
@@ -626,6 +662,11 @@ class MainWindow(QMainWindow):
             timer.deleteLater()
             ok, msg = bool(getattr(job, "ok", False)), getattr(job, "message", "") or "finished"
             self.model.add_log("info" if ok else "warn", f"Re-home stage: {msg}")
+            if ok and z_restore is not None:
+                # Z back to the height it had before Re-home lowered it; the focus device's safe-height check applies
+                self.model.add_log("info", f"Re-home stage: raising the objective back to Z {z_restore:.0f} µm")
+                self.session.controller.move_focus(z_restore)
+                msg += f"\n\nThe objective goes back to Z {z_restore:.0f} µm."
             (QMessageBox.information if ok else QMessageBox.warning)(self, "Re-home stage", msg)
             dlg = getattr(self, "_precheck_dlg", None)
             if dlg is not None and dlg.isVisible():

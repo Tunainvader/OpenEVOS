@@ -72,6 +72,15 @@
   - An axis switched off by its drive (an over-current trip) is homed from where it is, as before.
 - **Recorded:** `approach` in the `stage-rehome-*.json` record.
 
+## Amendment (2026-11-19): Re-home lowers Z itself
+- **Why:** twice on the instrument (11:18 and 13:26) the operator's Re-home was refused, with nothing sent, because Z
+  was up (4,333 and 4,291 µm); the operator: "cant [you] do this auto".
+- **Change (`ui/shell.py`, `rehome_stage`):** when Z is above 0.5 µm, the confirmation says the objective is lowered
+  first. On Yes the app sends an ordinary focus move to 0 through the router and starts the re-home only when that
+  move succeeds; if it fails or times out (40 s), nothing goes to X or Y and the lock stays. After a successful
+  re-home and return, Z goes back to its earlier height (the focus device's safe-height check applies). The drive
+  service's own refusal with Z up (5 counts) is unchanged.
+
 ## Consequences
 - A software re-home does not clear latched drive faults (`MER`) and is not a reboot; those still need a power cycle.
 - The stage ends at home (0, 0), where the turret collides with the stage: no turret change until it is centred.
