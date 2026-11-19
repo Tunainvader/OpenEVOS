@@ -241,6 +241,8 @@ class SimulatedDriveChain:
         # ends it interrupted (ISTATUSFLAGS bits 0+3, HOMEDONE 0), "stuck" never ends, "ignore" never starts
         self.home_reads = 3
         self.home_fault: str | None = None
+        #: tests: these axes end their homing this many counts short of 0, command 0 (Y since 2026-11-19: 14-31)
+        self.home_standoff: dict[str, int] = {}
         self._homing: dict[str, int] = {}
         for ax in tp.MOTION_AXES:
             self.values[(ax, "HOMEDONE")] = 1
@@ -433,7 +435,7 @@ class SimulatedDriveChain:
                 v[(axis, "ISTATUSFLAGS")] |= 0x0009
                 v[(axis, "SRL")] &= ~0x8000
             else:
-                v[(axis, "APOS")] = v[(axis, "CPOS")] = 0
+                v[(axis, "APOS")], v[(axis, "CPOS")] = self.home_standoff.get(axis, 0), 0
                 v[(axis, "HOMEDONE")] |= 1
             v[(axis, "ESTATEV")], v[(axis, "SRH")] = 0, 0x033F
 

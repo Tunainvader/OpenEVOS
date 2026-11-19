@@ -78,6 +78,80 @@ def test_monitor_rule_clears_only_on_good_reads():
     assert m.rehome_done({"X": good, "Y": good}, "test") == "" and not m.latched
 
 
+def test_monitor_stand_off_clears_only_once_parked():
+    """2026-11-19: Y homed fault-free but stood 31 counts short of 0 (command 0). Accepted only after a park leg."""
+    m = sm.StageMonitor(None)
+    m.trip("landing_error", "Y", "Y ended at 53")
+    good = {n: 0 for n in sm.REHOME_READS} | {"IINITONCEDONE": tp.INIT_DONE_MARKER, "HOMEDONE": 1, "SRL": 0xC400,
+                                              "ISTATUSFLAGS": 0xD000, "SRH": 0x033F}
+    y = dict(good, APOS=31)
+    assert m.rehome_standoffs({"X": good, "Y": y}) == ("", {"Y": 31})
+    assert m.rehome_standoffs({"X": good, "Y": dict(good, APOS=sm.REHOME_STANDOFF_MAX_COUNTS + 1)})[0]  # too far
+    assert m.rehome_standoffs({"X": good, "Y": dict(good, APOS=-31)})[0]  # past home: never a stand-off
+    assert m.rehome_standoffs({"X": good, "Y": dict(y, MER=0x0100)})[0]  # a stand-off with a fault is a fault
+    assert "not at home" in m.rehome_done({"X": good, "Y": y}) and m.latched  # not parked yet
+    parked = dict(good, APOS=1004, CPOS=1000)
+    assert "parked off its command" in m.rehome_done({"X": good, "Y": parked}, parked={"Y": 31}) and m.latched
+    assert m.rehome_done({"X": good, "Y": dict(parked, APOS=1001, ESTATEV=13)}, parked={"Y": 31}) == ""
+    assert not m.latched and "31 counts" in m.state()["warnings"][0]
+    m.trip("landing_error", "Y", "again")
+    assert m.rehome_done({"X": good, "Y": good}) == "" and m.state()["warnings"] == []  # a clean home drops it
+
+
+def test_y_stand_off_is_parked_then_the_lock_clears(tmp_path):
+    chain = locked_chain({("Y", "APOS"): 120, ("Y", "CPOS"): 120})  # Y locked near home, as at 13:26
+    chain.home_standoff = {"Y": 31}
+    svc = service(chain, tmp_path)
+    try:
+        svc.monitor.trip("landing_error", "Y", "Y ended at 53")
+        n = len(chain.writes)
+        job = run_job(svc)
+        assert job.ok, job.message
+        assert not svc.monitor.latched and job.parked == {"Y": tm.REHOME_PARK_COUNTS}
+        w = writes_after(chain, n)
+        hy = w.index(tp.XY_HOME_FRAMES["Y"])
+        assert tp.move_target("Y", tm.REHOME_PARK_COUNTS) in w[hy:]
+        park = job.record["park"]["Y"]
+        assert park["standoff"] == 31 and park["from"] == 31 and park["ok"]
+        # Y was at 120 counts: it goes back no nearer home than its park position; X back where it was
+        assert chain.values[("X", "APOS")] == X0 and chain.values[("Y", "APOS")] == tm.REHOME_PARK_COUNTS
+        assert "31 counts short of 0" in job.message and "kept clear of home" in job.message
+        assert any("31 counts" in t for t in svc.monitor.state()["warnings"])
+        assert list(tmp_path.glob("stage-rehome-*-pass.json"))
+    finally:
+        svc.stop()
+
+
+def test_y_stand_off_returns_to_a_position_further_out():
+    chain = locked_chain()
+    chain.home_standoff = {"Y": 20}
+    svc = service(chain)
+    try:
+        svc.monitor.trip("landing_error", "Y", "test")
+        job = run_job(svc)
+        assert job.ok, job.message
+        assert (chain.values[("X", "APOS")], chain.values[("Y", "APOS")]) == (X0, Y0)
+        assert "kept clear" not in job.message and "20 counts short of 0" in job.message
+    finally:
+        svc.stop()
+
+
+@pytest.mark.parametrize("standoff", [sm.REHOME_STANDOFF_MAX_COUNTS + 1, -20])
+def test_larger_or_negative_stand_off_keeps_the_lock_and_sends_nothing_more(standoff):
+    chain = locked_chain()
+    chain.home_standoff = {"Y": standoff}
+    svc = service(chain)
+    try:
+        svc.monitor.trip("landing_error", "Y", "test")
+        n = len(chain.writes)
+        job = run_job(svc)
+        assert not job.ok and job.stage == "failed" and "not at home" in job.message and svc.monitor.latched
+        w = writes_after(chain, n)
+        assert not any(f in w[w.index(tp.XY_HOME_FRAMES["Y"]):] for f in (tp.move_request("X"), tp.move_request("Y")))
+    finally:
+        svc.stop()
+
+
 def test_overcurrent_lock_rehomes_x_then_y_and_returns(tmp_path):
     chain = locked_chain()
     svc = service(chain, tmp_path)

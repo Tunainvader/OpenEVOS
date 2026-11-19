@@ -81,6 +81,22 @@
   re-home and return, Z goes back to its earlier height (the focus device's safe-height check applies). The drive
   service's own refusal with Z up (5 counts) is unchanged.
 
+## Amendment (2026-11-19): a Y stand-off at home is parked, then accepted
+- **Why:** the 14:15 re-home homed X and Y fault-free, but Y stopped at APOS 31 against CPOS 0 (14 µm short), so the
+  5-count home rule kept the lock. Since 19 Nov Y has stopped 14-31 counts short of home (it read -1 that morning),
+  and most of Y's locks and both of its highest currents are at its home edge (the X/Y problem map). A power cycle
+  would clear the lock without looking at the position, and the next move would still be refused (APOS-CPOS > 3).
+  Operator chose to accept the stand-off and park Y clear of home.
+- **Change (`stage_monitor.py`, `telemetry.py`):** a homed, idle, fault-free axis with its command at 0 and its encoder
+  5 < APOS ≤ 60 counts (26 µm, travel side only) is a stand-off. While still locked, the service parks it at
+  `REHOME_PARK_COUNTS` (1000, 0.44 mm) with a verified leg (under-lock still-axis guard, landing band) and waits the
+  settle time. The latch clears only when fresh reads show it idle, fault-free and within 3 counts of its command.
+  A standing warning names the stand-off. The return takes a parked axis no nearer home than its park position. A
+  larger stand-off, one past 0 (negative), a stand-off with any fault, or a failed park keeps the lock with nothing
+  more sent. The re-home record keeps `park` and `after_park`.
+- **Not changed:** ordinary moves to Y 0 are still allowed; the warning says they may lock again. Finding what is at Y's
+  home edge is a hand check.
+
 ## Consequences
 - A software re-home does not clear latched drive faults (`MER`) and is not a reboot; those still need a power cycle.
 - The stage ends at home (0, 0), where the turret collides with the stage: no turret change until it is centred.

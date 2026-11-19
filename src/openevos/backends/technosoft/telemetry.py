@@ -310,6 +310,7 @@ class _RehomeJob:
     message: str = ""
     homed: bool = False  # both axes homed and the lock cleared (the return may still have failed)
     remembered: dict[str, int] = field(default_factory=dict)  # counts
+    parked: dict[str, int] = field(default_factory=dict)  # axes that homed short of 0 -> where they were parked
     returned_um: tuple[float, float] | None = None
     record: dict = field(default_factory=dict)
 
@@ -356,6 +357,8 @@ REHOME_Z_BAND = 5  # Z must be at home (counts), as Gate 20
 #: tight spot (~4,300 counts, 1.9 mm, seen in every homing) and inside both axes' calibrated limits
 REHOME_APPROACH_FROM_COUNTS = 3000
 REHOME_APPROACH_TO_COUNTS = 1000
+#: where an axis that homed short of 0 (a stand-off) is parked, and the nearest to home the re-home returns it (0.44 mm)
+REHOME_PARK_COUNTS = 1000
 REHOME_PRE_READS = ("ESTATEV", "IINITONCEDONE", "SRH", "SRL", "MER", "ISTATUSFLAGS", "APOS", "CPOS", "HOMEDONE")
 
 
@@ -1082,7 +1085,19 @@ class TelemetryService:
         job.stage = "verifying"
         reads = {ax: {n: link.read(tp.VARS[ax][n]) for n in sm.REHOME_READS} for ax in tp.MOTION_AXES}
         job.record["after"] = reads
-        why = self.monitor.rehome_done(reads, job.who)
+        why, standoff = self.monitor.rehome_standoffs(reads)
+        if why:
+            job.stage, job.message = "failed", f"X and Y homed but the lock stays: {why}. {RECOVERY}"
+            return
+        if standoff:
+            why = self._rehome_park(link, job, standoff)
+            if why:
+                job.stage, job.message = "failed", (f"X and Y homed, but {why}. Nothing more was sent; the lock "
+                                                    f"stays: {RECOVERY}")
+                return
+            reads = {ax: {n: link.read(tp.VARS[ax][n]) for n in sm.REHOME_READS} for ax in tp.MOTION_AXES}
+            job.record["after_park"] = reads
+        why = self.monitor.rehome_done(reads, job.who, parked=standoff)
         if why:
             job.stage, job.message = "failed", f"X and Y homed but the lock stays: {why}. {RECOVERY}"
             return
@@ -1124,6 +1139,34 @@ class TelemetryService:
             self._settle_between_legs(link, ctx)
         return ""
 
+    def _rehome_park(self, link: DriveLink, job: _RehomeJob, standoff: dict[str, int]) -> str:
+        """An axis that homed short of 0 (a stand-off, see sm.REHOME_STANDOFF_MAX_COUNTS) is moved to REHOME_PARK_COUNTS
+        with a verified leg while the stage is still locked: its landing in band shows it follows its command, and it
+        no longer presses on whatever stopped it. '' = parked; else why it stopped (the latch stays)."""
+        for ax in (a for a in tp.MOTION_AXES if a in standoff):
+            apos = link.read(tp.VARS[ax]["APOS"])
+            target = max(REHOME_PARK_COUNTS, link.read(tp.VARS[ax]["LPOSMIN"]))
+            job.stage = f"parking {ax} clear of home"
+            self.monitor.note(f"software re-home: {ax} homed {standoff[ax]} counts short of 0; parked {apos} -> "
+                              f"{target}")
+            ctx = _ReturnCtx()
+            now = {a: {"CSPDCMD": link.read(tp.VARS[a]["CSPDCMD"])} for a in tp.MOTION_AXES}
+            start = {a: link.read(tp.VARS[a]["APOS"]) for a in tp.MOTION_AXES}
+            move = _MoveJob(f"rehome-park-{ax}", ctx, {**start, ax: target}, (0.0, 0.0))
+            ok = self._move_leg(link, move, [ax], now, start, under_lock=True)
+            landed = link.read(tp.VARS[ax]["APOS"])
+            job.record.setdefault("park", {})[ax] = {"standoff": standoff[ax], "from": apos, "to": target,
+                                                     "landed": landed, "ok": ok and ctx.ok is not False,
+                                                     "message": ctx.message}
+            if not ok:
+                return f"{ax} stood {standoff[ax]} counts short of 0 and did not reach its park position " \
+                       f"{target} ({ctx.message or 'stopped'})"
+            job.parked[ax] = target
+            # under the lock _settle_between_legs returns at once; the axis keeps converging inside its band, and the
+            # monitor's check after the park wants it within MOVE_DRIFT_MAX_COUNTS of its command
+            self._sleep(SETTLE_S)
+        return ""
+
     def _rehome_axis(self, link: DriveLink, job: _RehomeJob, ax: str) -> tuple[bool, str]:
         """One home request and its follow-up: started (ESTATEV 19 or HOMEDONE cleared), then done (ESTATEV 0 with
         HOMEDONE set). No stop is possible meanwhile: the drive reads ESTATE only after homing."""
@@ -1163,8 +1206,14 @@ class TelemetryService:
             self.monitor.end_rehome(ax, outcome)
 
     def _rehome_return(self, link: DriveLink, job: _RehomeJob) -> None:
-        """Back to the remembered X/Y with the ordinary verified move (X then Y, pre-move and landing checks)."""
-        targets = dict(job.remembered)
+        """Back to the remembered X/Y with the ordinary verified move (X then Y, pre-move and landing checks). An axis
+        parked after a stand-off goes back no nearer home than its park position."""
+        targets = {ax: max(c, job.parked[ax]) if ax in job.parked else c for ax, c in job.remembered.items()}
+        standoff = {ax: v["standoff"] for ax, v in job.record.get("park", {}).items()}
+        note = "".join(f"; {ax} homed {standoff[ax]} counts short of 0 (check its home edge)" for ax in job.parked)
+        note += "".join(f"; {ax} kept clear of home at {um_from_counts(ax, targets[ax]) / 1000:.2f} mm instead of "
+                        f"{um_from_counts(ax, job.remembered[ax]) / 1000:.3f} mm"
+                        for ax in job.parked if targets[ax] != job.remembered[ax])
         um = (um_from_counts("X", targets["X"]), um_from_counts("Y", targets["Y"]))
         lim = {ax: (link.read(tp.VARS[ax]["LPOSMIN"]), link.read(tp.VARS[ax]["LPOSMAX"])) for ax in tp.MOTION_AXES}
         outside = [f"{ax} {targets[ax]} outside {lo}..{hi}" for ax, (lo, hi) in lim.items()
@@ -1172,7 +1221,7 @@ class TelemetryService:
         if outside:
             job.stage, job.message = "homed, not returned", (
                 "Stage re-homed and the lock cleared, but the old position is outside the drives' current limits ("
-                + "; ".join(outside) + "): the stage stays at home. Move it from the Capture page")
+                + "; ".join(outside) + "): the stage stays at home. Move it from the Capture page" + note)
             return
         job.stage = "returning X then Y"
         self.backends[0].report(activity=Activity.MOVING,
@@ -1184,14 +1233,15 @@ class TelemetryService:
         if ctx.ok:
             job.ok, job.stage, job.returned_um = True, "done", um
             job.message = ("Stage re-homed (X then Y), the lock cleared, and the stage is back at "
-                           f"X {um[0] / 1000:.3f}, Y {um[1] / 1000:.3f} mm")
+                           f"X {um[0] / 1000:.3f}, Y {um[1] / 1000:.3f} mm" + note)
         else:
             job.stage = "homed, return failed"
-            job.message = f"Stage re-homed and the lock cleared, but the return move did not finish: {ctx.message}"
+            job.message = (f"Stage re-homed and the lock cleared, but the return move did not finish: {ctx.message}"
+                           + note)
 
     def _write_rehome_record(self, job: _RehomeJob) -> None:
         job.record.update(stage=job.stage, ok=job.ok, homed=job.homed, message=job.message,
-                          remembered=job.remembered)
+                          remembered=job.remembered, parked=job.parked)
         self.monitor.note(f"software re-home: {job.stage}: {job.message}")
         folder = self.monitor.evidence_dir
         if folder is None:

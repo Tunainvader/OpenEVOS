@@ -70,6 +70,13 @@ RELEASE_READS = ("IINITONCEDONE", "ESTATEV", "SRH", "SRL", "ISTATUSFLAGS", "APOS
 #: powered and at 0. ESTATE 19 leaves IINITONCEDONE at 12345, so the power-cycle rule above cannot see it.
 REHOME_READS = ("IINITONCEDONE", "ESTATEV", "HOMEDONE", "ISTATUSFLAGS", "SRL", "SRH", "MER", "APOS", "CPOS")
 REHOME_HOME_BAND = 5
+#: Since 2026-11-19 Y's homing completes fault-free but Y stops 14-31 counts short of 0 against its command 0 (something
+#: at its home edge, where most of its locks are; it read -1 that morning). A homed, fault-free axis whose command is 0
+#: and whose encoder stands off on the travel side by up to this many counts (26 um) is a stand-off, not a failure: the
+#: service parks it away from home with a verified leg while still locked, and the latch clears only if that leg lands
+#: in its band (the axis follows its command), with a standing warning. Further out, or past 0, the latch stays.
+REHOME_STANDOFF_MAX_COUNTS = 60
+STANDOFF_WARNING = "rehome_standoff"
 #: extra reads taken the moment a latch is set, before anything else is sent (plan T0 read order)
 EXTRA_READS = ("ISTATUSFLAGS", "SRL", "MER", "IIQMAX", "IIQMIN", "IQ", "LCOMMERRPOS", "APOS", "CPOS")
 
@@ -220,35 +227,75 @@ class StageMonitor:
     def end_rehome(self, axis: str, why: str) -> None:
         self.end_move([axis], f"re-home: {why}")
 
-    def rehome_done(self, values: dict[str, dict[str, int]], who: str = "operator") -> str:
-        """Both axes' fresh reads (REHOME_READS) right after the service saw each one home (HOMEDONE cleared by the
-        request, then set again with ESTATEV 0). '' = the latch is cleared (evidence written); else why it stays."""
+    def _rehome_problems(self, values: dict[str, dict[str, int]],
+                         parked: dict[str, int]) -> tuple[list[str], dict[str, int]]:
+        """What stops the latch clearing after a re-home, and the stand-offs (axis -> APOS at home, command 0) found.
+        An axis in `parked` has since been moved off home by the service: it must be idle and on its command."""
+        problems: list[str] = []
+        standoff: dict[str, int] = {}
+        for ax in AXES:
+            v = values.get(ax) or {}
+            if any(n not in v for n in REHOME_READS):
+                problems.append(f"{ax}: reads missing")
+                continue
+            if v["IINITONCEDONE"] != tp.INIT_DONE_MARKER:
+                problems.append(f"{ax} not initialised")
+            idle = v["ESTATEV"] in (0, 13) if ax in parked else v["ESTATEV"] == 0
+            if not v["HOMEDONE"] & 1 or not idle:
+                problems.append(f"{ax} not homed (HOMEDONE {v['HOMEDONE']}, state {v['ESTATEV']})")
+            if v["ISTATUSFLAGS"] & tp.ISF_HOME_INTERRUPTED:
+                problems.append(f"{ax} homing was interrupted (ISTATUSFLAGS 0x{v['ISTATUSFLAGS']:04X})")
+            if v["MER"]:
+                problems.append(f"{ax} drive fault MER 0x{v['MER']:04X}")
+            hit = self._flag_rule(ax, v["ISTATUSFLAGS"], v["SRL"])
+            if hit:
+                problems.append(hit[2])
+            apos, cpos = v["APOS"], v["CPOS"]
+            if ax in parked:
+                if abs(apos - cpos) > MOVE_DRIFT_MAX_COUNTS:
+                    problems.append(f"{ax} parked off its command (APOS {apos}, CPOS {cpos})")
+            elif abs(cpos) <= REHOME_HOME_BAND < apos <= REHOME_STANDOFF_MAX_COUNTS:
+                standoff[ax] = apos
+            elif abs(apos) > REHOME_HOME_BAND or abs(cpos) > REHOME_HOME_BAND:
+                problems.append(f"{ax} not at home after homing (APOS {apos}, CPOS {cpos})")
+        return problems, standoff
+
+    def rehome_standoffs(self, values: dict[str, dict[str, int]]) -> tuple[str, dict[str, int]]:
+        """The reads at home (REHOME_READS) right after both axes homed: ('' or why the latch must stay, the axes that
+        stand off home within REHOME_STANDOFF_MAX_COUNTS, which the service must park before `rehome_done`)."""
         with self._lock:
-            problems = []
-            for ax in AXES:
-                v = values.get(ax) or {}
-                if any(n not in v for n in REHOME_READS):
-                    problems.append(f"{ax}: reads missing")
-                    continue
-                if v["IINITONCEDONE"] != tp.INIT_DONE_MARKER:
-                    problems.append(f"{ax} not initialised")
-                if not v["HOMEDONE"] & 1 or v["ESTATEV"] != 0:
-                    problems.append(f"{ax} not homed (HOMEDONE {v['HOMEDONE']}, state {v['ESTATEV']})")
-                if v["ISTATUSFLAGS"] & tp.ISF_HOME_INTERRUPTED:
-                    problems.append(f"{ax} homing was interrupted (ISTATUSFLAGS 0x{v['ISTATUSFLAGS']:04X})")
-                if v["MER"]:
-                    problems.append(f"{ax} drive fault MER 0x{v['MER']:04X}")
-                hit = self._flag_rule(ax, v["ISTATUSFLAGS"], v["SRL"])
-                if hit:
-                    problems.append(hit[2])
-                if abs(v["APOS"]) > REHOME_HOME_BAND or abs(v["CPOS"]) > REHOME_HOME_BAND:
-                    problems.append(f"{ax} not at home after homing (APOS {v['APOS']}, CPOS {v['CPOS']})")
+            problems, standoff = self._rehome_problems(values, {})
+            return "; ".join(problems), standoff
+
+    def rehome_done(self, values: dict[str, dict[str, int]], who: str = "operator",
+                    parked: dict[str, int] | None = None) -> str:
+        """Both axes' fresh reads (REHOME_READS) right after the service saw each one home (HOMEDONE cleared by the
+        request, then set again with ESTATEV 0), or, for the axes in `parked` (axis -> its stand-off at home), after
+        the service moved them off home with a verified leg. '' = the latch is cleared (evidence written); else why
+        it stays."""
+        parked = dict(parked or {})
+        with self._lock:
+            problems, standoff = self._rehome_problems(values, parked)
+            problems += [f"{ax} not at home after homing (APOS {values[ax]['APOS']}, CPOS {values[ax]['CPOS']})"
+                         for ax in standoff]  # a stand-off clears only once parked
             if problems:
                 return "; ".join(problems)
             if self.latch is not None:
                 self.latch.values["rehome_reads"] = {ax: dict(values[ax]) for ax in AXES}
-                self._clear(f"software re-home of X and Y by {who} (ESTATE 19, ADR-0058): both homed, idle, "
-                            "fault-free, powered and at 0")
+                how = "both homed, idle, fault-free, powered and at 0"
+                if parked:
+                    self.latch.values["rehome_standoff"] = parked
+                    how = ("both homed, idle, fault-free and powered; " + ", ".join(
+                        f"{ax} stood {d} counts short of 0 and was parked with a verified leg" for ax, d in
+                        parked.items()))
+                self._clear(f"software re-home of X and Y by {who} (ESTATE 19, ADR-0058): {how}")
+            if parked:
+                self.warnings[STANDOFF_WARNING] = "; ".join(
+                    f"{ax} homed {d} counts ({d * 1.27e3 / 2880:.0f} um) short of 0 at {_utc()[:19]}Z: something "
+                    f"may be at {ax}'s home edge; check it by hand. Moving {ax} back to 0 may lock the stage again"
+                    for ax, d in parked.items())
+            else:
+                self.warnings.pop(STANDOFF_WARNING, None)
             for ax in AXES:
                 self.homed[ax] = True
             return ""
