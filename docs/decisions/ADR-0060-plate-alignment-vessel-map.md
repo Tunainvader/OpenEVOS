@@ -19,7 +19,8 @@
 - **Where it is kept:** `plate_alignment` in the app's `calibration.json` (next to the settings, user profile, not in
   git), with the wells, the stage positions, the residual and the time. It is applied at every launch. This is an
   app-side calibration: nothing is written to a drive.
-- **What it enables:** the map shows the live stage position, the current well and the travel box. A click on a well
+- **What it enables:** the map shows the live stage position and the current well (no travel-box outline: removed at
+  the operator's request, 2026-11-21). A click on a well
   (or a crosshair drop) moves the stage there through the router and the stage service: X, then Y, never together,
   with every pre-move, landing and lock check. A target outside the travel box is refused before anything is sent.
 - **Without an alignment** the map shows no position and moves nothing, as before, and says to run *Align plate…*.

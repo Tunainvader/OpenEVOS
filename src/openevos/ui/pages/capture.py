@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
     QCheckBox,
-    QComboBox,
     QDialog,
     QFrame,
     QGridLayout,
@@ -104,6 +103,8 @@ def tool_button(text: str, ic: str, *, checkable: bool = False, tip: str = "") -
 
 #: an axis this close outside its range (a count or two after power-up homing) is held at the edge, not refused
 HOME_SLACK_UM = 5.0
+#: the real stage's speed presets in mm/s (ADR-0032; Motor Gate 10 measured 1.01 / 4.04 / 8.35 on X)
+SPEEDS = {"slow": 1.0, "medium": 4.0, "fast": 8.3}
 #: after an objective change Z goes back to its earlier height; below this it was already down, nothing to return
 Z_RETURN_MIN_UM = 1.0
 
@@ -247,33 +248,30 @@ class CapturePage(QWidget):
         lay.addWidget(self.lbl_align)
         lay.addWidget(label("Stage", "section"))
         self.joy = Joystick()
-        self.jog_speed = QComboBox()
-        self.jog_speed.addItems(["Slow", "Medium", "Fast"])
-        self.jog_speed.setCurrentIndex(1)
-        self.jog_speed.setAccessibleName("Jog speed")
-        self.jog_speed.setFixedWidth(92)  # sized to its longest item; never runs past the panel edge
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(self.joy)
+        row.addStretch(1)
+        lay.addLayout(row)
+        # speed: a full-width segmented choice with the speed in mm/s underneath (operator 2026-11-21: "properly set
+        # the speed setting ui dropdown"; the narrow combo box read as a label). Remembered in the settings.
+        self.jog_speed = SegmentedControl([(k, k.capitalize()) for k in SPEEDS], accessible_name="Stage speed")
+        self.lbl_speed = label("", "caption", wrap=True)
+        self._speed_svc = None
+        speed = self.settings.basic.stage_speed if self.settings.basic.stage_speed in SPEEDS else "medium"
+        self.jog_speed.set_current(speed)
         if getattr(self.session, "physical_stage", False):
             svc = self.session.telemetry[0] if self.session.telemetry else None
             if svc is not None and getattr(svc, "speed_control", False):  # ADR-0032, after Motor Gate 10
-                self.jog_speed.setToolTip("Real stage speed: Slow 1 mm/s, Medium 4 mm/s, Fast 8.3 mm/s (the drives' "
-                                          "power-up speed, restored when the app closes). Push the knob in one of 8 "
-                                          "directions (up = Y+ away, right = X+); release to stop.")
-                presets = ("slow", "medium", "fast")
-                svc.speed_preset = presets[self.jog_speed.currentIndex()]
-                self.jog_speed.currentIndexChanged.connect(lambda i, s=svc: setattr(s, "speed_preset", presets[i]))
+                self._speed_svc = svc
+                svc.speed_preset = speed
             else:  # drive speed stays the power-up speed; nothing is written
                 self.jog_speed.setEnabled(False)
-                self.jog_speed.setToolTip("Real stage: moves at the drives' power-up speed (~8.3 mm/s); start the app "
-                                          "with --speed-control (after Motor Gate 10) to choose a speed. Push the knob "
-                                          "in one of 8 directions (up = Y+ away, right = X+); release to stop.")
-        jl = QVBoxLayout()
-        jl.addWidget(label("Speed", "rowlabel"))
-        jl.addWidget(self.jog_speed)
-        jl.addStretch(1)
-        row = QHBoxLayout()
-        row.addWidget(self.joy)
-        row.addLayout(jl)
-        lay.addLayout(row)
+        self.jog_speed.activated.connect(self._set_speed)
+        lay.addWidget(label("Speed", "rowlabel"))
+        lay.addWidget(self.jog_speed)
+        lay.addWidget(self.lbl_speed)
+        self._show_speed()
         lay.addWidget(label("Objectives", "section"))
         self.obj_group = QButtonGroup(self)
         self.obj_group.setExclusive(True)
@@ -661,7 +659,9 @@ class CapturePage(QWidget):
                 self.lbl_well.setToolTip(f"Plate alignment from {' and '.join(w['region'] for w in a.get('wells', []))}"
                                          f" (residual {a.get('residual_um', 0):.0f} µm), saved "
                                          f"{self.session.calibration.status_of('plate_alignment')}")
-                self.map.reachable_mm = self._reachable_mm()
+                # no travel-box outline on the real plate (operator 2026-11-21: "why is the yellow dotted line on the
+                # plate map? remove it"); a target outside the travel is still refused in _goto_vessel
+                self.map.reachable_mm = None
         slot = self.ctl.objective_slot()
         obj = self.profile.objective(slot) if slot else None
         if obj:
@@ -917,16 +917,6 @@ class CapturePage(QWidget):
             self.session.select_vessel(dlg.vessel_id)
             self.model.add_log("info", f"vessel: {self.session.vessel.display_name}")
 
-    def _reachable_mm(self) -> tuple[float, float, float, float] | None:
-        """The stage's travel box drawn on the vessel (vessel mm), from the controller's X/Y limits."""
-        lx = self.ctl.axis_limits(self.profile.stage_device, "x")
-        ly = self.ctl.axis_limits(self.profile.stage_device, "y")
-        if lx is None or ly is None:
-            return None
-        (ax, ay), (bx, by) = (self.session.stage_map.to_vessel(lx[0], ly[0]),
-                              self.session.stage_map.to_vessel(lx[1], ly[1]))
-        return (min(ax, bx), min(ay, by), max(ax, bx), max(ay, by))
-
     def _goto_vessel(self, x_mm: float, y_mm: float) -> None:
         if getattr(self.session, "physical_stage", False):
             if not self.session.stage_map.verified:
@@ -1025,9 +1015,31 @@ class CapturePage(QWidget):
         if self.coalesce.busy("stage"):
             return
         fov = self._fov_mm() or (0.5, 0.4)
-        k = (0.25, 0.6, 1.5)[self.jog_speed.currentIndex()]
+        k = {"slow": 0.25, "medium": 0.6, "fast": 1.5}[self.jog_speed.current() or "medium"]
         dx, dy = vx * fov[0] * 1000 * k, vy * fov[1] * 1000 * k
         self.coalesce.request("stage", lambda: self.ctl.move_stage_by(dx, dy))
+
+    def _set_speed(self, key: str) -> None:
+        """The operator picked a stage speed: applied to the drive service (every stage move from now on) and saved."""
+        if self._speed_svc is not None:
+            self._speed_svc.speed_preset = key
+        self.settings.basic.stage_speed = key
+        self.session.save_settings()
+        self._show_speed()
+
+    def _show_speed(self) -> None:
+        key = self.jog_speed.current() or "medium"
+        hint = "Push the knob in one of 8 directions (up = Y+ away, right = X+); release to stop."
+        if not getattr(self.session, "physical_stage", False):
+            text = f"{key.capitalize()} jog steps (simulated stage)"
+        elif self._speed_svc is None:
+            text = f"Fixed at the drives' power-up speed, {SPEEDS['fast']:.1f} mm/s"
+            hint += " Start the app with --speed-control to choose a speed."
+        else:
+            text = f"{SPEEDS[key]:g} mm/s for every stage move"
+            hint += " Restored to the drives' power-up speed when the app closes."
+        self.lbl_speed.setText(text)
+        self.jog_speed.setToolTip(hint)
 
     def _joy_released(self) -> None:
         if getattr(self, "_phys_joy", None) is not None:

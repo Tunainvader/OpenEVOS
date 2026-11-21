@@ -157,6 +157,7 @@ def test_align_once_then_the_map_shows_and_moves_the_stage(win, tmp_path):
     cap._refresh_state()
     assert cap.map.position_mm == pytest.approx((d6.cx, d6.cy), abs=0.01)
     assert cap.lbl_well.text().startswith("In D6")
+    assert cap.map.reachable_mm is None  # no travel-box outline on the real plate (operator 2026-11-21)
 
     # a well outside the travel box is refused, nothing sent
     here = (chain.values[("X", "APOS")], chain.values[("Y", "APOS")])

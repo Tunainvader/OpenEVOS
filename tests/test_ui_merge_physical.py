@@ -539,8 +539,14 @@ def test_speed_box_sets_the_drive_speed_only_with_speed_control(qtbot=None):
             cap = win.pages["capture"]
             chain = s.telemetry[0].simulated_chain
             assert cap.jog_speed.isEnabled() is enabled
+            assert cap.jog_speed.current() == "medium"  # the saved default
             if enabled:
-                cap.jog_speed.setCurrentIndex(0)  # Slow
+                assert cap.lbl_speed.text() == "4 mm/s for every stage move"
+                cap.jog_speed.buttons["slow"].click()
+                assert cap.lbl_speed.text() == "1 mm/s for every stage move"
+                assert s.settings.basic.stage_speed == "slow"  # remembered for the next launch
+            else:
+                assert cap.lbl_speed.text().startswith("Fixed at the drives' power-up speed")
             t = s.controller.move_stage(1000.0, 0.0)
             assert t.wait(10).value == "succeeded", t.record.message
             want = tp.speed_raw("slow") if enabled else tp.POWER_UP_SPEED_RAW

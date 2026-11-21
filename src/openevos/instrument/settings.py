@@ -197,6 +197,9 @@ class SystemBasicSettings(BaseModel):
     #: Capture › Z focus: per-objective safe height (µm from home), keyed by turret slot. Above it the panel shows an
     #: amber warning and a held pad stops; set by the operator at the Z where that objective nears the vessel
     focus_limit_um: dict[str, float] = Field(default_factory=dict)
+    #: Capture › Stage speed: "slow" | "medium" | "fast", remembered between launches (operator 2026-11-21: "properly
+    #: set the speed setting ui"); on the real stage it applies only with --speed-control (ADR-0032)
+    stage_speed: str = "medium"
     #: View › Developer tools: simulator fault injection and gate-evidence tables on the Hardware tab (UI audit)
     developer_mode: bool = False
 
