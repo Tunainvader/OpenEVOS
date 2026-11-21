@@ -177,6 +177,63 @@ def test_between_positions_off_centre_explains_and_sends_nothing(app, window, mo
     assert told and "jog the stage" in told[0] and sent == [] and moves == []
 
 
+def _retracting_turret(window, monkeypatch) -> None:
+    """The real turret service lowers Z to 0 for the swing and leaves it there (the simulator puts it back)."""
+    s, ctl = window.session, window.session.controller
+
+    def change(slot):
+        ctl.run(ctl.move_focus(0.0))
+        return ctl.set_objective(slot)
+
+    monkeypatch.setattr(s, "change_objective", change)
+
+
+@pytest.mark.parametrize("start", [(10_000.0, 8_000.0), (45_000.0, 30_000.0)], ids=["off-centre", "inside-box"])
+def test_z_returns_to_its_height_after_the_change(app, window, monkeypatch, start):
+    """Operator 2026-11-21: "focus should also homes to zero but it dosent returns to last focus"."""
+    cap, ctl = window.pages["capture"], window.session.controller
+    ctl.run(ctl.move_stage(*start))
+    ctl.run(ctl.move_focus(1_500.0))
+    _retracting_turret(window, monkeypatch)
+    cap._objective(2)
+    assert _wait(app, lambda: ctl.objective_slot() == 2 and any("Z back to" in t for _, _, t in window.model.log))
+    assert ctl.focus_z() == pytest.approx(1_500.0, abs=1.0)
+    x, y = ctl.stage_xy()
+    assert (x, y) == pytest.approx(start, abs=5)
+
+
+def test_z_return_stops_at_the_new_objectives_safe_height(app, window, monkeypatch):
+    cap, s = window.pages["capture"], window.session
+    ctl = s.controller
+    ctl.run(ctl.move_stage(45_000.0, 30_000.0))
+    ctl.run(ctl.move_focus(1_500.0))
+    s.settings.basic.focus_limit_um["2"] = 900.0
+    _retracting_turret(window, monkeypatch)
+    cap._objective(2)
+    assert _wait(app, lambda: any("safe height" in t and "refocus" in t for _, _, t in window.model.log))
+    assert ctl.objective_slot() == 2 and ctl.focus_z() == pytest.approx(900.0, abs=1.0)
+
+
+def test_a_failed_turn_leaves_z_down(app, window, monkeypatch):
+    from openevos.acquisition.controller import CommandError
+    from openevos.core.models import CommandStatus
+
+    cap, s = window.pages["capture"], window.session
+    ctl = s.controller
+    ctl.run(ctl.move_stage(45_000.0, 30_000.0))
+    ctl.run(ctl.move_focus(1_500.0))
+
+    def refuse(_slot):
+        ctl.run(ctl.move_focus(0.0))
+        raise CommandError("turret.set_position", CommandStatus.FAILED, "turret stuck")
+
+    monkeypatch.setattr(s, "change_objective", refuse)
+    cap._objective(3)
+    assert _wait(app, lambda: not window.model.tasks.busy and "failed" in cap.lbl_task.text())
+    time.sleep(0.2)
+    assert ctl.focus_z() == pytest.approx(0.0, abs=1.0) and "Z stays retracted" in cap.lbl_task.text()
+
+
 def test_inside_the_box_turns_without_moving_the_stage(app, window, monkeypatch):
     cap, ctl = window.pages["capture"], window.session.controller
     ctl.run(ctl.move_stage(45_000.0, 30_000.0))

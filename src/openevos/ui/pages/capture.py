@@ -104,6 +104,8 @@ def tool_button(text: str, ic: str, *, checkable: bool = False, tip: str = "") -
 
 #: an axis this close outside its range (a count or two after power-up homing) is held at the edge, not refused
 HOME_SLACK_UM = 5.0
+#: after an objective change Z goes back to its earlier height; below this it was already down, nothing to return
+Z_RETURN_MIN_UM = 1.0
 
 
 def joystick_direction(vx: float, vy: float) -> tuple[int, int] | None:
@@ -1038,8 +1040,9 @@ class CapturePage(QWidget):
         if getattr(self.session, "physical_stage", False) and self.ctl.objective_slot() == 0:
             self._recover_turret(slot)
             return
-        if getattr(self.session, "physical_stage", False) and outside_turret_box(self.ctl.stage_xy()):
-            self._centre_then_objective(slot)
+        if getattr(self.session, "physical_stage", False):
+            # the real turret service retracts Z to 0 for the swing; this sequence brings Z back afterwards
+            self._centre_then_objective(slot, centre=outside_turret_box(self.ctl.stage_xy()))
             return
         self.coalesce.request("turret", lambda: self.session.change_objective(slot))
 
@@ -1077,12 +1080,18 @@ class CapturePage(QWidget):
         lo, hi = lim
         return lo if lo - HOME_SLACK_UM <= v < lo else hi if hi < v <= hi + HOME_SLACK_UM else v
 
-    def _centre_then_objective(self, slot: int) -> None:
+    def _centre_then_objective(self, slot: int, *, centre: bool = True) -> None:
         """The turret turns only with the stage over its opening (Gate 19: with Z at 0 and the stage at 0, 0 an
         objective struck the stage). So: centre the stage (X, then Y; never together, ADR-0040), turn, and take the
         stage back to where it was (Y, then X). Only the swing needs the centre; the turned objective sits in the light
-        path like any other. Z stays where the turret left it (retracted): going back up under a different objective
-        could reach the vessel. Operator 2026-11-19: "auto center and change, then again reach my last position".
+        path like any other. Operator 2026-11-19: "auto center and change, then again reach my last position".
+        `centre=False` (the stage is already over the opening): the same sequence without the stage moves.
+
+        Z: the turret service retracts it to 0 for the swing. After a verified turn and the stage return, Z goes back
+        to its height before the change, capped at the new objective's safe height when one is set (the objectives
+        are parfocal, so the last focus is close to focus with the new one; the cap keeps a shorter working distance
+        clear of the vessel). Operator 2026-11-21: "focus should also homes to zero but it dosent returns to last
+        focus".
 
         The stage goes back ONLY after a verified turn. A failed, refused or timed-out turn leaves the stage centred:
         the turret may still be swinging (2026-11-18 18:33: a 15 s timeout ended the command mid-turn and the old
@@ -1095,7 +1104,7 @@ class CapturePage(QWidget):
                                        "(its power-up homing may not have finished); the stage was not moved")
             return
         snap = self.session.core.store.get(self.profile.stage_device)
-        if snap is not None and snap.health.value != "normal":
+        if centre and snap is not None and snap.health.value != "normal":
             why = snap.attr("drift_lock_reason") or snap.health.value
             self.model.add_log("warn", f"Objective change refused: the stage is not ready ({why}); the stage was not "
                                        "moved")
@@ -1108,25 +1117,42 @@ class CapturePage(QWidget):
         o = self.profile.objective(slot)
         name = o.label if o and o.label else f"slot {slot}"
         ctl, session, log = self.ctl, self.session, self.model.add_log
+        z0 = ctl.focus_z()
+        safe = self.settings.basic.focus_limit_um.get(str(slot))
+        z_back = None if z0 is None else min(z0, safe) if safe is not None else z0
+        stays = "the stage stays centred" if centre else "Z stays retracted"
 
         def go() -> str:
-            ctl.run(ctl.move_stage(cx, y, timeout_s=30.0), timeout=40.0)  # X alone
-            ctl.run(ctl.move_stage(cx, cy, timeout_s=30.0), timeout=40.0)  # then Y alone
+            if centre:
+                ctl.run(ctl.move_stage(cx, y, timeout_s=30.0), timeout=40.0)  # X alone
+                ctl.run(ctl.move_stage(cx, cy, timeout_s=30.0), timeout=40.0)  # then Y alone
             try:
                 ctl.run(session.change_objective(slot), timeout=TURRET_TIMEOUT_S + 30.0)
             except Exception as exc:
-                raise RuntimeError(f"{exc}; the stage stays centred (the turret may not be at rest)") from exc
+                raise RuntimeError(f"{exc}; {stays} (the turret may not be at rest)") from exc
             if ctl.objective_slot() != slot:
-                raise RuntimeError(f"the turret reads slot {ctl.objective_slot()}, not {slot}; the stage stays centred")
-            ctl.run(ctl.move_stage(cx, y, timeout_s=30.0), timeout=40.0)  # back: Y alone
-            ctl.run(ctl.move_stage(x, y, timeout_s=30.0), timeout=40.0)  # then X alone
+                raise RuntimeError(f"the turret reads slot {ctl.objective_slot()}, not {slot}; {stays}")
+            if centre:
+                ctl.run(ctl.move_stage(cx, y, timeout_s=30.0), timeout=40.0)  # back: Y alone
+                ctl.run(ctl.move_stage(x, y, timeout_s=30.0), timeout=40.0)  # then X alone
+            if z_back is not None and z_back > Z_RETURN_MIN_UM:
+                ctl.run(ctl.move_focus(z_back, timeout_s=60.0), timeout=70.0)  # Z last, at the sample position
             return name
 
-        log("info", f"{name}: centring the stage for the turret (X {cx / 1000:g}, then Y {cy / 1000:g} mm); it returns "
-                    f"to X {x / 1000:.1f}, Y {y / 1000:.1f} mm after the turn")
-        self._run(f"Change to {name}", go,
-                  on_done=lambda n: log("info", f"{n} in place; stage back at X {x / 1000:.1f}, Y {y / 1000:.1f} mm "
-                                                "(Z retracted: refocus)"))
+        def done(n: str) -> None:
+            where = f"stage back at X {x / 1000:.1f}, Y {y / 1000:.1f} mm; " if centre else ""
+            if z_back is None or z_back <= Z_RETURN_MIN_UM:
+                z_note = "Z retracted: refocus"
+            elif z0 is not None and z_back < z0:
+                z_note = f"Z back to {fmt_um(z_back)} µm, the {n} safe height (it was {fmt_um(z0)} µm): refocus"
+            else:
+                z_note = f"Z back to {fmt_um(z_back)} µm"
+            log("info", f"{n} in place; {where}{z_note}")
+
+        if centre:
+            log("info", f"{name}: centring the stage for the turret (X {cx / 1000:g}, then Y {cy / 1000:g} mm); it "
+                        f"returns to X {x / 1000:.1f}, Y {y / 1000:.1f} mm after the turn")
+        self._run(f"Change to {name}", go, on_done=done)
 
     def _move_z(self, z: float, *, confirmed: bool = False) -> None:
         self.coalesce.request("focus", lambda: self.ctl.move_focus(z, confirmed=confirmed))
