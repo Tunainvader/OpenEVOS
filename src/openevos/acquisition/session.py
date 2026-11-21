@@ -5,6 +5,7 @@ way once verified backends exist (and not before).
 
 from __future__ import annotations
 
+import json
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,9 +17,18 @@ from openevos.acquisition.controller import InstrumentController
 from openevos.core.application import CoreServices, build_core
 from openevos.core.clock import Clock
 from openevos.core.device_manager import OwnershipRegistry
+from openevos.core.models import utcnow
 from openevos.instrument.profile import InstrumentProfile, load_profile
 from openevos.instrument.settings import AppSettings
-from openevos.instrument.vessels import Vessel, VesselLibrary, VesselStageMap, solve_plate_alignment
+from openevos.instrument.vessels import (
+    PlateAlignmentError,
+    Vessel,
+    VesselLibrary,
+    VesselStageMap,
+    solve_plate_alignment,
+)
+
+ALIGNMENT_ATTEMPTS_FILE = "plate-alignment-attempts.jsonl"
 
 
 @dataclass
@@ -147,7 +157,13 @@ class Session:
         """Two wells centred on the physical stage: [(region_id, vessel mm, stage µm)] x2. Solves, saves to the
         calibration file and applies it at once. Returns the residual (µm); raises PlateAlignmentError."""
         (_, v1, s1), (_, v2, s2) = wells
-        m, residual = solve_plate_alignment(v1, s1, v2, s2, self.profile.stage_device)
+        try:
+            m, residual = solve_plate_alignment(v1, s1, v2, s2, self.profile.stage_device)
+        except PlateAlignmentError as exc:
+            self._record_alignment_attempt(wells, "refused", str(exc))
+            raise
+        self._record_alignment_attempt(wells, "saved", f"residual {residual:.0f} um", sign_x=m.sign_x,
+                                       sign_y=m.sign_y)
         self.calibration.plate_alignment = {
             "sign_x": m.sign_x, "sign_y": m.sign_y, "offset_x": round(m.offset_x, 1), "offset_y": round(m.offset_y, 1),
             "residual_um": round(residual, 1), "vessel_id": self.vessel.vessel_id,
@@ -158,6 +174,21 @@ class Session:
         for fn in list(self.listeners):
             fn("vessel")
         return residual
+
+    def _record_alignment_attempt(self, wells, outcome: str, message: str, **extra) -> None:
+        """Every alignment attempt, saved or refused, as one JSON line next to calibration.json (2026-11-21: two
+        refusals were only in the on-screen log and were lost)."""
+        if self.calibration.path is None:
+            return
+        row = {"utc": utcnow().isoformat(timespec="seconds"), "outcome": outcome, "message": message,
+               "vessel_id": self.vessel.vessel_id,
+               "wells": [{"region": r, "vessel_mm": list(v), "stage_um": [round(s[0], 1), round(s[1], 1)]}
+                         for r, v, s in wells], **extra}
+        try:
+            with open(self.calibration.path.with_name(ALIGNMENT_ATTEMPTS_FILE), "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row) + "\n")
+        except OSError:
+            pass  # the record is a convenience; the alignment itself is saved (or refused) regardless
 
     def select_vessel(self, vessel_id: str) -> Vessel:
         self.vessel = self.vessels.get(vessel_id)

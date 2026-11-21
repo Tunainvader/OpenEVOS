@@ -225,6 +225,7 @@ class CapturePage(QWidget):
         # standard-footprint vessel; until then the map shows no position and moves nothing (operator 2026-11-20:
         # "since these plates are standard can we do it once and save automatically")
         self._align: list | None = None
+        self._align_note = ""  # the last refusal, kept on screen until the next attempt or Cancel
         self.btn_align = QPushButton("Align plate…")
         self.btn_align.setToolTip("Once for all standard plates: centre the first well, then the last well, in the "
                                   "live image and record each. Saved; the map then shows the stage and a click on a "
@@ -952,10 +953,11 @@ class CapturePage(QWidget):
     def _align_ui(self) -> None:
         wells, rec = self._align_wells(), self._align
         busy = rec is not None and wells is not None
-        self.btn_align_cancel.setVisible(busy)
-        self.lbl_align.setVisible(busy)
+        self.btn_align_cancel.setVisible(busy or bool(self._align_note))
+        self.lbl_align.setVisible(busy or bool(self._align_note))
         if rec is None or wells is None:
             self.btn_align.setText("Align plate…")
+            self.lbl_align.setText(self._align_note)
             return
         r = wells[len(rec)]
         self.btn_align.setText(f"Record {r.region_id}")
@@ -971,7 +973,7 @@ class CapturePage(QWidget):
                                        "alignment then applies to every standard plate)")
             return
         if self._align is None:
-            self._align = []
+            self._align, self._align_note = [], ""
             self._align_ui()
             return
         xy = self.ctl.stage_xy()
@@ -988,6 +990,10 @@ class CapturePage(QWidget):
             residual = self.session.set_plate_alignment(recorded)
         except PlateAlignmentError as exc:
             self.model.add_log("warn", f"Plate alignment not saved: {exc}")
+            self._align_note = (f"Not saved: {exc}. Recorded {recorded[0][0]} at "
+                                f"{recorded[0][2][0] / 1000:.2f}, {recorded[0][2][1] / 1000:.2f} mm and "
+                                f"{recorded[1][0]} at {recorded[1][2][0] / 1000:.2f}, {recorded[1][2][1] / 1000:.2f}"
+                                " mm. Press Align plate… to try again.")
         else:
             m = self.session.stage_map
             self.model.add_log("info", f"Plate aligned from {recorded[0][0]} and {recorded[1][0]} (residual "
@@ -998,7 +1004,7 @@ class CapturePage(QWidget):
         self._refresh_state()
 
     def _align_cancel(self) -> None:
-        self._align = None
+        self._align, self._align_note = None, ""
         self._align_ui()
 
     def _jog(self, vx: float, vy: float) -> None:

@@ -5,6 +5,7 @@ Simulated drive chain."""
 
 from __future__ import annotations
 
+import json
 import os
 import time
 
@@ -136,6 +137,8 @@ def test_align_once_then_the_map_shows_and_moves_the_stage(win, tmp_path):
     assert m.offset_x == pytest.approx(true.offset_x, abs=1.0) and m.offset_y == pytest.approx(true.offset_y, abs=1.0)
     saved = CalibrationStore.load(tmp_path / "calibration.json").plate_alignment
     assert saved["sign_y"] == -1.0 and [x["region"] for x in saved["wells"]] == [first.region_id, last.region_id]
+    attempts = (tmp_path / "plate-alignment-attempts.jsonl").read_text("utf-8").splitlines()
+    assert [json.loads(x)["outcome"] for x in attempts] == ["saved"]
 
     # another standard plate uses the same alignment, without asking
     s.select_vessel("plate-24")
@@ -173,3 +176,13 @@ def test_a_bad_recording_saves_nothing(win, tmp_path):
     cap._align_step()
     assert not s.stage_map.verified and s.calibration.plate_alignment == {}
     assert cap.btn_align.text() == "Align plate…"
+    # 2026-11-21: the refusal stays on screen (it was only in the log), and every attempt is kept on disk
+    assert cap.lbl_align.isVisible() and cap.lbl_align.text().startswith("Not saved: the stage moved")
+    assert "A1 at 5.00, 5.00 mm" in cap.lbl_align.text()
+    rows = [json.loads(x) for x in (tmp_path / "plate-alignment-attempts.jsonl").read_text("utf-8").splitlines()]
+    assert [r["outcome"] for r in rows] == ["refused"]
+    assert rows[0]["wells"][1]["stage_um"] == pytest.approx([6000.0, 5500.0], abs=0.5)
+    cap._align_step()  # a new attempt clears the note
+    assert cap.lbl_align.text().startswith("Plate alignment 1 of 2")
+    cap._align_cancel()
+    assert not cap.lbl_align.isVisible()
