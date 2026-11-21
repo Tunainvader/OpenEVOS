@@ -1324,7 +1324,12 @@ class TelemetryService:
                 return
         if not self._correct_knocked(link, job, now):
             return
-        ctx.complete(self._position_now(link))
+        # every leg ended on the drive's motion-complete bit: publish IDLE before the command ends, so a caller that
+        # sends its next leg at once is not refused as "moving, not idle" (2026-11-21: the X return after an objective
+        # change was refused twice; _report_settled only ran after the command had ended)
+        pos = self._position_now(link)
+        self.backends[0].report(position=pos, activity=Activity.IDLE, reason="move ended")
+        ctx.complete(pos)
 
     def _correct_knocked(self, link: DriveLink, job: _MoveJob, now: dict) -> bool:
         """Put back an axis the move knocked off its requested position (within CROSS_AXIS_TOLERANCE_COUNTS; more
