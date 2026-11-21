@@ -50,6 +50,26 @@ def test_record_and_index_jump(tmp_path):
     assert [r["trigger"] for r in pur.history(tmp_path)] == ["app start", "re-home observed", "x"]
 
 
+def test_a_tripped_homing_is_not_a_reference(tmp_path):
+    """2026-11-21: X tripped over-current while homing (flags 0x1009, index read 0); the next clean homing (2189)
+    was then compared with 0 and warned of a +2189 jump. The reference is the last homing that did not fault."""
+    v = {("X", "LHOMEINDEXDELTA"): 2177, ("Y", "LHOMEINDEXDELTA"): 736, ("X", "IQ"): 100, ("Y", "IQ"): 100,
+         ("X", "ISTATUSFLAGS"): 0xD000, ("Y", "ISTATUSFLAGS"): 0xD000}
+    pur.append(tmp_path, pur.take(_read(v)), "test", "app start")
+    v[("X", "LHOMEINDEXDELTA")], v[("X", "ISTATUSFLAGS")] = 0, 0x1009
+    v[("Y", "LHOMEINDEXDELTA")] = 727
+    tripped = pur.append(tmp_path, pur.take(_read(v)), "test", "re-home observed")
+    assert any(n.startswith("X drive over-current flag set") for n in tripped)
+    assert not any("index-to-hard-stop" in n for n in tripped)  # no warning from a faulted homing
+    v[("X", "LHOMEINDEXDELTA")], v[("X", "ISTATUSFLAGS")] = 2189, 0xD000
+    clean = pur.append(tmp_path, pur.take(_read(v)), "test", "re-home observed")
+    assert any(n.startswith("X index-to-hard-stop distance changed +12 counts since the last good homing "
+                            "(2177 -> 2189)") for n in clean)
+    assert not any(n.startswith("Y ") for n in clean)  # Y's reference is the tripped row (Y itself was fine): 727
+    v[("X", "LHOMEINDEXDELTA")] = 2190
+    assert not any(n.startswith("X ") for n in pur.append(tmp_path, pur.take(_read(v)), "test", "x"))
+
+
 def test_the_app_records_at_connect_and_after_each_re_home(tmp_path, monkeypatch):
     monkeypatch.setattr(tm, "POWER_UP_SETTLE_S", 0.0)
     chain = SimulatedDriveChain({("Y", "LHOMEINDEXDELTA"): 728, ("X", "LHOMEINDEXDELTA"): 2184})

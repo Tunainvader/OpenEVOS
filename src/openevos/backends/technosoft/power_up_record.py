@@ -43,7 +43,7 @@ def take(read: Callable[[str, str], int]) -> dict:
         row[f"{a}_homedone"] = read(ax, "HOMEDONE")
         row[f"{a}_apos"], row[f"{a}_cpos"] = read(ax, "APOS"), read(ax, "CPOS")
         row[f"{a}_istatusflags"], row[f"{a}_srl"] = f"0x{read(ax, 'ISTATUSFLAGS'):04X}", f"0x{read(ax, 'SRL'):04X}"
-    iq = {ax: [] for ax in AXES}
+    iq: dict[str, list[int]] = {ax: [] for ax in AXES}
     for _ in range(IQ_SAMPLES):  # interleaved, so both axes span the same ~0.5 s
         for ax in AXES:
             iq[ax].append(_signed16(read(ax, "IQ")))
@@ -62,19 +62,43 @@ def history(folder: Path) -> list[dict]:
         return list(csv.DictReader(fh))
 
 
-def compare(row: dict, previous: dict | None) -> list[str]:
-    """Notes for the operator: an index jump (> 10 counts) and the holding currents side by side."""
+def homing_faulted(row: dict, ax: str) -> bool:
+    """True if the row's ISTATUSFLAGS has bit 0 (over-current trip) set for the axis: the drive switched off during
+    or after homing, so its LHOMEINDEXDELTA is not a homing result (2026-11-21: X tripped while homing and read 0)."""
+    try:
+        return bool(int(str(row[f"{ax.lower()}_istatusflags"]), 0) & 0x1)
+    except (KeyError, ValueError):
+        return False
+
+
+def _reference(ax: str, previous: list[dict]) -> dict | None:
+    """The newest earlier row whose homing on this axis did not fault."""
+    return next((r for r in reversed(previous) if not homing_faulted(r, ax)), None)
+
+
+def compare(row: dict, previous: dict | list[dict] | None) -> list[str]:
+    """Notes for the operator: an index jump (> 10 counts) and the holding currents side by side.
+
+    `previous` is the earlier history (or one row). Per axis, the reference is the newest earlier row whose homing
+    did not fault; a faulted homing in this row is reported instead of compared."""
     notes = []
-    if previous:
-        for ax in AXES:
-            k = f"{ax.lower()}_lhomeindexdelta"
-            try:
-                d = int(row[k]) - int(previous[k])
-            except (KeyError, ValueError):
-                continue
-            if abs(d) > INDEX_JUMP_COUNTS:
-                notes.append(f"{ax} index-to-hard-stop distance changed {d:+d} counts since the last record "
-                             f"({previous[k]} -> {row[k]}): the {ax} encoder may have moved relative to the mechanics")
+    earlier = previous if isinstance(previous, list) else [previous] if previous else []
+    for ax in AXES:
+        k = f"{ax.lower()}_lhomeindexdelta"
+        if homing_faulted(row, ax):
+            notes.append(f"{ax} drive over-current flag set at this record: its homing index distance "
+                         f"({row.get(k)}) is not compared and not used as a reference")
+            continue
+        ref = _reference(ax, earlier)
+        if ref is None:
+            continue
+        try:
+            d = int(row[k]) - int(ref[k])
+        except (KeyError, ValueError):
+            continue
+        if abs(d) > INDEX_JUMP_COUNTS:
+            notes.append(f"{ax} index-to-hard-stop distance changed {d:+d} counts since the last good homing "
+                         f"({ref[k]} -> {row[k]}): the {ax} encoder may have moved relative to the mechanics")
     x, y = abs(float(row["x_iq_mean"])), abs(float(row["y_iq_mean"]))
     notes.append(f"holding current at rest: X {row['x_iq_mean']}, Y {row['y_iq_mean']}"
                  + (f" (Y {y / x:.1f}x X)" if x >= 1 else ""))
@@ -82,10 +106,10 @@ def compare(row: dict, previous: dict | None) -> list[str]:
 
 
 def append(folder: Path, row: dict, source: str, trigger: str) -> list[str]:
-    """Append the row (with time, source and trigger); return compare() against the previous row."""
+    """Append the row (with time, source and trigger); return compare() against the earlier history."""
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
-    prev = (history(folder) or [None])[-1]
+    prev = history(folder)
     full = {"utc": datetime.now(timezone.utc).isoformat(timespec="seconds"), "source": source, "trigger": trigger,
             **row}
     p = folder / HISTORY_FILE
