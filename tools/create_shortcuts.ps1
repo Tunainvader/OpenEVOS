@@ -1,5 +1,8 @@
 # Create desktop shortcuts for the OpenEVOS app (uses the project's .venv; no console window).
 #   powershell -ExecutionPolicy Bypass -File tools\create_shortcuts.ps1
+# Start the app from these shortcuts. A copy started from inside a packaged (MSIX) app, such as a terminal in the
+# Claude desktop app, gets that app's private copy of %LOCALAPPDATA%\OpenEVOS: its own settings, logs, MCP token and
+# instance lock, none of which the shortcut's copy sees (2026-11-23: the plate chosen in one never reached the other).
 $root = Split-Path -Parent $PSScriptRoot
 $pyw = Join-Path $root ".venv\Scripts\pythonw.exe"
 $ico = Join-Path $root "assets\openevos.ico"
@@ -9,8 +12,10 @@ $shell = New-Object -ComObject WScript.Shell
 $items = @(
     @{ Name = "OpenEVOS"; Args = "-m openevos.ui";
        Desc = "OpenEVOS desktop app - simulated instrument (nothing is sent to hardware)" },
-    @{ Name = "OpenEVOS (real stage)"; Args = "-m openevos.ui --motor-telemetry auto --motor-control";
-       Desc = "OpenEVOS with the REAL X/Y stage (ADR-0024): wait 2 min after power-on, stage clear, hand near the switch" }
+    @{ Name = "OpenEVOS (real stage)";
+       Args = "-m openevos.ui --motor-telemetry auto --motor-control --speed-control --stage-log " +
+              "--mono-camera flycapture2 --colour-camera ueye --illumination real --mcp";
+       Desc = "OpenEVOS on the real instrument: stage + F carriage (COM3), real cameras, real LED board, X/Y speed control, read-only MCP link" }
 )
 foreach ($i in $items) {
     $lnk = $shell.CreateShortcut((Join-Path $desk ($i.Name + ".lnk")))
