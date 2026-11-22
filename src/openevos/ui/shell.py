@@ -61,6 +61,9 @@ RAIL_BELOW_PX = 1440
 #: Re-home stage lowers the objective itself when Z is above this (the drive service refuses beyond 5 Z counts, 0.6 µm)
 REHOME_Z_LOWERED_UM = 0.5
 REHOME_Z_TIMEOUT_S = 40.0
+#: any settings change reaches the settings file within this (operator 2026-11-22: "the plate selection is not saved
+#: on quitting"): they were written only in closeEvent, and a run that ended without a clean close lost them all
+SETTINGS_AUTOSAVE_MS = 2000
 
 
 def describe_snapshot(snap) -> tuple[str, str]:
@@ -173,6 +176,12 @@ class MainWindow(QMainWindow):
         self._timer.setInterval(500)
         self._timer.timeout.connect(self._tick)
         self._timer.start()
+        self._settings_saved = self._settings_snapshot()
+        self._autosave_failed = False
+        self._autosave = QTimer(self)
+        self._autosave.setInterval(SETTINGS_AUTOSAVE_MS)
+        self._autosave.timeout.connect(self.autosave_settings)
+        self._autosave.start()
         for did in self.session.core.devices.device_ids():
             self._on_device(did, self.session.core.store.get(did))
         self.navigate("capture")
@@ -891,7 +900,29 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(idx)
         self.nav_buttons[key].setChecked(True)
 
+    # ================================================================== settings persistence
+    def _settings_snapshot(self) -> str:
+        return self.session.settings.model_dump_json()
+
+    def autosave_settings(self) -> bool:
+        """Write the settings file when the settings changed since the last write: every SETTINGS_AUTOSAVE_MS, and
+        first thing on close. True when the file holds the current settings (or there is no settings file)."""
+        now = self._settings_snapshot()
+        if now == self._settings_saved:
+            return True
+        try:
+            self.session.save_settings()
+        except OSError as exc:
+            if not self._autosave_failed:  # once per failure run; the timer keeps retrying
+                self.model.add_log("warn", f"Settings not saved yet ({exc}); retrying")
+            self._autosave_failed = True
+            return False
+        self._autosave_failed = False
+        self._settings_saved = now
+        return True
+
     def closeEvent(self, e):
+        self.autosave_settings()  # before the hardware shutdown: a hang or crash there must not lose them
         self.model.shutdown()
         self.session.save_settings()
         super().closeEvent(e)

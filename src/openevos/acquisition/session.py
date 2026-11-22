@@ -5,6 +5,7 @@ way once verified backends exist (and not before).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import threading
 from dataclasses import dataclass, field
@@ -193,6 +194,10 @@ class Session:
     def select_vessel(self, vessel_id: str) -> Vessel:
         self.vessel = self.vessels.get(vessel_id)
         self.settings.last_vessel_id = vessel_id
+        # written at once (operator 2026-11-22: "the plate selection is not saved on quitting"): it used to be saved
+        # only on a clean close, and the 22:28 run that day ended without one
+        with contextlib.suppress(OSError):  # the window's autosave retries a failed write
+            self.save_settings()
         self._apply_vessel_offset()
         if self.rig is not None:
             self.rig.world.set_vessel(self.vessel)
