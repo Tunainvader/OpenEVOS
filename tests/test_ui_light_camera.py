@@ -374,11 +374,15 @@ def test_channel_click_lights_it_and_a_second_click_turns_it_off(app, window):
     cap.ch_buttons[other].clicked.emit(other)  # a new channel: selected and lit
     assert wait_for(app, lambda: s.rig.light.enabled and s.rig.light.channel == other)
     assert _settled(app, cap)
-    assert cap.channel == other and cap.btn_power.isChecked() and cap.btn_power.text() == "Light on"
+    name = s.profile.channel(other).display
+    assert cap.channel == other and cap.btn_power.isChecked() and cap.btn_power.text() == f"{name} on"
+    # the lit channel shows it (ON, its LED colour); every other channel reads off (operator 2026-11-23)
+    assert [slot for slot, b in cap.ch_buttons.items() if b.lit] == [other]
     cap.ch_buttons[other].clicked.emit(other)  # the lit channel again: off, still selected
     assert wait_for(app, lambda: not s.rig.light.enabled)
     assert _settled(app, cap)
     assert cap.channel == other and not cap.btn_power.isChecked() and cap.btn_power.text() == "Light off"
+    assert not any(b.lit for b in cap.ch_buttons.values()) and cap.ch_buttons[other].selected
     cap.ch_buttons[other].clicked.emit(other)  # and on again
     assert wait_for(app, lambda: s.rig.light.enabled)
 

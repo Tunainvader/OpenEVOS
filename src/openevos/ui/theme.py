@@ -93,6 +93,11 @@ QFrame#panel {{ background: {t.s1}; {raised2} border-radius: {r['panel']}px; }}
 QFrame#subpanel {{ background: {t.s3}; {_edges(t, inset=True)} border-radius: {r['control']}px; }}
 QFrame#header {{ background: {t.s1}; border: none; border-bottom: 1px solid {t.bd}; }}
 QFrame#rail {{ background: {t.s1}; border: none; border-right: 1px solid {t.bd}; }}
+QFrame#raildiv {{ background: {t.bd}; border: none; margin: 0 8px; }}
+QFrame#tooldiv {{ background: {t.bd}; border: none; margin: 6px 0; }}
+QToolButton#tool {{ padding: 4px 6px; font-size: 11px; font-weight: 500; color: {t.t2}; }}
+QToolButton#tool:hover {{ color: {t.acc_tx}; }}
+QToolButton#tool:checked {{ color: {t.acc_tx}; font-weight: 600; }}
 QFrame#footer {{ background: {t.s1}; border: none; border-top: 1px solid {t.bd}; }}
 QFrame#viewport {{ background: {t.stage}; border: 1px solid {t.bd}; border-radius: {r['control']}px; }}
 QLabel#title {{ font-size: {px('title')}px; font-weight: 600; }}

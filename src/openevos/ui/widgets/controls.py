@@ -20,6 +20,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QSlider, QStyle, QStyleOptionSlider, QWidget
 
 from openevos.ui import theme
+from openevos.ui import tokens as tk
 from openevos.ui.widgets.image_view import to_qimage
 
 #: jog pad metal by theme: the design's brushed silver on light; gunmetal on dark so the ring sits in the dark shade
@@ -269,8 +270,22 @@ class Joystick(QWidget):
             p.drawEllipse(c, 100 * s + 3, 100 * s + 3)
 
 
+#: channel button geometry: the head (name + ON/off) and, once any channel has a capture, its thumbnail below
+CHANNEL_W, CHANNEL_HEAD_H, CHANNEL_TALL_H = 68, 42, 96
+
+
+def _mix(a: str, b: str, t: float) -> QColor:
+    ca, cb = QColor(a), QColor(b)
+    return QColor(round(ca.red() + (cb.red() - ca.red()) * t), round(ca.green() + (cb.green() - ca.green()) * t),
+                  round(ca.blue() + (cb.blue() - ca.blue()) * t))
+
+
 class ChannelButton(QWidget):
-    """Light channel button (blue when selected) with the buffer thumbnail underneath (manual p.8)."""
+    """Light channel button with its on/off state and the channel's last capture underneath (manual p.8).
+
+    Lit (operator 2026-11-23: "better buttons and status indication of the lights"): the button takes the LED's
+    colour (a tinted fill, a coloured edge, a filled dot with a soft glow) and reads ON. Off: a hollow ring and
+    "off". Selected but dark (e.g. after a camera switch): the accent edge of a checked control."""
 
     clicked = Signal(str)
 
@@ -278,9 +293,11 @@ class ChannelButton(QWidget):
         super().__init__(parent)
         self.slot, self.label, self.color = slot, label, color
         self.selected = False
+        self.lit = False
+        self.compact = True  # no capture in any channel yet: no empty thumbnail wells
         self.thumb: QPixmap | None = None
         self.reason = ""
-        self.setFixedSize(68, 92)
+        self.setFixedSize(CHANNEL_W, CHANNEL_HEAD_H)
         self.setCursor(Qt.PointingHandCursor)
         # keyboard: Tab reaches each channel; Space / Enter selects it (Impeccable audit 2026-11-18)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -308,10 +325,26 @@ class ChannelButton(QWidget):
             self.thumb = QPixmap.fromImage(to_qimage(np.ascontiguousarray(rgb[::step, ::step])))
         self.update()
 
+    def set_compact(self, on: bool) -> None:
+        if on != self.compact:
+            self.compact = on
+            self.setFixedSize(CHANNEL_W, CHANNEL_HEAD_H if on else CHANNEL_TALL_H)
+
+    def set_lit(self, on: bool) -> None:
+        if on != self.lit:
+            self.lit = on
+            self.setAccessibleDescription("light on" if on else "light off")
+            self._tip()
+            self.update()
+
+    def _tip(self) -> None:
+        self.setToolTip(self.reason or (f"{self.label}: light on. Click to switch it off" if self.lit
+                                        else f"{self.label}: click to light this channel"))
+
     def set_available(self, ok: bool, reason: str = "") -> None:
         self.setEnabled(ok)
         self.reason = reason
-        self.setToolTip(reason or f"{self.label}: select channel")
+        self._tip()
         self.update()
 
     def mouseReleaseEvent(self, e):
@@ -321,26 +354,56 @@ class ChannelButton(QWidget):
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        top = QRectF(1, 1, self.width() - 2, 34)
+        top = QRectF(1, 1, self.width() - 2, CHANNEL_HEAD_H - 2)
         en = self.isEnabled()
         if not en:
             p.setOpacity(0.5)
-        # soft UI: raised at rest, pressed in (inset) when selected, like the stylesheet's checked buttons
-        theme.paint_surface(p, top, 10, inset=self.selected)
+        if self.lit:  # the LED's colour: tinted fill, coloured edge
+            r = top.adjusted(0.75, 0.75, -0.75, -0.75)
+            p.setPen(QPen(QColor(self.color), 1.5))
+            p.setBrush(_mix(theme.PANEL_2, self.color, 0.22))
+            p.drawRoundedRect(r, 10, 10)
+        else:  # raised at rest; the accent edge of a checked control when selected but dark
+            theme.paint_surface(p, top, 10, inset=self.selected)
         if self.hasFocus():
             p.setPen(QPen(QColor(theme.ACCENT), 1.5))
             p.setBrush(Qt.NoBrush)
-            p.drawRoundedRect(top.adjusted(1.5, 1.5, -1.5, -1.5), 9, 9)
-        p.setPen(QPen(QColor(theme.BORDER_STRONG), 1))  # outline keeps light pseudo colours visible
-        p.setBrush(QColor(self.color))
-        p.drawEllipse(QPointF(12, top.center().y()), 5, 5)
+            p.drawRoundedRect(top.adjusted(2, 2, -2, -2), 8.5, 8.5)
+        dot = QPointF(12, top.top() + 13.5)
+        if self.lit:  # the lamp: a soft glow (the light it gives) around a filled dot
+            glow = QRadialGradient(dot, 10)
+            c0, c1 = QColor(self.color), QColor(self.color)
+            c0.setAlphaF(0.55)
+            c1.setAlphaF(0.0)
+            glow.setColorAt(0.0, c0)
+            glow.setColorAt(1.0, c1)
+            p.setPen(Qt.NoPen)
+            p.setBrush(glow)
+            p.drawEllipse(dot, 10, 10)
+            p.setPen(QPen(QColor(theme.BORDER_STRONG), 1))  # outline keeps white/grey channel colours visible
+            p.setBrush(QColor(self.color))
+            p.drawEllipse(dot, 5, 5)
+        else:  # dark: a hollow ring in the channel's colour (a white/grey channel on a light surface: the text colour)
+            ring = self.color if tk.contrast(self.color, theme.PANEL_2) >= 1.8 else theme.TEXT_2
+            p.setPen(QPen(QColor(ring), 1.75))
+            p.setBrush(Qt.NoBrush)
+            p.drawEllipse(dot, 4.5, 4.5)
         f = QFont(self.font())
         f.setBold(True)
         f.setPixelSize(12)
         p.setFont(f)
-        p.setPen(QColor(theme.ACCENT_TX if self.selected else theme.TEXT))
-        p.drawText(top.adjusted(18, 0, -2, 0), Qt.AlignCenter, self.label)
-        th = QRectF(4, 40, self.width() - 8, self.height() - 44)
+        p.setPen(QColor(theme.ACCENT_TX if self.selected and not self.lit else theme.TEXT))
+        p.drawText(QRectF(20, top.top() + 3, top.width() - 21, 20), Qt.AlignLeft | Qt.AlignVCenter, self.label)
+        f.setPixelSize(10)
+        f.setBold(self.lit)
+        f.setLetterSpacing(QFont.AbsoluteSpacing, 0.6 if self.lit else 0.2)
+        p.setFont(f)
+        p.setPen(QColor(theme.TEXT if self.lit else theme.MUTED))
+        p.drawText(QRectF(20, top.top() + 20, top.width() - 21, 14), Qt.AlignLeft | Qt.AlignVCenter,
+                   "ON" if self.lit else "off")
+        if self.compact:
+            return
+        th = QRectF(4, CHANNEL_HEAD_H + 3, self.width() - 8, self.height() - CHANNEL_HEAD_H - 6)
         if self.thumb is not None:  # the channel's last capture, on the black stage colour
             p.setPen(QPen(QColor(theme.BORDER), 1))
             p.setBrush(QColor(theme.STAGE))

@@ -237,7 +237,17 @@ class MainWindow(QMainWindow):
         self.nav_buttons: dict[str, QPushButton] = {}
         self.nav_titles: dict[str, str] = {}
         self.nav_headers = []
-        for group, items in NAV:
+        self.nav_dividers: list[QFrame] = []  # stand in for the group headings while the rail is collapsed
+        for gi, (group, items) in enumerate(NAV):
+            if gi:
+                d = QFrame()
+                d.setObjectName("raildiv")
+                d.setFixedHeight(1)
+                d.setVisible(False)
+                self.nav_dividers.append(d)
+                lay.addSpacing(2)
+                lay.addWidget(d)
+                lay.addSpacing(2)
             h = label(group, "navgroup")
             self.nav_headers.append(h)
             lay.addWidget(h)
@@ -257,6 +267,13 @@ class MainWindow(QMainWindow):
         self.lbl_version = label(f"v{__version__}", "caption")  # in Help › About; not repeated in the rail
         self.lbl_version.setVisible(False)
         lay.addWidget(self.lbl_version)
+        # collapse / expand the rail (operator 2026-11-23: "make this pane collapsable"); also View menu, Ctrl+B
+        self.btn_rail = QPushButton()
+        self.btn_rail.setObjectName("nav")
+        self.btn_rail.setIconSize(QSize(18, 18))
+        self.btn_rail.setAccessibleName("Collapse or expand the sidebar")
+        self.btn_rail.clicked.connect(self.toggle_nav)
+        lay.addWidget(self.btn_rail)
         return w
 
     def _footer(self) -> QWidget:
@@ -345,6 +362,7 @@ class MainWindow(QMainWindow):
         for name, text in (("auto", "Automatic (icons below 1440 px)"), ("expanded", "Labels"), ("rail", "Icons only")):
             self._cmd(nm, f"view.nav.{name}", text, lambda n=name: self.set_nav(n), group=g2,
                       checked=lambda n=name: self.session.settings.basic.navigation == n, path="View › Navigation")
+        self._cmd(m, "view.nav.toggle", "Collapse or expand sidebar", self.toggle_nav, shortcut="Ctrl+B")
         m.addSeparator()
         self._cmd(m, "view.fit", "Zoom to fit", cap.view.fit, shortcut="Ctrl+0")
         self._cmd(m, "view.actual", "Actual size", cap.view.one_to_one, shortcut="Ctrl+1")
@@ -405,7 +423,7 @@ class MainWindow(QMainWindow):
             self._cmd(cm, f"mic.cam.{cam.role.value}", cam.display_name, lambda r=cam.role: cap.switch_camera(r),
                       group=gcam, checked=lambda r=cam.role: self.session.settings.active_camera is r, why=busy,
                       path="Microscope › Camera")
-        self._cmd(m, "mic.light", "Light on", lambda: cap.btn_power.toggle(), shortcut="Ctrl+Shift+L",
+        self._cmd(m, "mic.light", "Light on/off", lambda: cap.btn_power.toggle(), shortcut="Ctrl+Shift+L",
                   checked=lambda: cap.btn_power.isChecked(), why=busy)
         m.addSeparator()
         self._cmd(m, "mic.vessel", "Vessel…", cap._vessel_expert, why=busy)
@@ -725,6 +743,7 @@ class MainWindow(QMainWindow):
         for key, b in self.nav_buttons.items():
             ic = next(i for _g, items in NAV for k, _t, i in items if k == key)
             b.setIcon(icon(ic))
+        self._show_rail_button()
         self.btn_stop.setIcon(icon("stop", theme.FAULT))
         for p in self.pages.values():
             fn = getattr(p, "retint", None)
@@ -735,13 +754,29 @@ class MainWindow(QMainWindow):
         self.session.settings.basic.navigation = mode
         self._apply_nav_mode()
 
-    def _apply_nav_mode(self) -> None:
+    def nav_collapsed(self) -> bool:
         mode = self.session.settings.basic.navigation
-        rail = mode == "rail" or (mode == "auto" and self.width() < RAIL_BELOW_PX)
+        return mode == "rail" or (mode == "auto" and self.width() < RAIL_BELOW_PX)
+
+    def toggle_nav(self) -> None:
+        """The rail's own button and Ctrl+B: flip what is shown now, and keep it (Settings › navigation)."""
+        self.set_nav("expanded" if self.nav_collapsed() else "rail")
+
+    def _show_rail_button(self) -> None:
+        rail = self.nav_collapsed()
+        self.btn_rail.setIcon(icon("sidebar-expand" if rail else "sidebar-collapse"))
+        self.btn_rail.setText("" if rail else "Collapse")
+        self.btn_rail.setToolTip(("Expand" if rail else "Collapse") + " the sidebar (Ctrl+B)")
+
+    def _apply_nav_mode(self) -> None:
+        rail = self.nav_collapsed()
         for key, b in self.nav_buttons.items():
             b.setText("" if rail else self.nav_titles[key])
         for h in self.nav_headers:
             h.setVisible(not rail)
+        for d in self.nav_dividers:
+            d.setVisible(rail)
+        self._show_rail_button()
         self.lbl_version.setVisible(False)
         self.nav_frame.setFixedWidth(52 if rail else 172)
         self.lbl_profile.setVisible(self.width() >= 1500)  # labels drop first, nothing hides

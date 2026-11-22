@@ -16,7 +16,7 @@ Display changes never alter raw data; in Scientific mode only linear mappings ar
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
@@ -75,7 +75,7 @@ from openevos.ui.dialogs import (
     ZStackDialog,
 )
 from openevos.ui.icons import icon
-from openevos.ui.widgets.controls import ChannelButton, Joystick, LevelsHistogram
+from openevos.ui.widgets.controls import ChannelButton, Joystick, LevelsHistogram, _mix
 from openevos.ui.widgets.focus_pad import ZFocusPanel, fmt_um
 from openevos.ui.widgets.image_view import ImageView
 from openevos.ui.widgets.param import ParamRow
@@ -94,6 +94,7 @@ def tool_button(text: str, ic: str, *, checkable: bool = False, tip: str = "") -
     b.setIcon(icon(ic))
     b.setIconSize(QSize(16, 16))
     b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+    b.setObjectName("tool")
     b.setCheckable(checkable)
     b.setToolTip(tip or text)
     b.setAccessibleName(text)
@@ -301,20 +302,20 @@ class CapturePage(QWidget):
         self.toolbar.setMinimumWidth(1)  # explicit minimum: the toolbar never forces the window wider
         top = QHBoxLayout(self.toolbar)
         top.setContentsMargins(0, 0, 0, 0)
-        top.setSpacing(4)
+        top.setSpacing(3)
         self.lbl_view = label("Live", "title")
         top.addWidget(self.lbl_view)
         top.addStretch(1)
-        self.btn_live = tool_button("Live", "live", checkable=True, tip="Live view (Ctrl+L)")
-        self.btn_overlay = tool_button("Overlay", "zstack", tip="Overlay of the captured channels in memory")
+        self.btn_live = tool_button("Live", "live", checkable=True, tip="Live view: stream the camera (Ctrl+L)")
+        self.btn_overlay = tool_button("Overlay", "overlay", tip="Overlay of the captured channels in memory")
         self.btn_fit = tool_button("Fit", "fit", tip="Zoom to fit (Ctrl+0)")
-        self.btn_11 = tool_button("1:1", "actual", tip="Actual size (Ctrl+1)")
-        self.btn_cross = tool_button("Crosshair", "crosshair", checkable=True)
-        self.btn_scale = tool_button("Scale bar", "scalebar", checkable=True)
+        self.btn_11 = tool_button("1:1", "actual", tip="Actual size, one screen pixel per camera pixel (Ctrl+1)")
+        self.btn_cross = tool_button("Crosshair", "crosshair", checkable=True, tip="Crosshair at the image centre")
+        self.btn_scale = tool_button("Scale", "scalebar", checkable=True, tip="Scale bar in µm")
         self.btn_scale.setChecked(self.settings.basic.show_scale_bar)
         self.btn_clip = tool_button("Clipping", "clipping", checkable=True,
-                                    tip="Mark pixels at the black point (blue) and white point (red)")
-        self.btn_sat = tool_button("Saturation", "warning", checkable=True,
+                                    tip="Mark pixels at the black point (blue) and white point (red) (Ctrl+Shift+C)")
+        self.btn_sat = tool_button("Saturated", "saturation", checkable=True,
                                    tip="Highlight sensor-saturated pixels in red")
         self.btn_loupe = tool_button("Loupe", "loupe", checkable=True, tip="Magnified view and pixel value at the cursor")  # noqa: E501
         self.btn_hist = tool_button("Histogram", "histogram", checkable=True,
@@ -324,12 +325,21 @@ class CapturePage(QWidget):
                                        tip="Hold to see the raw frame mapped linearly over its full range (or hold B)")
         self.toolbuttons = [self.btn_live, self.btn_overlay, self.btn_fit, self.btn_11, self.btn_cross, self.btn_scale,
                             self.btn_clip, self.btn_sat, self.btn_loupe, self.btn_hist, self.btn_compare]
+        # groups: source | zoom | marks on the image | levels (UI 2026-11-23: dividers, labels kept when they fit)
+        self.tooldivs: list[QFrame] = []
         for i, b in enumerate(self.toolbuttons):
-            if i in (2, 4, 10):
-                sep = QWidget()
-                sep.setFixedWidth(8)
-                top.addWidget(sep)
+            if i in (2, 4, 9):
+                d = QFrame()
+                d.setObjectName("tooldiv")
+                d.setFixedWidth(1)
+                self.tooldivs.append(d)
+                top.addSpacing(3)
+                top.addWidget(d)
+                top.addSpacing(3)
             top.addWidget(b)
+        self.toolbar_style = Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        self._toolbar_layout = top
+        self.toolbar.installEventFilter(self)  # labels fit to the toolbar's own width (_fit_toolbar)
         lay.addWidget(self.toolbar)
         self.view = ImageView()
         self.view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -396,7 +406,6 @@ class CapturePage(QWidget):
         self.btn_power = QPushButton("Light off")
         self.btn_power.setCheckable(True)
         self.btn_power.setChecked(False)  # dark at launch: the light goes on only when the operator asks
-        self.btn_power.setIcon(icon("light"))
         self.btn_power.setToolTip("LED of the selected channel on/off (Ctrl+Shift+L). Clicking a channel turns its "
                                   "light on; clicking the lit channel again turns it off")
         self.btn_lc = QPushButton("Light and camera…")
@@ -404,6 +413,7 @@ class CapturePage(QWidget):
         row.addWidget(self.btn_power)
         row.addWidget(self.btn_lc)
         lay.addLayout(row)
+        self._show_light_state()
         self.light = ParamRow("Light", 0, 100, 40, step=1, unit="%", default=40,
                               tooltip="One control for LED → exposure → gain (OpenEVOS mapping)")
         lay.addWidget(self.light)
@@ -625,8 +635,8 @@ class CapturePage(QWidget):
             self.btn_power.blockSignals(True)
             self.btn_power.setChecked(light.enabled)
             self.btn_power.blockSignals(False)
-            self.btn_power.setText("Light on" if light.enabled else "Light off")
             self.session.capture.light_power = light.enabled
+            self._show_light_state()
         if cam is not None:
             self.seg_live.set_current("live" if cam.streaming else "stopped")
             if self.view_mode in ("live", "stopped"):
@@ -767,6 +777,9 @@ class CapturePage(QWidget):
         for slot, b in self.ch_buttons.items():
             img = bufs.get(slot)
             b.set_thumbnail(self._render(img.data, slot, img.max_value, overlay=False) if img is not None else None)
+        compact = not any(s in bufs for s in self.ch_buttons)  # no capture yet: no row of empty wells
+        for b in self.ch_buttons.values():
+            b.set_compact(compact)
 
     def _on_busy(self, busy: bool) -> None:
         # operator lock-out while a workflow owns the instrument (scan, time-lapse, autofocus...)
@@ -1271,19 +1284,41 @@ class CapturePage(QWidget):
             self.btn_power.blockSignals(True)
             self.btn_power.setChecked(True)
             self.btn_power.blockSignals(False)
-            self.btn_power.setText("Light on")
             self.session.capture.light_power = True
         self.channel = slot
         for s, b in self.ch_buttons.items():
             b.selected = s == slot
             b.update()
+        self._show_light_state()
         self._refresh_settings()
         self._apply_light()
 
     def _power(self, on: bool) -> None:
-        self.btn_power.setText("Light on" if on else "Light off")
         self.session.capture.light_power = on
+        self._show_light_state()
         self._apply_light()
+
+    def _show_light_state(self) -> None:
+        """One place for what the operator sees of the light (operator 2026-11-23: "better buttons and status
+        indication of the lights"): the lit channel's button glows in its LED colour and reads ON, the others read
+        off, and the power button names what is lit ("GFP on") in that colour, or reads "Light off"."""
+        on = self.btn_power.isChecked()
+        for s, b in self.ch_buttons.items():
+            b.set_lit(on and s == self.channel)
+        chp = self.profile.channel(self.channel)
+        name = chp.display if chp else self.channel
+        self.btn_power.setText(f"{name} on" if on else "Light off")
+        self.btn_power.setAccessibleName(f"Light: {name} on" if on else "Light: off")
+        lit_b = self.ch_buttons.get(self.channel)
+        if on and lit_b is not None:
+            self.btn_power.setIcon(icon("light-on", theme.TEXT))
+            tint = _mix(theme.PANEL_2, lit_b.color, 0.22).name()
+            self.btn_power.setStyleSheet(
+                f"QPushButton {{ background: {tint}; border: 1px solid {lit_b.color}; color: {theme.TEXT}; "
+                f"font-weight: 600; }} QPushButton:focus {{ border: 2px solid {theme.current().focus}; }}")
+        else:
+            self.btn_power.setIcon(icon("light-off"))
+            self.btn_power.setStyleSheet("")
 
     def _light_slider(self, v: float) -> None:
         if self.actual_mode:
@@ -1362,8 +1397,8 @@ class CapturePage(QWidget):
             self.btn_power.blockSignals(True)
             self.btn_power.setChecked(False)
             self.btn_power.blockSignals(False)
-            self.btn_power.setText("Light off")
             self.session.capture.light_power = False
+            self._show_light_state()
         self._select_channel(self.channel, initial=True)  # applies the light's on/off (off after the line above)
         self.model.settings_changed.emit()
         self.route_light_path(role)
@@ -1566,26 +1601,66 @@ class CapturePage(QWidget):
         self.right.setMaximumWidth(300 if on else 330)
         self.hist.setFixedWidth(260 if on else 320)
 
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        center = self.width() - self.left.width() - self.right.width() - 40
-        style = Qt.ToolButtonIconOnly if center < 1080 else Qt.ToolButtonTextBesideIcon
-        for b in self.toolbuttons:
-            if b.toolButtonStyle() != style:
-                b.setToolButtonStyle(style)
+    def eventFilter(self, obj, e):
+        if obj is self.toolbar and e.type() == QEvent.Resize:
+            self._fit_toolbar()
+        return super().eventFilter(obj, e)
+
+    def _fit_toolbar(self) -> None:
+        """Toolbar labels stay readable: beside the icons when they fit, under them when space is tight, icons only
+        when even that does not fit (operator 2026-11-23: icon-only buttons were hard to read)."""
+        if getattr(self, "_fitting", False):
+            return
+        self._fitting = True
+        try:
+            top = self._toolbar_layout
+            fixed, items = 0, 0  # what the layout adds besides the title and the buttons: spacers, dividers, gaps
+            for i in range(top.count()):
+                it = top.itemAt(i)
+                if it is None:
+                    continue
+                w = it.widget()
+                if w is self.lbl_view or w in self.toolbuttons:
+                    continue
+                items += 1
+                sp = it.spacerItem()
+                fixed += w.minimumWidth() if w is not None else (sp.sizeHint().width() if sp is not None else 0)
+            gaps = fixed + top.spacing() * (items + len(self.toolbuttons) - 1)
+            title = self.lbl_view.sizeHint().width() + top.spacing()
+            # the view title steps aside before the labels go: the image badge says the same (GFP • LIVE • ...)
+            tbs = Qt.ToolButtonStyle
+            chosen, show_title = tbs.ToolButtonIconOnly, True
+            for style, keep_title in ((tbs.ToolButtonTextBesideIcon, True), (tbs.ToolButtonTextUnderIcon, True),
+                                      (tbs.ToolButtonTextUnderIcon, False)):
+                need = gaps + (title if keep_title else 0)
+                for b in self.toolbuttons:
+                    b.setToolButtonStyle(style)
+                    need += b.sizeHint().width()
+                if need <= self.toolbar.width():
+                    chosen, show_title = style, keep_title
+                    break
+            for b in self.toolbuttons:
+                if b.toolButtonStyle() != chosen:
+                    b.setToolButtonStyle(chosen)
+            self.lbl_view.setVisible(show_title)
+            self.toolbar_style = chosen
+        finally:
+            self._fitting = False
 
     def retint(self) -> None:
         for b in self.toolbuttons:
             b.setIcon(icon(b.property("icon_name")))
         self.btn_capture.setIcon(icon("capture", theme.ACCENT_ON))
-        self.btn_power.setIcon(icon("light"))
+        self._show_light_state()
         self.btn_vessel.setIcon(icon("vessel"))
         self.view.setBackgroundBrush(QColor(theme.STAGE))
         self._refresh_thumbnails()
+        QTimer.singleShot(0, self._fit_toolbar)  # the new stylesheet changes the buttons' sizes
         self.update()
 
     def showEvent(self, e):
         super().showEvent(e)
+        QTimer.singleShot(0, self._fit_toolbar)
         if self.view_mode == "live" and not self.model.tasks.busy:
             self.go_live()
 

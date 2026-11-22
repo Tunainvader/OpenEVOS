@@ -224,7 +224,20 @@ class Session:
         if self.settings_path is not None:
             self.settings.save(self.settings_path)
 
+    def lights_off(self) -> None:
+        """Every LED off now (the illumination backend's halt: confirmed by read-back on the real board)."""
+        did = self.profile.illumination_device
+        rec = self.core.devices.get(did) if did else None
+        halt = getattr(rec.backend, "halt", None) if rec is not None else None
+        if callable(halt):
+            with contextlib.suppress(Exception):  # best effort during shutdown; disconnect switches off again
+                halt()
+
     def shutdown(self) -> None:
+        # the lights go off before anything else (operator 2026-11-23: "quitting app should auto off the lights"):
+        # until now the board was switched off only as the device manager closed it, after the motor port and the
+        # camera streams, so a hang in either left a LED on
+        self.lights_off()
         for svc in list(self.telemetry):  # release the motor port first
             try:
                 svc.stop()
