@@ -105,8 +105,10 @@ class LocalMcpService:
         self.path = path
         self.url = f"http://{LOOPBACK}:{self.port}{path}"
         app = build_asgi(mcp, port=self.port, token=token, path=path)
+        # use_colors=False: otherwise uvicorn's log formatter calls sys.stdout.isatty(), and under pythonw (the Desktop
+        # shortcut) sys.stdout is None, so the app with --mcp exited at start (2026-11-23)
         config = uvicorn.Config(app, host=LOOPBACK, port=self.port, log_level="warning", lifespan="on",
-                                access_log=False)
+                                access_log=False, use_colors=False)
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(target=self._server.run, name="openevos-mcp", daemon=True)
 

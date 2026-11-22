@@ -73,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
                          "still on their power-up limits (0-22 mm) get Motor Gate 7's reviewed limit writes, no motion "
                          "(ADR-0056)")
     args = ap.parse_args(argv)
+    console_log = _keep_console_output(args.settings)
     # one app per instrument: a second copy would fight the first for COM3 and the LED board (2026-11-18: two copies
     # started 6 s apart after a power cycle). Checked before anything touches the hardware.
     instance_lock = None
@@ -190,13 +191,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"telemetry log: {telemetry_log.path}", file=sys.stderr, flush=True)
         except OSError as exc:
             print(f"telemetry log unavailable: {exc}", file=sys.stderr, flush=True)
-    mcp_link = None
+    mcp_link, mcp_note = None, None
     if args.mcp is not None and not args.screenshot_dir:
-        from openevos.mcp_link.cli import start_for_session
-
-        mcp_link = start_for_session(session, port=args.mcp)
-        print(mcp_link[2], file=sys.stderr, flush=True)
+        mcp_link, mcp_note = _start_mcp_link(session, args.mcp, fault_log=fault_log, show_token=console_log is None)
     model = SessionModel(session)
+    if mcp_note:
+        model.add_log("warn", mcp_note)
     model.scans_dir = args.scans_dir  # read by the Diagnostics page
     win = MainWindow(model)
     if args.screenshot_dir:
@@ -227,6 +227,53 @@ def main(argv: list[str] | None = None) -> int:
             fault_log.close()
         if instance_lock is not None:
             instance_lock.unlock()
+
+
+def _keep_console_output(settings: Path | None) -> Path | None:
+    """pythonw (the Desktop shortcut) starts with sys.stdout and sys.stderr set to None: launch notes and a startup
+    traceback vanished, and a library that touches them could fail. On 2026-11-23 uvicorn's log formatter called
+    sys.stdout.isatty() and the shortcut with --mcp exited two seconds after opening COM3, with no message. Send both
+    to <config>/Logs/console-YYYYMMDD.log (UTC date, like the session log). Returns that file, or None when the
+    process already has a console or a redirect (left alone)."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return None
+    import os
+
+    from openevos.core.models import utcnow
+    from openevos.instrument.settings import default_settings_path
+
+    now = utcnow()
+    path = (settings or default_settings_path()).with_name("Logs") / f"console-{now:%Y%m%d}.log"
+    kept: Path | None = path
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        stream = open(path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115 - open for the life of the process
+    except OSError:
+        stream, kept = open(os.devnull, "w", encoding="utf-8"), None  # noqa: SIM115 - as above
+    if sys.stdout is None:
+        sys.stdout = stream
+    if sys.stderr is None:
+        sys.stderr = stream
+    print(f"--- {now.isoformat(timespec='seconds')} pid {os.getpid()}: {' '.join(sys.argv)}", file=stream)
+    return kept
+
+
+def _start_mcp_link(session, port: int, *, fault_log=None, show_token: bool = True):
+    """Start the read-only MCP link. It is optional: when it cannot start (port taken, a library failure) the app still
+    opens, and the reason goes to stderr, the session fault log and the app's log. Returns (link, note)."""
+    from openevos.mcp_link.cli import start_for_session
+
+    try:
+        link = start_for_session(session, port=port)
+    except Exception as exc:  # noqa: BLE001 - the optional link must never stop the instrument app
+        note = f"MCP link not started: {exc}"
+        print(note, file=sys.stderr, flush=True)
+        if fault_log is not None:
+            fault_log.write("launch", step="mcp", message=note)
+        return None, note
+    # the connect hint carries the bearer token: show it on a console, keep it out of a log file
+    print(link[2] if show_token else f"OpenEVOS MCP link (read-only) at {link[0].url}", file=sys.stderr, flush=True)
+    return link, None
 
 
 def _resolve_mono_camera(choice: str, *, screenshots: bool = False, probe=None) -> str | None:

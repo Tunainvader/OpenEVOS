@@ -32,8 +32,12 @@ def start_for_session(session, *, port: int):
     from openevos.mcp_link.view import InstrumentView
 
     view = InstrumentView(session)
-    token = load_or_create_token()
-    svc = LocalMcpService(build_server(view, version=__version__), port=port, token=token).start()
+    try:
+        token = load_or_create_token()
+        svc = LocalMcpService(build_server(view, version=__version__), port=port, token=token).start()
+    except BaseException:
+        view.close()  # a link that did not start leaves nothing listening to the session
+        raise
     return svc, view, connect_hint(svc.url, token)
 
 
