@@ -104,7 +104,8 @@ def _monitor(session) -> list[Check]:
         st = mon.state()
         port = getattr(svc, "port_label", "") or "motor port"
         if st.get("latched"):
-            fix = ("Small drift: Microscope › Release stage lock (it checks X and Y first; ADR-0057). Otherwise: "
+            small = "Small landing miss" if st.get("rule") == "landing_error" else "Small drift"  # ADR-0061
+            fix = (f"{small}: Microscope › Release stage lock (it checks X and Y first; ADR-0057). Otherwise: "
                    if st.get("releasable") else
                    "Microscope › Re-home stage: X then Y re-run their power-up homing and the stage returns to where "
                    "it was (ADR-0058). Or: ") + st.get("recovery", RECOVER_FIX)

@@ -550,11 +550,15 @@ class MainWindow(QMainWindow):
         if blocker:  # not a small drift: offer the software re-home (ADR-0058) instead of a dead end
             self.rehome_stage(reason=f"{st.get('message', '')} (it cannot be released: {blocker})")
             return
-        text = (f"The drift monitor locked the stage: {st.get('message', '')}.\n\nRecorded drift: {drift:+d} counts "
+        landing = st.get("rule") == "landing_error"  # ADR-0061: a small landing miss is releasable too
+        after = ("The next move again gets the settle time and one automatic re-approach before it can lock."
+                 if landing else "The monitor keeps watching: if the stage creeps again it locks again.")
+        text = (f"The drift monitor locked the stage: {st.get('message', '')}.\n\n"
+                f"Recorded {'landing miss' if landing else 'drift'}: {drift:+d} counts "
                 f"(about {abs(drift) * 0.44:.1f} µm; the commutation risk starts near 14 counts).\n\n"
                 "OpenEVOS reads X and Y now and releases the lock only if both are homed, idle, free of drive faults, "
-                "powered and within 3 counts of their command. The monitor keeps watching: if the stage creeps again "
-                "it locks again. Release the lock?") if drift is not None else st.get("message", "")
+                f"powered and within 3 counts of their command. {after} Release the lock?"
+                ) if drift is not None else st.get("message", "")
         if QMessageBox.question(self, "Release stage lock", text) != QMessageBox.Yes:
             return
         QApplication.setOverrideCursor(Qt.WaitCursor)

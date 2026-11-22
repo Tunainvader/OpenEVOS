@@ -248,6 +248,12 @@ class SimulatedDriveChain:
             self.values[(ax, "HOMEDONE")] = 1
         #: tests: knock these still axes by n counts when the next move of another axis finishes (once)
         self.knock: dict[str, int] = {}
+        #: tests (ADR-0061): the next moves of an axis end these many counts off their target (signed, one per move)
+        #: with motion complete; they settle onto the target after `land_settle_reads` reads (None: they stay, as Y
+        #: did at 65.6 mm on 2026-11-21). A stop at rest ends the settling where the axis stands.
+        self.land_off: dict[str, list[int]] = {}
+        self.land_settle_reads: int | None = None
+        self._landing: dict[str, list[int]] = {}  # axis -> [reads left, target]
         self.o_steps_per_read = 0  # 0: a turret change completes at once; n: one position per n reads (tests)
         self.o_stuck = False
         self._o_turn: list | None = None  # [reads left, start]
@@ -309,13 +315,17 @@ class SimulatedDriveChain:
                 self._ramps[axis] = (time.monotonic(), self.values[(axis, "APOS")], target)
                 self.values[(axis, "SRH")] = 0x013F
             elif self.moves_complete:
-                self.values[(axis, "APOS")] = target
+                off = self.land_off[axis].pop(0) if self.land_off.get(axis) else 0
+                self.values[(axis, "APOS")] = target + off
+                if off and self.land_settle_reads is not None:
+                    self._landing[axis] = [self.land_settle_reads, target]
                 self.values[(axis, "SRH")] = 0x033F
             else:
                 self.values[(axis, "SRH")] = 0x013F
         elif data == tp.stop_frames(axis)[2]:
             self._advance()
             self._ramps.pop(axis, None)
+            self._landing.pop(axis, None)
             self.values[(axis, "CPOS")] = self.values[(axis, "APOS")]
             self.values[(axis, "ESTATEV")] = 0
             self.values[(axis, "SRH")] = 0x033F
@@ -405,6 +415,7 @@ class SimulatedDriveChain:
                 self._pending = bytes.fromhex("4F 0A 00 01 B4 04 00 10 00 00 79 80 CC")
             else:
                 self._advance()
+                self._land_step()
                 self._o_step()
                 self._home_step()
                 v = self._by_frame[bytes(data)]
@@ -419,6 +430,16 @@ class SimulatedDriveChain:
                 framed = bytes([len(body)]) + body
                 self._pending = b"O" + framed + bytes([tp.checksum(framed)])
         return len(data)
+
+    def _land_step(self) -> None:
+        """Advance a landing that ended off its target (tests, ADR-0061): onto the target after its reads."""
+        for axis in list(self._landing):
+            left, target = self._landing[axis]
+            if left > 0:
+                self._landing[axis][0] = left - 1
+                continue
+            del self._landing[axis]
+            self.values[(axis, "APOS")] = target
 
     def _home_step(self) -> None:
         """Advance X/Y homing one read: the axis travels towards its hard stop, then ends at 0 (or interrupted)."""

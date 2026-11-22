@@ -17,8 +17,9 @@ What it does (no serial I/O and no Qt; the TelemetryService feeds it from its ow
 * while latched, every X/Y move is refused, whichever axis;
 * the latch never clears itself, not even when APOS and CPOS agree again (the electrical phase can still be wrong).
   An observed re-initialisation of both X and Y clears it: IINITONCEDONE leaves 12345 and comes back, which is
-  the power-on homing seen while OpenEVOS is connected. A small drift latch can also be released by the operator
-  (`release`, ADR-0057) after fresh reads pass. With an evidence folder the latch survives app restarts;
+  the power-on homing seen while OpenEVOS is connected. A small drift or landing latch can also be released by the
+  operator (`release`, ADR-0057, ADR-0061) after fresh reads pass. With an evidence folder the latch survives app
+  restarts;
 * 10 s after a latch it writes the evidence: a JSON (latch, thresholds, status polls, commands, extra drive reads)
   and a CSV in the `y_drift_correlate.py` format (t, x_apos, y_apos, x_cpos, y_cpos, x_cmd, y_cmd).
 
@@ -62,8 +63,16 @@ RECOVERY = ("power-cycle the microscope: with OpenEVOS running it watches X and 
 #: the stage even after lock"). Only drift-type latches, only a small recorded drift (well under the ~14-count
 #: commutation reversal), and only when fresh reads show both axes homed, idle, fault-free, powered and within
 #: MOVE_DRIFT_MAX_COUNTS of their command (else the next move's pre-move check would latch again).
-RELEASABLE_RULES = frozenset({"idle_encoder_drift", "command_mismatch", "cross_axis_encoder_drift"})
+#: ADR-0061 (operator 2026-11-22): a landing lock too, by its recorded miss (encoder vs target). The move loop now
+#: lets a landing settle and re-approaches once before it locks, so such a lock is a repeated small miss.
+RELEASABLE_RULES = frozenset({"idle_encoder_drift", "command_mismatch", "cross_axis_encoder_drift", "landing_error"})
 RELEASE_MAX_DRIFT_COUNTS = 10
+#: ADR-0061: the third automatic re-approach of one axis in a session raises a standing warning (never a lock)
+REAPPROACH_WARN_AFTER = 3
+#: ADR-0061: one row per settled miss, re-approach or landing lock, next to the evidence (where each axis drags)
+LANDING_LOG_FILE = "landing-log.csv"
+LANDING_COLUMNS = ("utc", "axis", "speed_preset", "start", "target", "position_mm", "miss_at_complete",
+                   "miss_after_settle", "settle_s", "iq", "action", "detail")
 RELEASE_READS = ("IINITONCEDONE", "ESTATEV", "SRH", "SRL", "ISTATUSFLAGS", "APOS", "CPOS")
 #: Software re-home (ADR-0058, amends ADR-0040): the latch also clears when the stage service sent X and Y the drives'
 #: own home request (ESTATE 19, the power-up homing routine) and fresh reads show both homed, idle, fault-free,
@@ -123,6 +132,8 @@ class StageMonitor:
         self.carried_over = False  # the latch came from the latch file (an earlier session), not from this one
         #: still axes knocked (within CROSS_AXIS_TOLERANCE_COUNTS) by the move in progress: axis -> largest change
         self.disturbed: dict[str, int] = {}
+        #: axis -> where (mm) each automatic re-approach after a landing miss happened this session (ADR-0061)
+        self.reapproaches: dict[str, list[float]] = {}
         self._load_latch()
         if record and self.evidence_dir is not None:
             self._open_record()
@@ -142,7 +153,8 @@ class StageMonitor:
     def state(self) -> dict:
         with self._lock:
             out = {"latched": self.latch is not None, "warnings": list(self.warnings.values()),
-                   "fast_samples": self.sample_count, "recording": str(self.record_path or "")}
+                   "fast_samples": self.sample_count, "recording": str(self.record_path or ""),
+                   "reapproaches": {ax: list(v) for ax, v in self.reapproaches.items()}}  # ADR-0061, mm per axis
             if self.latch is not None:
                 out.update(rule=self.latch.rule, axis=self.latch.axis, message=self.latch.message,
                            since_utc=self.latch.at_utc, evidence=self.latch.evidence, recovery=RECOVERY,
@@ -154,6 +166,8 @@ class StageMonitor:
         v = self.latch.values if self.latch else {}
         if "apos" in v and "reference" in v:
             return int(v["apos"]) - int(v["reference"])
+        if "apos" in v and "target" in v:  # a landing (or wrong-way) lock: the encoder against the leg's target
+            return int(v["apos"]) - int(v["target"])
         if "apos" in v and "start" in v:  # cross-axis drift during the other axis' move
             return int(v["apos"]) - int(v["start"])
         if "apos" in v and "cpos" in v:
@@ -312,6 +326,19 @@ class StageMonitor:
         """A standing warning shown on the stage (not a latch), e.g. a power-up index jump (ADR-0040 §9)."""
         with self._lock:
             self.warnings[key] = text
+
+    def landing_reapproached(self, axis: str, where_mm: float) -> int:
+        """The move loop re-approached `axis` after a landing miss and it landed (ADR-0061). Returns how many times
+        this session; from the REAPPROACH_WARN_AFTER-th on, a standing warning names where (not a lock)."""
+        with self._lock:
+            seen = self.reapproaches.setdefault(axis, [])
+            seen.append(round(where_mm, 1))
+            if len(seen) >= REAPPROACH_WARN_AFTER:
+                where = ", ".join(f"{m:.1f}" for m in seen[-6:])
+                self.warnings[f"landing {axis}"] = (
+                    f"{axis} needed {len(seen)} automatic re-approaches this session (at {where} mm): it lands short "
+                    f"of its target there; check {axis}'s guide and cable by hand")
+            return len(seen)
 
     def fast(self, x_apos: int, y_apos: int) -> Latch | None:
         """One fast X/Y encoder sample. Returns the latch if this sample set it."""
@@ -612,6 +639,19 @@ class StageMonitor:
             self.samples.popleft()
         while self.polls and self.polls[0][0] < t - RING_S:
             self.polls.popleft()
+
+
+def append_landing(folder: Path | str, row: dict) -> Path:
+    """One row of the landing log (ADR-0061), with the header on a new file. Unknown keys are dropped."""
+    p = Path(folder) / LANDING_LOG_FILE
+    new = not p.exists()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "a", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=LANDING_COLUMNS, extrasaction="ignore")
+        if new:
+            w.writeheader()
+        w.writerow({"utc": _utc(), **row})
+    return p
 
 
 class _RowWriter:

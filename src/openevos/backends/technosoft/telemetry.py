@@ -74,6 +74,15 @@ MOVE_POLL_S = 0.05
 SETTLE_BAND_COUNTS = 5  # the drives' LCONVERGEBAND (Gate 4)
 #: putting a knocked axis back approaches its target from this far (44 um), so the drive moves for real
 CORRECT_APPROACH_COUNTS = 100
+#: ADR-0061: a moved axis outside the band at motion complete is watched this long (fast samples, nothing written)
+#: before its landing is judged: after a short move X overshoots 16-20 counts and is within 1 count ~0.5 s later
+#: (ADR-0040), and on 2026-11-19 05:50 Y read -6 at the check and +1 in the lock's own reads ~0.3 s later
+LANDING_SETTLE_S = 1.0
+LANDING_SETTLE_SAMPLES = round(LANDING_SETTLE_S / FAST_PERIOD_S)  # the window's cap in samples, whatever the timing
+LANDING_IN_BAND_SAMPLES = 2  # landed: this many samples in a row inside the band
+#: ADR-0061: still out after the window by at most this much (the ADR-0057/0059 bound, under the ~14-count commutation
+#: reversal): one automatic re-approach, 100 counts back the way it came and onto the target, before any lock
+LANDING_RETRY_MAX_COUNTS = 10
 POWER_UP_SETTLE_S = 5.0  # the power-up record waits this long after X and Y report homed (ADR-0040 §9)
 #: max |APOS - CPOS| before a move and for an idle axis after another moves (ADR-0030: 1 count = 6.25 deg
 #: electrical on these closed-loop steppers; ~14 counts reverses torque)
@@ -268,6 +277,10 @@ class _Leg:
     last_report: float = 0.0
     #: a software re-home's approach to home (ADR-0058): runs with the monitor latched, guarding the still axis itself
     under_lock: bool = False
+    #: the fresh reads of the go-to (CSPDCMD per axis), for a re-approach's legs (ADR-0061)
+    now: dict = field(default_factory=dict)
+    #: on a re-approach leg (ADR-0061): the miss it follows up (no second re-approach; named in a lock)
+    reapproach_of: dict | None = None
 
 
 @dataclass
@@ -1349,20 +1362,30 @@ class TelemetryService:
             if not lo <= via <= hi:
                 via = 2 * target - via  # the other side
             self.monitor.note(f"putting {ax} back: {off:+d} counts off its target {target} after the move (via {via})")
-            ctx: Any = job.ctx
-            for step in (via, target):
-                self._settle_between_legs(link, ctx)
-                if self._stop_request.is_set() or getattr(ctx, "cancel_requested", False):
-                    self._send_stop(link)
-                    ctx.mark_cancelled(self._position_now(link))
-                    return False
-                if self.monitor.latched:
-                    ctx.fail(f"{ax} not put back: {self.monitor.refusal()}", error_code="stage_latched")
-                    return False
-                start = {a: link.read(tp.VARS[a]["APOS"]) for a in tp.MOTION_AXES}
-                fix = _MoveJob(f"{job.command_id}-put-back-{ax}", job.ctx, {**start, ax: step}, job.target_um)
-                if not self._move_leg(link, fix, [ax], now, start):
-                    return False
+            if not self._approach(link, job.ctx, f"{job.command_id}-put-back-{ax}", job.target_um, ax, (via, target),
+                                  now):
+                return False
+        return True
+
+    def _approach(self, link: DriveLink, ctx: Any, command_id: str, target_um: tuple[float, float], ax: str,
+                  steps: tuple[int, ...], now: dict, *, reapproach_of: dict | None = None,
+                  what: str = "put back") -> bool:
+        """`ax` through `steps` (counts), one verified single-axis leg each with the settle between legs: the put-back
+        of a knocked axis (ADR-0059) and the re-approach after a landing miss (ADR-0061, `reapproach_of` set: those
+        legs get no second re-approach). False: the command has been failed or cancelled."""
+        for step in steps:
+            self._settle_between_legs(link, ctx)
+            if self._stop_request.is_set() or getattr(ctx, "cancel_requested", False):
+                self._send_stop(link)
+                ctx.mark_cancelled(self._position_now(link))
+                return False
+            if self.monitor.latched:
+                ctx.fail(f"{ax} not {what}: {self.monitor.refusal()}", error_code="stage_latched")
+                return False
+            start = {a: link.read(tp.VARS[a]["APOS"]) for a in tp.MOTION_AXES}
+            fix = _MoveJob(command_id, ctx, {**start, ax: step}, target_um)
+            if not self._move_leg(link, fix, [ax], now, start, reapproach_of=reapproach_of):
+                return False
         return True
 
     # ------------------------------------------------------------------ Z focus and objective turret (ADR-0053)
@@ -1699,10 +1722,11 @@ class TelemetryService:
                 self._fast_sample(link)
 
     def _move_leg(self, link: DriveLink, job: _MoveJob, leg: list[str], now: dict, start: dict,
-                  under_lock: bool = False) -> bool:
+                  under_lock: bool = False, reapproach_of: dict | None = None) -> bool:
         """Move the axes in `leg` (one, under SEQUENTIAL_XY) to their targets. True when done and verified; else the
         command has been failed or cancelled and False is returned. Steps (audit APP-16): speed, target, start,
-        supervise to motion complete, the drive's flags, the still axis' encoder, the landing, the stop at rest."""
+        supervise to motion complete, the drive's flags, the still axis' encoder, the landing (with its settle window
+        and one re-approach, ADR-0061), the stop at rest."""
         preset = self.speed_preset if self.speed_control else None
         speed = self._leg_speeds(link, leg, now, preset)
         for ax in leg:
@@ -1712,7 +1736,7 @@ class TelemetryService:
         label = preset if preset is not None else "fast"  # the power-up speed is the fast preset (ADR-0032)
         run = _Leg(job.ctx, leg, job.targets, start, speed,
                    {ax: watchdog.LegWatch(ax, start[ax], job.targets[ax], label, time.monotonic()) for ax in leg},
-                   under_lock=under_lock)
+                   under_lock=under_lock, now=now, reapproach_of=reapproach_of)
         try:
             for ax in leg:
                 link.write(tp.move_request(ax))
@@ -1768,20 +1792,7 @@ class TelemetryService:
             ctx.mark_cancelled(self._position_now(link))
             return False
         run.live["X"], run.live["Y"] = self._fast_sample(link)  # both encoders, every tick (~20 Hz)
-        if run.under_lock:  # a re-home's approach (ADR-0058): the monitor is latched, so watch the still axis here
-            for other in tp.MOTION_AXES:
-                d = run.live[other] - run.start[other]
-                if other not in run.axes and abs(d) > sm.CROSS_AXIS_TOLERANCE_COUNTS:
-                    run.outcome = "still axis moved"
-                    self._stop_axes(link, run.axes)
-                    ctx.fail(f"{other} changed {d:+d} counts while {'+'.join(run.axes)} approached home; controlled "
-                             "stop sent", error_code="cross_axis_encoder_drift")
-                    return False
-        elif self.monitor.latched:  # the still axis changed while this leg moved (or anything else tripped)
-            run.outcome = "stopped by the drift monitor"
-            self._stop_axes(link, run.axes)
-            rule = self.monitor.latch.rule if self.monitor.latch else "stage_latched"
-            ctx.fail(f"{rule}: {self.monitor.refusal()}; controlled stop sent", error_code=rule)
+        if not self._leg_guarded(link, run):
             return False
         for ax in run.axes:  # the watchdog's signals: encoder every tick, POSERR and IQ on alternate ticks
             if ax not in run.done:
@@ -1803,6 +1814,28 @@ class TelemetryService:
             self._send_stop(link)
             ctx.fail(f"{', '.join(a for a in run.axes if a not in run.done)} did not complete in time; controlled "
                      "stop sent", error_code="timeout")
+            return False
+        return True
+
+    def _leg_guarded(self, link: DriveLink, run: _Leg) -> bool:
+        """The still axis while a leg runs (each tick, and in the landing's settle window), from `run.live`. On a
+        re-home's approach (ADR-0058) the monitor is latched, so the still axis is watched here; otherwise a latch of
+        the drift monitor stops the leg. False: the command has ended (failed)."""
+        ctx = run.ctx
+        if run.under_lock:
+            for other in tp.MOTION_AXES:
+                d = run.live[other] - run.start[other]
+                if other not in run.axes and abs(d) > sm.CROSS_AXIS_TOLERANCE_COUNTS:
+                    run.outcome = "still axis moved"
+                    self._stop_axes(link, run.axes)
+                    ctx.fail(f"{other} changed {d:+d} counts while {'+'.join(run.axes)} approached home; controlled "
+                             "stop sent", error_code="cross_axis_encoder_drift")
+                    return False
+        elif self.monitor.latched:  # the still axis changed while this leg moved (or anything else tripped)
+            run.outcome = "stopped by the drift monitor"
+            self._stop_axes(link, run.axes)
+            rule = self.monitor.latch.rule if self.monitor.latch else "stage_latched"
+            ctx.fail(f"{rule}: {self.monitor.refusal()}; controlled stop sent", error_code=rule)
             return False
         return True
 
@@ -1860,8 +1893,9 @@ class TelemetryService:
         return True
 
     def _leg_landed(self, link: DriveLink, run: _Leg) -> bool:
-        """Each moved axis' encoder against its target. False: no motion at all (failed), or a landing error (latched
-        and failed)."""
+        """Each moved axis' encoder against its target. Outside the band at motion complete, the axis first gets the
+        settle window and then, if it is still a little off, one automatic re-approach (ADR-0061). False: no motion at
+        all (failed), a stop, cancel or lock meanwhile (the command has ended), or a landing error (latched, failed)."""
         ctx = run.ctx
         for ax in run.axes:
             target, start = run.targets[ax], run.start[ax]
@@ -1875,17 +1909,127 @@ class TelemetryService:
                          "off after a drive protection trip; power-cycle the instrument to recover",
                          error_code="no_motion")
                 return False
-            if abs(apos - target) > SETTLE_BAND_COUNTS:  # landing error (plan §6.3): latch
-                run.outcome = "landing error"
-                self.monitor.trip("landing_error", ax, f"{ax} ended at {apos}, {apos - target:+d} counts from its "
-                                                       f"target {target} (band {SETTLE_BAND_COUNTS})",
-                                  {"start": start, "apos": apos, "target": target})
-                self._on_latch(link)
-                self._send_stop(link)
-                ctx.fail(f"{ax} ended at {apos}, target {target} (band {SETTLE_BAND_COUNTS}); stop sent; stage "
-                         f"locked: {RECOVERY}", error_code="readback")
-                return False
+            if abs(apos - target) <= SETTLE_BAND_COUNTS:
+                continue
+            t0 = time.monotonic()
+            settled = self._await_landing(link, run, ax)
+            if settled is None:
+                return False  # stopped, cancelled or locked during the window: the command has ended
+            miss: dict = {"start": start, "target": target, "first": apos - target, "settled": settled - target,
+                          "settle_s": round(time.monotonic() - t0, 2)}
+            if abs(settled - target) <= SETTLE_BAND_COUNTS:
+                self._landing_record(ax, miss, "settled", "landed inside the band during the settle window")
+                continue
+            done = self._reapproach(link, run, ax, miss)
+            if done is True:
+                continue
+            if done is False:
+                return False  # the re-approach ended the command (its own lock, a stop or a cancel)
+            # landing error (plan §6.3): latch
+            run.outcome = "landing error"
+            msg = (f"{ax} ended at {settled}, {settled - target:+d} counts from its target {target} (band "
+                   f"{SETTLE_BAND_COUNTS}) {miss['settle_s']:g} s after motion complete; {done}")
+            values: dict = {"start": start, "apos": settled, "target": target, "miss_at_complete": miss["first"],
+                            "settle_s": miss["settle_s"]}
+            if run.reapproach_of is not None:
+                values["reapproach_of"] = dict(run.reapproach_of)
+            self.monitor.trip("landing_error", ax, msg, values)
+            self._on_latch(link)
+            self._send_stop(link)
+            miss.setdefault("iq", (self.monitor.extra.get(ax) or {}).get("IQ", ""))
+            self._landing_record(ax, miss, "locked", done)
+            hint = (" (a miss this small can be released: Microscope › Release stage lock)"
+                    if abs(settled - target) <= sm.RELEASE_MAX_DRIFT_COUNTS else "")
+            ctx.fail(f"{msg}; stop sent; stage locked: {RECOVERY}{hint}", error_code="readback")
+            return False
         return True
+
+    def _await_landing(self, link: DriveLink, run: _Leg, ax: str) -> int | None:
+        """The landing's settle window (ADR-0061): fast X/Y samples with nothing written, until `ax` has been inside
+        the band for LANDING_IN_BAND_SAMPLES samples in a row, for at most LANDING_SETTLE_S (and LANDING_SETTLE_SAMPLES
+        samples). STOP, the still-axis guard and the wrong-way guard stay active. Returns the last encoder value, or
+        None when the command has ended (stopped, cancelled or locked)."""
+        target = run.targets[ax]
+        ctx: Any = run.ctx
+        end, inside = time.monotonic() + LANDING_SETTLE_S, 0
+        apos = link.read(tp.VARS[ax]["APOS"])
+        for _ in range(LANDING_SETTLE_SAMPLES):
+            if self._stop_request.is_set() or getattr(ctx, "cancel_requested", False):
+                run.outcome = "stopped"
+                self._send_stop(link)
+                ctx.mark_cancelled(self._position_now(link))
+                return None
+            self._sleep(max(0.0, FAST_PERIOD_S - (time.monotonic() - self._last_fast)))
+            run.live["X"], run.live["Y"] = self._fast_sample(link)
+            if not self._leg_guarded(link, run) or self._leg_wrong_way(link, run, ax):
+                return None
+            apos = run.live[ax]
+            inside = inside + 1 if abs(apos - target) <= SETTLE_BAND_COUNTS else 0
+            if inside >= LANDING_IN_BAND_SAMPLES or time.monotonic() >= end:
+                break
+        return apos
+
+    def _reapproach(self, link: DriveLink, run: _Leg, ax: str, miss: dict) -> bool | str:
+        """One automatic re-approach after a landing miss that outlasted the settle window (ADR-0061): the controlled
+        stop at rest, a verified leg CORRECT_APPROACH_COUNTS back the way the axis came (never past the target towards
+        a hard stop), then a verified leg onto the target; both with every leg check and no second re-approach.
+        True: it landed. False: the command has ended (a lock, stop or cancel on the way). A string: why it was not
+        tried; the caller locks."""
+        target, start, off = run.targets[ax], run.start[ax], miss["settled"]
+        if run.reapproach_of is not None:
+            return f"missed again on the automatic re-approach (it first ended {run.reapproach_of['first']:+d})"
+        if run.under_lock:
+            return "no re-approach while the stage is locked for a re-home"
+        if len(run.axes) != 1:
+            return "no re-approach on a two-axis leg"
+        if abs(off) > LANDING_RETRY_MAX_COUNTS:
+            return f"more than {LANDING_RETRY_MAX_COUNTS} counts off, so not re-approached"
+        st = {n: link.read(tp.VARS[ax][n]) for n in ("MER", "ISTATUSFLAGS", "SRL", "IQ", "LPOSMIN", "LPOSMAX")}
+        miss["iq"] = tp.signed16(st["IQ"])
+        if st["MER"] & 0xFFFF:
+            return f"the drive's error register reads MER 0x{st['MER'] & 0xFFFF:04X}, so not re-approached"
+        if self.monitor.after_move(ax, st["ISTATUSFLAGS"], st["SRL"]) is not None:
+            run.outcome = "drive flags"
+            self._on_latch(link)
+            self._send_stop(link)
+            rule = self.monitor.latch.rule if self.monitor.latch else "stage_latched"
+            ctx: Any = run.ctx
+            ctx.fail(f"{rule}: {self.monitor.refusal()}; stop sent", error_code=rule)
+            return False
+        back = 1 if start > target else -1
+        via = target + back * CORRECT_APPROACH_COUNTS
+        if not st["LPOSMIN"] <= via <= st["LPOSMAX"]:
+            via = target - back * CORRECT_APPROACH_COUNTS
+        self.monitor.note(f"{ax} landed {miss['first']:+d} counts from its target {target}, still {off:+d} after "
+                          f"{miss['settle_s']:g} s (IQ {miss['iq']}): re-approaching once via {via} (ADR-0061)")
+        self._stop_axes(link, [ax])  # end the push at rest: the drive's command becomes where the axis stands
+        now = run.now if ax in run.now else {ax: {"CSPDCMD": link.read(tp.VARS[ax]["CSPDCMD"])}}
+        target_um = (um_from_counts("X", run.targets.get("X", 0)), um_from_counts("Y", run.targets.get("Y", 0)))
+        if not self._approach(link, run.ctx, f"reapproach-{ax}", target_um, ax, (via, target), now,
+                              reapproach_of=miss, what="re-approached"):
+            return False
+        n = self.monitor.landing_reapproached(ax, um_from_counts(ax, target) / 1000.0)
+        self._landing_record(ax, miss, "re-approached", f"landed on the second approach via {via} (#{n} on {ax} "
+                                                        "this session)")
+        return True
+
+    def _landing_record(self, ax: str, miss: dict, action: str, detail: str) -> None:
+        """A landing that needed the settle window, a re-approach or a lock (ADR-0061): noted in the monitor's log and,
+        with an evidence folder (the real port), a row of the landing log."""
+        self.monitor.note(f"landing {action}: {ax} target {miss['target']}, {miss['first']:+d} at motion complete, "
+                          f"{miss['settled']:+d} after {miss['settle_s']:g} s; {detail}")
+        folder = self.monitor.evidence_dir
+        if folder is None:
+            return
+        try:
+            sm.append_landing(folder, {
+                "axis": ax, "speed_preset": self.speed_preset if self.speed_control else "fast",
+                "start": miss["start"], "target": miss["target"],
+                "position_mm": round(um_from_counts(ax, miss["target"]) / 1000.0, 3),
+                "miss_at_complete": miss["first"], "miss_after_settle": miss["settled"],
+                "settle_s": miss["settle_s"], "iq": miss.get("iq", ""), "action": action, "detail": detail})
+        except OSError as exc:
+            self.monitor.note(f"could not write the landing log: {exc}")
 
     def _watch_end(self, watches: dict, outcome: str, rest: dict) -> None:
         """One motion-profile row per leg (ADR-0047 Phase 1): kept in memory, appended to the profile file on the
