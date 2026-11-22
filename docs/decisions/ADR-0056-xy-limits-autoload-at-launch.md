@@ -7,7 +7,7 @@
   every launch" over "keep it manual".
 - **Amends:** ADR-0022 (Motor Gate 7 as an operator-run, reviewed tool).
 - **Code:** `src/openevos/maintenance/motor_autolimits.py`; `src/openevos/ui/app.py` (runs it before the session
-  opens the motor port; `--no-limits-autoload` turns it off).
+  opens the motor port; `--no-limits-autoload` turns it off); `src/openevos/ui/instance_guard.py` (single instance).
 - **Tests:** `tests/test_motor_autolimits.py`.
 
 ## Decision
@@ -41,6 +41,28 @@
   - Evidence goes to `stage-monitor/limits-reload-<time>-pass|fail.json`.
 - **Single instance:** a second copy of the app on real hardware now shows "already running" and exits before
   touching anything. Two copies started 6 s apart that day.
+
+## Amendment (2026-11-23): the single-instance guard sees a copy started from another app's container
+- **What happened:** the guard was a lock file next to the settings, in `%LOCALAPPDATA%\OpenEVOS`.
+  - A copy started from inside a packaged (MSIX) app, such as a terminal in the Claude desktop app, sees that folder
+    through the packaged app's private copy, where new files land.
+  - Each copy then found only its own lock file, so both could run.
+  - A copy started with another `--settings` missed the lock file too.
+- **The fix:** `src/openevos/ui/instance_guard.py`.
+  - On Windows a named kernel object (`Local\OpenEVOS-instrument`, the logon session's namespace) is taken first,
+    then the lock file as before. The lock file still records the PID and is the only guard off Windows.
+  - The named object is a one-byte Qt shared-memory section (`QSharedMemory` with a native key), not a mutex made
+    through `ctypes`: the UI package stays free of FFI (`tests/test_phase2_import_guard.py`).
+  - Kernel object names are shared across that boundary. This was checked both ways on the instrument PC, then
+    with this code: a copy inside the container held the guard, and one started through Explorer with its own
+    settings folder was refused.
+  - The named section is the same whatever `--settings` a copy uses. The kernel drops it when its holder exits, crashed or
+    not.
+  - `main()` releases both guards however the app ends, a startup exception included.
+- **Not fixed here:** a copy started inside a container still keeps its own settings, logs and MCP token. Start the
+  app from its shortcut (`tools/create_shortcuts.ps1`).
+- **Tests:** `tests/test_instance_guard.py` and `tests/test_app_launch_branches.py`. Tests use their own section name,
+  so they are never refused by the app running on the same PC, and never block it.
 
 ## Not changed
 - No firmware, EEPROM, setup or speed write. The PC-side travel box and the drift monitor (ADR-0040) are unchanged.

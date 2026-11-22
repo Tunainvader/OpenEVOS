@@ -12,6 +12,15 @@ from pathlib import Path
 
 
 def main(argv: list[str] | None = None) -> int:
+    held: list = []  # the instance guard once taken: released however the app ends, a startup failure included
+    try:
+        return _main(argv, held)
+    finally:
+        for guard in held:
+            guard.release()
+
+
+def _main(argv: list[str] | None, held: list) -> int:
     ap = argparse.ArgumentParser(prog="openevos", description="OpenEVOS desktop app (simulators, or the real instrument "  # noqa: E501
                                  "with --motor-telemetry/--motor-control, the real cameras and LED board)")
     ap.add_argument("--settings", type=Path, default=None, help="settings JSON (default: user config dir)")
@@ -74,19 +83,16 @@ def main(argv: list[str] | None = None) -> int:
                          "(ADR-0056)")
     args = ap.parse_args(argv)
     console_log = _keep_console_output(args.settings)
-    # one app per instrument: a second copy would fight the first for COM3 and the LED board (2026-11-18: two copies
-    # started 6 s apart after a power cycle). Checked before anything touches the hardware.
-    instance_lock = None
+    # one app per instrument (instance_guard: a lock file, and on Windows a named kernel section that a copy started
+    # from inside another app's container still sees). Checked before anything touches the hardware.
+    guard = None
     real_hw = (args.motor_telemetry and str(args.motor_telemetry).lower() != "sim") or args.illumination == "real"
     if real_hw and args.screenshot_dir is None:
-        from PySide6.QtCore import QLockFile
-
         from openevos.instrument.settings import default_settings_path
+        from openevos.ui.instance_guard import InstanceGuard
 
-        lock_path = (args.settings or default_settings_path()).with_name("openevos-instrument.lock")
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        instance_lock = QLockFile(str(lock_path))
-        if not instance_lock.tryLock(300):
+        guard = InstanceGuard(args.settings or default_settings_path())
+        if not guard.acquire():
             from PySide6.QtWidgets import QApplication, QMessageBox
 
             _app = QApplication.instance() or QApplication(sys.argv[:1])
@@ -94,11 +100,15 @@ def main(argv: list[str] | None = None) -> int:
                                 "window, or close it before starting another (only one program can own the motor port "
                                 "and the LED board).")
             return 1
+        held.append(guard)
     launch_notes: list[tuple[str, str]] = []  # also written to the session fault log once it is open
 
     def note(step: str, text: str) -> None:
         launch_notes.append((step, text))
         print(text, file=sys.stderr, flush=True)
+
+    if guard is not None and guard.note:
+        note("instance_guard", guard.note)
 
     if (args.illumination != "sim" and not args.no_led_autostart and args.screenshot_dir is None
             and sys.platform == "win32"):
@@ -225,8 +235,7 @@ def main(argv: list[str] | None = None) -> int:
             telemetry_log.close()  # after shutdown: the devices disconnecting is on record too
         if fault_log is not None:
             fault_log.close()
-        if instance_lock is not None:
-            instance_lock.unlock()
+        # the instance guard is released by main(), after this
 
 
 def _keep_console_output(settings: Path | None) -> Path | None:

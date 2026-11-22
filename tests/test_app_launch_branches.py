@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from openevos.ui import app as appmod
@@ -62,3 +64,29 @@ def test_second_instance_on_real_hardware_is_refused(monkeypatch, tmp_path, stop
     shown.clear()
     assert _run(["--settings", str(settings), "--illumination", "real", "--no-led-autostart"]) == "stopped"
     assert not shown
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="named section: Windows only")
+def test_a_copy_with_another_settings_folder_is_refused_too(monkeypatch, tmp_path, stop_at_illumination):
+    """A copy started from inside a packaged app (a terminal in the Claude desktop app) found its own lock file, not
+    the shortcut copy's (2026-11-23). The named section refuses it whatever lock file it sees."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from openevos.ui.instance_guard import InstanceGuard
+
+    shown = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a: shown.append(a[2]))
+    first = InstanceGuard(tmp_path / "shortcut" / "s.json")
+    second = ["--settings", str(tmp_path / "container" / "s.json"), "--illumination", "real", "--no-led-autostart"]
+    assert first.acquire()  # the first app
+    try:
+        assert _run(second) == 1
+        assert shown and "already running" in shown[0]
+    finally:
+        first.release()
+    shown.clear()
+    assert _run(second) == "stopped"  # starts once the first is gone; stopped by the test before the session
+    assert not shown
+    after = InstanceGuard(tmp_path / "container" / "s.json")
+    assert after.acquire()  # main() released its guard although it ended in an exception
+    after.release()

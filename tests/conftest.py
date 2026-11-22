@@ -30,6 +30,15 @@ from openevos.inspector.evidence import EvidenceRegister
 FIX = Path(__file__).parent / "fixtures" / "windows"
 
 
+@pytest.fixture(autouse=True)
+def _own_instance_section(monkeypatch):
+    """main() with real-hardware arguments takes the app's one-copy guard, whose Windows named section is per logon
+    session. Tests get their own name: never refused while the instrument app is open on this PC, never blocking it."""
+    from openevos.ui import instance_guard
+
+    monkeypatch.setattr(instance_guard, "SECTION_NAME", f"Local\\OpenEVOS-instrument-test-{os.getpid()}")
+
+
 def load(name: str):
     return json.loads((FIX / name).read_text("utf-8"))
 
