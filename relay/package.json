@@ -1,0 +1,19 @@
+{
+  "name": "openevos-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Relay that lets Claude reach the read-only OpenEVOS MCP link on another PC (ADR-0062)",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "1.3.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4",
+    "typescript": "^5",
+    "wrangler": "^4"
+  }
+}

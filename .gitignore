@@ -47,3 +47,8 @@ backups/
 .env
 *.key
 redaction.key
+
+# --- MCP relay (ADR-0062): dependencies, local state and local secrets ---
+relay/node_modules/
+relay/.wrangler/
+relay/.dev.vars

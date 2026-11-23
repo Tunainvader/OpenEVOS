@@ -7,8 +7,11 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import sys
+import threading
 from pathlib import Path
+from typing import ClassVar
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -75,6 +78,11 @@ def _main(argv: list[str] | None, held: list) -> int:
                          "it then listens on all interfaces and answers only loopback and these addresses, still "
                          "with the bearer token. Plain HTTP: a trusted lab network only, and allow the port in "
                          "Windows Firewall for that address")
+    ap.add_argument("--mcp-relay", metavar="URL", default=None,
+                    help="also make the READ-ONLY MCP link reachable through an OpenEVOS relay (ADR-0062), e.g. "
+                         "https://openevos-relay.<you>.workers.dev: the app connects out (no open port), and Claude "
+                         "on any PC adds <URL>/mcp as a custom connector, signing in with a code this app shows in "
+                         "its log. Starts the link on the default port if --mcp is not given")
     ap.add_argument("--no-led-autostart", action="store_true",
                     help="do not start the LED board application at launch. By default, a board found in its "
                          "bootloader (0DAD:0057, its power-up state) is started with the reviewed version query + "
@@ -207,10 +215,15 @@ def _main(argv: list[str] | None, held: list) -> int:
         except OSError as exc:
             print(f"telemetry log unavailable: {exc}", file=sys.stderr, flush=True)
     mcp_link, mcp_note = None, None
+    relay_log = _RelayLog(fault_log)
+    if args.mcp_relay and args.mcp is None:
+        args.mcp = 8765
     if args.mcp is not None and not args.screenshot_dir:
         mcp_link, mcp_note = _start_mcp_link(session, args.mcp, fault_log=fault_log, show_token=console_log is None,
-                                             allow_clients=tuple(args.mcp_allow))
+                                             allow_clients=tuple(args.mcp_allow), relay=args.mcp_relay,
+                                             relay_listener=relay_log if args.mcp_relay else None)
     model = SessionModel(session)
+    relay_log.attach(model)
     if mcp_note:
         model.add_log("warn", mcp_note)
     model.scans_dir = args.scans_dir  # read by the Diagnostics page
@@ -234,6 +247,8 @@ def _main(argv: list[str] | None, held: list) -> int:
         return app.exec()
     finally:
         if mcp_link:
+            if len(mcp_link) > 3 and mcp_link[3] is not None:
+                mcp_link[3].stop()  # the relay first: no request arrives for a link that is closing
             mcp_link[0].stop()
             mcp_link[1].close()
         session.shutdown()
@@ -273,13 +288,55 @@ def _keep_console_output(settings: Path | None) -> Path | None:
     return kept
 
 
-def _start_mcp_link(session, port: int, *, fault_log=None, show_token: bool = True, allow_clients=()):
+class _RelayLog:
+    """Relay events (from its thread) into the app's log. Until the window's model exists they wait in a list.
+    Sign-in codes are shown prominently; connections also go to the session fault log; codes never do."""
+
+    LEVELS: ClassVar[dict[str, str]] = {"pair_code": "warn", "error": "error", "disconnected": "warn",
+                                         "connected": "info", "notice": "warn", "call": "info"}
+
+    def __init__(self, fault_log=None):
+        self._fault_log = fault_log
+        self._model = None
+        self._early: list[tuple[str, str]] = []
+        self._lock = threading.Lock()
+
+    def __call__(self, kind: str, detail: str) -> None:
+        text = {"pair_code": f"Relay sign-in code: {detail}. Type it on the page Claude opened.",
+                "connected": f"Relay connected: Claude can reach this read-only link at {detail}",
+                "disconnected": f"Relay connection lost ({detail}); retrying",
+                "error": f"Relay: {detail}", "notice": f"Relay: {detail}",
+                "call": f"Relay request: {detail}"}.get(kind, f"Relay {kind}: {detail}")
+        if self._fault_log is not None and kind in ("connected", "disconnected", "error", "notice"):
+            with contextlib.suppress(Exception):  # logging must not break the relay thread
+                self._fault_log.write("mcp_relay", event=kind, message=detail)
+        with self._lock:
+            model = self._model
+            if model is None:
+                self._early.append((kind, text))
+                return
+        model.dispatcher(lambda: self._show(model, kind, text))
+
+    def _show(self, model, kind: str, text: str) -> None:
+        model.add_log(self.LEVELS.get(kind, "info"), text)
+
+    def attach(self, model) -> None:
+        with self._lock:
+            self._model, early = model, self._early
+            self._early = []
+        for kind, text in early:
+            self._show(model, kind, text)
+
+
+def _start_mcp_link(session, port: int, *, fault_log=None, show_token: bool = True, allow_clients=(), relay=None,
+                    relay_listener=None):
     """Start the read-only MCP link. It is optional: when it cannot start (port taken, a library failure) the app still
     opens, and the reason goes to stderr, the session fault log and the app's log. Returns (link, note)."""
     from openevos.mcp_link.cli import start_for_session
 
     try:
-        link = start_for_session(session, port=port, allow_clients=allow_clients)
+        options = {"relay": relay, "relay_listener": relay_listener} if relay else {}
+        link = start_for_session(session, port=port, allow_clients=allow_clients, **options)
     except Exception as exc:  # noqa: BLE001 - the optional link must never stop the instrument app
         note = f"MCP link not started: {exc}"
         print(note, file=sys.stderr, flush=True)

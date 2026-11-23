@@ -177,6 +177,7 @@ All 56 architecture decision records in [`docs/decisions`](docs/decisions), newe
 - [ADR-0057](docs/decisions/ADR-0057-operator-stage-lock-release.md): Operator release of a small stage-drift lock (amends ADR-0040)
 - [ADR-0058](docs/decisions/ADR-0058-xy-software-rehome.md): X/Y software re-home during a stage lock (amends ADR-0040)
 - [ADR-0059](docs/decisions/ADR-0059-track-and-correct-cross-axis-knock.md): Track and correct a small cross-axis knock instead of locking (amends ADR-0040)
+- [ADR-0062](docs/decisions/ADR-0062-mcp-relay.md): Relay for the read-only MCP link (reach from another PC)
 
 ## AI assistant link (MCP, read-only)
 
@@ -189,6 +190,8 @@ claude mcp add --transport http openevos http://127.0.0.1:8765/mcp --header "Aut
 ```
 
 The token is stored once in the OpenEVOS config folder and stays the same between launches (delete the `mcp_token` file to issue a new one). For an assistant on **another PC**, add `--mcp-allow <that PC's IP>` (repeatable): the link then listens on the network, answers only loopback and the listed addresses, and still needs the token. It is plain HTTP, so use it on a trusted lab network only, and allow the port (8765) in Windows Firewall for that address.
+
+**From any computer, through a relay.** `openevos --mcp-relay https://openevos-relay.<you>.workers.dev` also connects the link out to a small relay you deploy in your own Cloudflare account ([relay/README.md](relay/README.md)). Claude on any PC (claude.ai, Claude Desktop, Claude Code) then adds `<relay>/mcp` as a custom connector and signs in with an 8-digit code that OpenEVOS shows in its log, or an owner passphrase. No port is opened on the microscope PC, the tools stay read-only, and `openevos-mcp --relay-revoke <relay>` removes every sign-in. Images Claude reads then pass through Cloudflare and Anthropic. See [ADR-0062](docs/decisions/ADR-0062-mcp-relay.md).
 
 `openevos-mcp` runs the same tools on a headless simulator (stdio by default, `--http` for loopback HTTP) and never opens hardware. Tools: `describe_api`, `get_state`, `get_events`, `probe`, `stage_monitor`, `list_images`, `get_image`. See [ADR-0054](docs/decisions/ADR-0054-read-only-mcp-link.md).
 
