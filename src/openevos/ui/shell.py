@@ -42,6 +42,7 @@ from openevos.instrument.settings import HotButtonAction
 from openevos.ui import theme
 from openevos.ui.common import label
 from openevos.ui.icons import icon
+from openevos.ui.instrument_mode import instrument_mode
 from openevos.ui.session_model import SessionModel
 from openevos.ui.widgets.status import Badge, HealthSummary, StatusPill
 
@@ -147,7 +148,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.model = model
         self.session = model.session
-        self.setWindowTitle(f"OpenEVOS {__version__} — {self.session.profile.name}")
+        # what is real, from each device's backend: title, header, chip, footer and About all say the same
+        self.mode = instrument_mode(self.session)
+        self.setWindowTitle(f"OpenEVOS {__version__} — {self.mode.name}")
         self.resize(1600, 960)
         self.setMinimumSize(1100, 720)  # below this the three Capture panels overlap (Impeccable audit 2026-11-18)
         self.commands: dict[str, Cmd] = {}
@@ -195,7 +198,7 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(14, 6, 10, 6)
         lay.setSpacing(8)
         lay.addWidget(label("OpenEVOS", "brand"))
-        self.lbl_profile = label(f"{self.session.profile.model} · {self.session.profile.name}", "muted")
+        self.lbl_profile = label(f"{self.session.profile.model} · {self.mode.name}", "muted")
         lay.addWidget(self.lbl_profile)
         lay.addStretch(1)
         p = self.session.profile
@@ -470,28 +473,8 @@ class MainWindow(QMainWindow):
         search.setIcon(icon("search"))
         search.clicked.connect(self.open_palette)
         cl.addWidget(search)
-        emulated = any(getattr(s, "emulated", False) for s in getattr(self.session, "telemetry", []) or [])
-        if emulated:
-            text, kind = "SIM + EMULATED DRIVES", "simulated"
-            tip = ("The motor drives are an emulator (--motor-telemetry sim): nothing physical moves. Stage, focus and "
-                   "turret behave like the drives but every value is simulated.")
-        elif getattr(self.session, "physical_stage", False):
-            text, kind = "SIM + PHYSICAL X/Y STAGE", "warn"
-            svc = self.session.telemetry[0] if self.session.telemetry else None
-            tip = ("The X/Y stage is the REAL instrument stage (ADR-0024/0029): the joystick, jogs and Stop move it, "
-                   f"inside the {getattr(svc, 'travel_box_note', 'power-up box')} and through the safety checks. "
-                   "Cameras, light, focus and turret are simulators; frames are synthetic and labelled SIMULATED.")
-        elif getattr(self.session, "telemetry", None):
-            text, kind = "SIM + MOTOR TELEMETRY", "simulated"
-            tip = ("All controls act on simulators. The real motor drives are read live for display only "
-                   "(ADR-0023); nothing is sent to them.")
-        elif self.session.simulated:
-            text, kind = "SIMULATION BACKEND", "simulated"
-            tip = "All devices are simulators. Frames are synthetic and labelled SIMULATED."
-        else:
-            text, kind, tip = "PHYSICAL BACKEND", "warn", "Physical backend"
-        self.mode_badge = Badge(text, kind)
-        self.mode_badge.setToolTip(tip)
+        self.mode_badge = Badge(self.mode.badge, self.mode.state)
+        self.mode_badge.setToolTip(self.mode.tooltip)
         cl.addWidget(self.mode_badge)
         self._corner = corner  # PySide does not transfer ownership of corner widgets: keep a reference
         mb.setCornerWidget(corner, Qt.TopRightCorner)
@@ -824,17 +807,13 @@ class MainWindow(QMainWindow):
         from openevos.ui.dialogs import InfoDialog
 
         InfoDialog("About OpenEVOS", f"OpenEVOS {__version__}\nOpen-source diagnostics and control for the EVOS FL "
-                   "Auto (AMAFD1000).\nSimulation backend: no physical hardware is commanded.\n\nInterface design "
+                   f"Auto (AMAFD1000).\n{self.mode.about}\n\nInterface design "
                    "system: Craftimon Lab tokens (Inter, JetBrains Mono — SIL OFL 1.1).", self).exec()
 
     # ================================================================== status
     def _tick(self) -> None:
         s, m = self.session, self.model
-        emulated = any(getattr(t, "emulated", False) for t in getattr(s, "telemetry", []) or [])
-        kind = ("SIM+EMULATED DRIVES" if emulated else "SIM+STAGE" if getattr(s, "physical_stage", False)
-                else "SIM+TELEMETRY"
-                if getattr(s, "telemetry", None) else "SIM" if s.simulated else "HW")
-        self.f_session.setText(f"SESSION {kind} · {s.vessel.display_name}")
+        self.f_session.setText(f"SESSION {self.mode.footer} · {s.vessel.display_name}")
         n = len(m.active_commands)
         self.f_bus.setText(f"COMMAND BUS: {'IDLE' if n == 0 else f'{n} ACTIVE'}")
         self.f_bus.setStyleSheet(f"color: {theme.OK if n == 0 else theme.ACCENT_TX};")

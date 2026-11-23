@@ -80,7 +80,7 @@ def test_every_workspace_renders(app, window):
         window.navigate(k)
         pump(app, 0.05)
         assert not window.grab().isNull()
-    assert window.mode_badge.text == "SIMULATION BACKEND"
+    assert window.mode_badge.text == "SIMULATION"
 
 
 def test_live_view_and_capture_through_router(app, window):

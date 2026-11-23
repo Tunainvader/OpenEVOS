@@ -85,7 +85,7 @@ def test_an_mcp_link_that_cannot_start_does_not_stop_the_app(sim, tmp_path, monk
     from openevos.mcp_link import cli
     from openevos.ui.app import _start_mcp_link
 
-    def broken(session, *, port):
+    def broken(session, *, port, **_options):  # allow_clients etc. (--mcp-allow, fdce3ea)
         raise RuntimeError(f"MCP link failed to start on http://127.0.0.1:{port}/mcp (port in use?)")
 
     monkeypatch.setattr(cli, "start_for_session", broken)
@@ -107,7 +107,7 @@ def test_the_token_stays_out_of_a_console_log(monkeypatch, capsys):
     from openevos.ui.app import _start_mcp_link
 
     link = (SimpleNamespace(url="http://127.0.0.1:8765/mcp"), object(), f'--header "Authorization: Bearer {TOKEN}"')
-    monkeypatch.setattr(cli, "start_for_session", lambda session, *, port: link)
+    monkeypatch.setattr(cli, "start_for_session", lambda session, *, port, **_options: link)
     assert _start_mcp_link(None, 8765, show_token=False) == (link, None)
     err = capsys.readouterr().err
     assert "http://127.0.0.1:8765/mcp" in err and TOKEN not in err
