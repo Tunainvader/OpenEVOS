@@ -1,8 +1,9 @@
 """Local Streamable HTTP endpoint for the MCP link (ADR-0054).
 
-Loopback only, bearer token, Host/Origin checks:
+Loopback by default, bearer token, Host/Origin checks:
 
-* binds 127.0.0.1; any other host is refused at construction;
+* binds 127.0.0.1; with an explicit allowlist of remote client IPs (`allow_clients`, the app's --mcp-allow) it binds
+  all interfaces and answers only loopback and those IPs (403 for anyone else) - for an assistant on another PC;
 * every request needs ``Authorization: Bearer <token>`` (constant-time compare), else 401;
 * the SDK's transport security rejects a foreign Host (421) and any browser Origin (403), which
   stops a web page from reaching the endpoint by DNS rebinding.
@@ -73,17 +74,50 @@ class BearerAuth:
         await self.app(scope, receive, send)
 
 
-def build_asgi(mcp, *, port: int, token: str, path: str = "/mcp"):
+class ClientAllowlist:
+    """ASGI middleware: 403 unless the peer is loopback or one of the allowed remote IPs."""
+
+    def __init__(self, app, clients):
+        self.app = app
+        self._ok = {LOOPBACK, "::1", *clients}
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and (scope.get("client") or ("",))[0] not in self._ok:
+            while True:
+                msg = await receive()
+                if msg["type"] != "http.request" or not msg.get("more_body"):
+                    break
+            await send({"type": "http.response.start", "status": 403, "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": b"client address not allowed"})
+            return
+        await self.app(scope, receive, send)
+
+
+def local_addresses() -> list[str]:
+    """This PC's IPv4 addresses and host name (what a remote client puts in its Host header)."""
+    name = socket.gethostname()
+    try:
+        ips = {str(ai[4][0]) for ai in socket.getaddrinfo(name, None, socket.AF_INET)}
+    except OSError:
+        ips = set()
+    return sorted(ips - {LOOPBACK}) + [name]
+
+
+def build_asgi(mcp, *, port: int, token: str, path: str = "/mcp", allow_clients: tuple[str, ...] = ()):
     from mcp.server.transport_security import TransportSecuritySettings
 
+    hosts = [f"{LOOPBACK}:{port}", f"localhost:{port}"]
+    if allow_clients:
+        hosts += [f"{a}:{port}" for a in local_addresses()]
     security = TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
-        allowed_hosts=[f"{LOOPBACK}:{port}", f"localhost:{port}"],
+        allowed_hosts=hosts,
         allowed_origins=[],  # no browser origin is ever allowed; native clients send none
     )
     app = mcp.streamable_http_app(streamable_http_path=path, stateless_http=True, json_response=True,
                                   transport_security=security, host=LOOPBACK)
-    return BearerAuth(app, token)
+    app = BearerAuth(app, token)
+    return ClientAllowlist(app, allow_clients) if allow_clients else app
 
 
 def free_port() -> int:
@@ -96,18 +130,23 @@ class LocalMcpService:
     """Run an MCPServer on http://127.0.0.1:<port>/mcp in a background thread."""
 
     def __init__(self, mcp, *, port: int = DEFAULT_PORT, token: str, host: str = LOOPBACK,
-                 path: str = "/mcp"):
+                 path: str = "/mcp", allow_clients: tuple[str, ...] = ()):
         if host != LOOPBACK:
-            raise ValueError("the MCP link binds to 127.0.0.1 only (ADR-0054)")
+            raise ValueError("the MCP link binds to 127.0.0.1, or all interfaces with allow_clients (ADR-0054)")
+        import ipaddress
+
         import uvicorn
 
+        allow_clients = tuple(str(ipaddress.ip_address(a.strip())) for a in allow_clients)  # IPs only, no ranges
+        bind = "0.0.0.0" if allow_clients else LOOPBACK  # only allowlisted IPs are answered
         self.port = port or free_port()
         self.path = path
         self.url = f"http://{LOOPBACK}:{self.port}{path}"
-        app = build_asgi(mcp, port=self.port, token=token, path=path)
+        self.remote_urls = [f"http://{a}:{self.port}{path}" for a in local_addresses()] if allow_clients else []
+        app = build_asgi(mcp, port=self.port, token=token, path=path, allow_clients=allow_clients)
         # use_colors=False: otherwise uvicorn's log formatter calls sys.stdout.isatty(), and under pythonw (the Desktop
         # shortcut) sys.stdout is None, so the app with --mcp exited at start (2026-11-23)
-        config = uvicorn.Config(app, host=LOOPBACK, port=self.port, log_level="warning", lifespan="on",
+        config = uvicorn.Config(app, host=bind, port=self.port, log_level="warning", lifespan="on",
                                 access_log=False, use_colors=False)
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(target=self._server.run, name="openevos-mcp", daemon=True)

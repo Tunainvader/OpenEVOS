@@ -188,6 +188,8 @@ openevos --mcp            # http://127.0.0.1:8765/mcp
 claude mcp add --transport http openevos http://127.0.0.1:8765/mcp --header "Authorization: Bearer <token>"
 ```
 
+The token is stored once in the OpenEVOS config folder and stays the same between launches (delete the `mcp_token` file to issue a new one). For an assistant on **another PC**, add `--mcp-allow <that PC's IP>` (repeatable): the link then listens on the network, answers only loopback and the listed addresses, and still needs the token. It is plain HTTP, so use it on a trusted lab network only, and allow the port (8765) in Windows Firewall for that address.
+
 `openevos-mcp` runs the same tools on a headless simulator (stdio by default, `--http` for loopback HTTP) and never opens hardware. Tools: `describe_api`, `get_state`, `get_events`, `probe`, `stage_monitor`, `list_images`, `get_image`. See [ADR-0054](docs/decisions/ADR-0054-read-only-mcp-link.md).
 
 ## Phase 2.1 command core (merged from v0.2.0)

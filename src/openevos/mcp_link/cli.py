@@ -16,16 +16,17 @@ import sys
 from openevos import __version__
 
 
-def connect_hint(url: str, token: str) -> str:
+def connect_hint(url: str, token: str, remote_urls: list[str] | None = None) -> str:
     from openevos.mcp_link.local_http import token_path
 
-    return (f"OpenEVOS MCP link (read-only) at {url}\n"
+    remote = "".join(f"  from the allowed PCs: {u}\n" for u in remote_urls or [])
+    return (f"OpenEVOS MCP link (read-only) at {url}\n{remote}"
             f"  Claude Code:  claude mcp add --transport http openevos {url} "
             f'--header "Authorization: Bearer {token}"\n'
             f"  token file: {token_path()} (keep it private; delete it to issue a new token)")
 
 
-def start_for_session(session, *, port: int):
+def start_for_session(session, *, port: int, allow_clients: tuple[str, ...] = ()):
     """Start the HTTP link for an existing session (used by the app). Returns (service, view, hint)."""
     from openevos.mcp_link.local_http import LocalMcpService, load_or_create_token
     from openevos.mcp_link.server import build_server
@@ -34,11 +35,12 @@ def start_for_session(session, *, port: int):
     view = InstrumentView(session)
     try:
         token = load_or_create_token()
-        svc = LocalMcpService(build_server(view, version=__version__), port=port, token=token).start()
+        svc = LocalMcpService(build_server(view, version=__version__), port=port, token=token,
+                              allow_clients=allow_clients).start()
     except BaseException:
         view.close()  # a link that did not start leaves nothing listening to the session
         raise
-    return svc, view, connect_hint(svc.url, token)
+    return svc, view, connect_hint(svc.url, token, svc.remote_urls)
 
 
 def main(argv: list[str] | None = None) -> int:

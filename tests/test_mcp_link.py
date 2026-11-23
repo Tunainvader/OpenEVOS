@@ -215,6 +215,50 @@ def test_http_refuses_non_loopback_bind(sim):
         LocalMcpService(build_server(sim[1]), port=0, token=TOKEN, host="0.0.0.0")
 
 
+def test_remote_clients_must_be_listed_ip_addresses(sim):
+    from openevos.mcp_link.local_http import LocalMcpService
+
+    with pytest.raises(ValueError):
+        LocalMcpService(build_server(sim[1]), port=0, token=TOKEN, allow_clients=("10.0.0.0/8",))
+    with pytest.raises(ValueError):
+        LocalMcpService(build_server(sim[1]), port=0, token=TOKEN, allow_clients=("lab-pc",))
+
+
+def test_allowlist_answers_listed_clients_only():
+    from openevos.mcp_link.local_http import ClientAllowlist
+
+    async def app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    gate = ClientAllowlist(app, ("192.168.1.20",))
+
+    def status(client):
+        sent = []
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(msg):
+            sent.append(msg)
+        anyio.run(gate, {"type": "http", "client": (client, 5000)}, receive, send)
+        return sent[0]["status"]
+    assert status("192.168.1.20") == 200 and status("127.0.0.1") == 200
+    assert status("192.168.1.21") == 403
+
+
+def test_remote_link_still_needs_the_token_and_answers_loopback(sim):
+    from openevos.mcp_link.local_http import LocalMcpService
+
+    svc = LocalMcpService(build_server(sim[1]), port=0, token=TOKEN, allow_clients=("192.168.1.20",)).start()
+    try:
+        assert svc.remote_urls
+        assert _post(svc.url, {}) == 401
+        assert _post(svc.url, {"Authorization": f"Bearer {TOKEN}"}) == 200
+    finally:
+        svc.stop()
+
+
 def test_http_requires_token(http_link):
     assert _post(http_link.url, {}) == 401
     assert _post(http_link.url, {"Authorization": "Bearer wrong"}) == 401

@@ -70,6 +70,11 @@ def _main(argv: list[str] | None, held: list) -> int:
                     help="serve the READ-ONLY MCP link for AI assistants on http://127.0.0.1:PORT/mcp (default "
                          "8765) with a bearer token; prints the `claude mcp add` command. The assistant can read "
                          "state, events, telemetry and images and can command nothing (ADR-0003, ADR-0054)")
+    ap.add_argument("--mcp-allow", action="append", default=[], metavar="IP",
+                    help="let the AI assistant on another PC (this IP address; repeat for more) reach the MCP link: "
+                         "it then listens on all interfaces and answers only loopback and these addresses, still "
+                         "with the bearer token. Plain HTTP: a trusted lab network only, and allow the port in "
+                         "Windows Firewall for that address")
     ap.add_argument("--no-led-autostart", action="store_true",
                     help="do not start the LED board application at launch. By default, a board found in its "
                          "bootloader (0DAD:0057, its power-up state) is started with the reviewed version query + "
@@ -203,7 +208,8 @@ def _main(argv: list[str] | None, held: list) -> int:
             print(f"telemetry log unavailable: {exc}", file=sys.stderr, flush=True)
     mcp_link, mcp_note = None, None
     if args.mcp is not None and not args.screenshot_dir:
-        mcp_link, mcp_note = _start_mcp_link(session, args.mcp, fault_log=fault_log, show_token=console_log is None)
+        mcp_link, mcp_note = _start_mcp_link(session, args.mcp, fault_log=fault_log, show_token=console_log is None,
+                                             allow_clients=tuple(args.mcp_allow))
     model = SessionModel(session)
     if mcp_note:
         model.add_log("warn", mcp_note)
@@ -267,13 +273,13 @@ def _keep_console_output(settings: Path | None) -> Path | None:
     return kept
 
 
-def _start_mcp_link(session, port: int, *, fault_log=None, show_token: bool = True):
+def _start_mcp_link(session, port: int, *, fault_log=None, show_token: bool = True, allow_clients=()):
     """Start the read-only MCP link. It is optional: when it cannot start (port taken, a library failure) the app still
     opens, and the reason goes to stderr, the session fault log and the app's log. Returns (link, note)."""
     from openevos.mcp_link.cli import start_for_session
 
     try:
-        link = start_for_session(session, port=port)
+        link = start_for_session(session, port=port, allow_clients=allow_clients)
     except Exception as exc:  # noqa: BLE001 - the optional link must never stop the instrument app
         note = f"MCP link not started: {exc}"
         print(note, file=sys.stderr, flush=True)
