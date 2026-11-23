@@ -944,7 +944,7 @@ class ZFocusPanel(QWidget):
         """The objective's safe height: an amber band on the tape above it, and an amber readout while Z is above."""
         above = limit_um is not None and z is not None and z > limit_um + 1e-6
         t = theme.current()
-        key = (limit_um, objective, above, z, t.name)
+        key = (limit_um, objective, above, z, t)  # the whole token set: a preset or high contrast also repaints
         if key == getattr(self, "_limit_key", None):
             return
         self._limit_key = key

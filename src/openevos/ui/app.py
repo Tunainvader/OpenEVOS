@@ -193,8 +193,9 @@ def _main(argv: list[str] | None, held: list) -> int:
                                 cameras=cameras or None, illumination=illumination)
     if args.theme:
         session.settings.basic.theme = args.theme
-    name = session.settings.basic.theme
-    theme.apply_theme(("dark" if theme.system_prefers_dark(app) else "light") if name == "system" else name, app)
+    built = theme.apply_settings(session.settings.basic, app)  # mode + colour theme + high contrast (ADR-0063)
+    if built.warnings:
+        print("theme: " + " ".join(built.warnings), file=sys.stderr, flush=True)
     fault_log = None
     if settings_path is not None and not args.screenshot_dir:
         from openevos.acquisition.session_log import SessionLog

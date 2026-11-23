@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -184,6 +185,12 @@ class SystemBasicSettings(BaseModel):
     gas: GasConnections = Field(default_factory=GasConnections)
     # OpenEVOS interface preferences (Craftimon conventions)
     theme: str = "dark"  # "dark" | "light" | "system"
+    #: colour theme (ADR-0063): a preset id from ui.theme_engine.PRESETS, or "custom" for `theme_custom`
+    theme_preset: str = Field(default="lab", pattern=r"^[a-z0-9][a-z0-9-]{0,31}$")
+    #: the custom theme's spec (main colour, accents, neutral tint), checked by the theme engine when applied
+    theme_custom: dict[str, Any] | None = None
+    #: high contrast: text >= 7:1 and control borders >= 4.5:1 in either mode
+    high_contrast: bool = False
     navigation: str = "auto"  # "auto" (rail below 1360 px) | "expanded" | "rail"
     scientific_display: bool = True  # linear display transforms only; display log saved with images
     #: Capture › Histogram toolbar toggle: the levels histogram and Auto range under the live image

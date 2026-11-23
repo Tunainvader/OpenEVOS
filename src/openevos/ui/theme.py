@@ -98,6 +98,11 @@ QFrame#tooldiv {{ background: {t.bd}; border: none; margin: 6px 0; }}
 QToolButton#tool {{ padding: 4px 6px; font-size: 11px; font-weight: 500; color: {t.t2}; }}
 QToolButton#tool:hover {{ color: {t.acc_tx}; }}
 QToolButton#tool:checked {{ color: {t.acc_tx}; font-weight: 600; }}
+QToolButton#swatch {{ background: transparent; border: 1px solid transparent; border-radius: {r['button']}px;
+    padding: 2px 6px; font-size: 11px; color: {t.t2}; min-width: 44px; }}
+QToolButton#swatch:hover {{ background: {t.s2}; color: {t.tx}; border: 1px solid transparent; }}
+QToolButton#swatch:checked {{ color: {t.acc_tx}; font-weight: 600; background: transparent; border: 1px solid transparent; }}
+QToolButton#swatch:focus {{ border: 2px solid {t.focus}; }}
 QFrame#footer {{ background: {t.s1}; border: none; border-top: 1px solid {t.bd}; }}
 QFrame#viewport {{ background: {t.stage}; border: 1px solid {t.bd}; border-radius: {r['control']}px; }}
 QLabel#title {{ font-size: {px('title')}px; font-weight: 600; }}
@@ -237,6 +242,33 @@ def apply_theme(name_or_tokens: str | tk.Tokens, app=None) -> tk.Tokens:
             for child in w.findChildren(QWidget):
                 child.update()
     return _T
+
+
+LAST_BUILD = None  # the theme_engine.Built behind the current tokens (None until apply_settings)
+
+
+def resolve(basic, app=None):
+    """The built theme the saved interface settings ask for: mode (dark, light or the system's), colour theme and
+    high contrast (ADR-0063). Never raises for a damaged saved theme: it falls back to Lab and says so."""
+    from openevos.ui import theme_engine as te
+
+    mode = basic.theme
+    if mode == "system":
+        mode = "dark" if (app is None or system_prefers_dark(app)) else "light"
+    spec, note = te.spec_from_settings(getattr(basic, "theme_preset", "lab"), getattr(basic, "theme_custom", None))
+    built = te.build(spec, mode, high_contrast=bool(getattr(basic, "high_contrast", False)))
+    if note:
+        built.warnings.insert(0, note[0].upper() + note[1:] + ".")
+    return built
+
+
+def apply_settings(basic, app=None):
+    """Build and apply the theme the settings name; returns the theme_engine.Built (adjustments, warnings, checks)."""
+    global LAST_BUILD
+    built = resolve(basic, app)
+    apply_theme(built.tokens, app)
+    LAST_BUILD = built
+    return built
 
 
 def paint_surface(p, rect, radius: float, *, inset: bool = False, control: bool = True, fill: str | None = None) -> None:  # noqa: E501

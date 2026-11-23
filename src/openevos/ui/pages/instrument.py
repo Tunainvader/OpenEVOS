@@ -38,6 +38,7 @@ from openevos.instrument.settings import GasPort1, HotButtonAction, ImageFormat
 from openevos.ui import theme
 from openevos.ui.common import empty_hint, hbox, label, panel
 from openevos.ui.widgets.param import ParamRow
+from openevos.ui.widgets.theme_picker import ThemePicker
 
 
 def _table(headers: list[str]) -> QTableWidget:
@@ -903,6 +904,9 @@ class SettingsPage(QWidget):
         th.setCurrentIndex(th.findData(b.theme))
         th.currentIndexChanged.connect(lambda _=0: self._theme(th.currentData()))
         form.addRow("Theme", th)
+        self.theme_picker = ThemePicker(self.session)  # colour theme, high contrast, theme files (ADR-0063)
+        self.model.settings_changed.connect(self.theme_picker.refresh)
+        form.addRow("Colours", self.theme_picker)
         nv = QComboBox()
         for k, t in (("auto", "Automatic (icons below 1440 px)"), ("expanded", "Icons and labels"), ("rail", "Icons only")):  # noqa: E501
             nv.addItem(t, k)

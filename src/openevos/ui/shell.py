@@ -40,6 +40,7 @@ from openevos.core.models import CommandStatus, Connection, Health
 from openevos.instrument.profile import CameraRole
 from openevos.instrument.settings import HotButtonAction
 from openevos.ui import theme
+from openevos.ui import theme_engine as te
 from openevos.ui.common import label
 from openevos.ui.icons import icon
 from openevos.ui.instrument_mode import instrument_mode
@@ -360,6 +361,20 @@ class MainWindow(QMainWindow):
         for name, text in (("dark", "Dark"), ("light", "Light"), ("system", "Match system")):
             self._cmd(tm, f"view.theme.{name}", text, lambda n=name: self.set_theme(n), group=g,
                       checked=lambda n=name: self.session.settings.basic.theme == n, path="View › Theme")
+        tm.addSeparator()  # colour theme (ADR-0063)
+        gp = QActionGroup(self)
+        for pid, spec in te.PRESETS.items():
+            self._cmd(tm, f"view.theme.preset.{pid}", f"{spec.name} colours", lambda p=pid: self.set_theme_preset(p),
+                      group=gp, checked=lambda p=pid: self.session.settings.basic.theme_preset == p,
+                      path="View › Theme")
+        self._cmd(tm, "view.theme.preset.custom", "Custom colours", lambda: self.set_theme_preset("custom"), group=gp,
+                  checked=lambda: self.session.settings.basic.theme_preset == "custom", path="View › Theme",
+                  why=lambda: "" if self.session.settings.basic.theme_custom else
+                  "no custom theme yet: pick a colour or import one in Settings › Interface")
+        tm.addSeparator()
+        self._cmd(tm, "view.theme.high_contrast", "High contrast",
+                  lambda: self.set_high_contrast(not self.session.settings.basic.high_contrast),
+                  checked=lambda: self.session.settings.basic.high_contrast, path="View › Theme")
         nm = m.addMenu("Navigation")
         g2 = QActionGroup(self)
         for name, text in (("auto", "Automatic (icons below 1440 px)"), ("expanded", "Labels"), ("rail", "Icons only")):
@@ -716,11 +731,35 @@ class MainWindow(QMainWindow):
 
     def set_theme(self, name: str) -> None:
         self.session.settings.basic.theme = name
-        app = QApplication.instance()
-        resolved = ("dark" if theme.system_prefers_dark(app) else "light") if name == "system" else name
-        theme.apply_theme(resolved, app)
+        self._apply_theme_settings()
+
+    def set_theme_preset(self, preset: str) -> None:
+        """Colour theme: a preset id, or "custom" for the saved custom theme (ADR-0063)."""
+        if preset == "custom" and not self.session.settings.basic.theme_custom:
+            self.model.add_log("warn", "No custom theme yet: pick a colour or import one in Settings › Interface")
+            return
+        self.session.settings.basic.theme_preset = preset
+        self._apply_theme_settings()
+
+    def set_custom_theme(self, spec) -> None:
+        """Save `spec` (theme_engine.ThemeSpec) as the custom theme and switch to it."""
+        b = self.session.settings.basic
+        b.theme_custom = spec.model_dump(exclude_none=True)
+        b.theme_preset = "custom"
+        self._apply_theme_settings()
+
+    def set_high_contrast(self, on: bool) -> None:
+        self.session.settings.basic.high_contrast = bool(on)
+        self._apply_theme_settings()
+
+    def _apply_theme_settings(self):
+        built = theme.apply_settings(self.session.settings.basic, QApplication.instance())
+        for w in built.warnings:
+            self.model.add_log("warn", f"Theme: {w}")
         self._retint()
+        self._refresh_commands()
         self.model.settings_changed.emit()
+        return built
 
     def _retint(self) -> None:
         for key, b in self.nav_buttons.items():
