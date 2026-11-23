@@ -45,7 +45,8 @@ class InstrumentMode:
         return tuple(p for p in self.parts if not p.real)
 
 
-def _parts(session) -> tuple[Part, ...]:
+def parts(session) -> tuple[Part, ...]:
+    """Every device the profile uses for a role (stage, focus, turret, light, cameras), with whether it is real."""
     p = session.profile
     rows = [("X/Y stage", "STAGE", p.stage_device), ("focus", "FOCUS", p.focus_device),
             ("objective turret", "TURRET", p.turret_device), ("light", "LIGHT", p.illumination_device)]
@@ -80,9 +81,9 @@ def _cap(s: str) -> str:
 
 
 def instrument_mode(session) -> InstrumentMode:
-    parts = _parts(session)
-    real = tuple(p for p in parts if p.real)
-    sim = tuple(p for p in parts if not p.real)
+    found = parts(session)
+    real = tuple(p for p in found if p.real)
+    sim = tuple(p for p in found if not p.real)
     services = list(getattr(session, "telemetry", None) or [])
     emulated = any(getattr(s, "emulated", False) for s in services)
     base = re.sub(r"^simulated\s+", "", session.profile.name, flags=re.IGNORECASE)
@@ -112,21 +113,21 @@ def instrument_mode(session) -> InstrumentMode:
     # no device ids here: the real instrument's cameras keep the simulator's ids ("sim-camera"), and "real
     # (sim-camera)" would undo the point; the Instrument page lists the ids
     lines += [f"  {_cap(p.title)}: {'real' if p.real else 'simulator' if p.real is False else 'not registered'}"
-              for p in parts]
+              for p in found]
     notes = []
-    stage = next((p for p in parts if p.short == "STAGE"), None)
+    stage = next((p for p in found if p.short == "STAGE"), None)
     if stage is not None and stage.real:
         svc = next((s for s in services if getattr(s, "motion", False)), None)
         box = getattr(svc, "travel_box_note", "power-up box")
         notes.append(f"The joystick, jogs and Stop move the real stage, inside the {box} and through the safety "
                      "checks.")
-    if any(p.real for p in parts if p.short == "LIGHT"):
+    if any(p.real for p in found if p.short == "LIGHT"):
         notes.append("The light is the real LED board: a channel lit here is real excitation light.")
-    if any(p.real is False for p in parts if p.short.endswith("CAM")):
+    if any(p.real is False for p in found if p.short.endswith("CAM")):
         notes.append("A simulated camera gives synthetic frames, labelled SIMULATED on the image.")
     if emulated:
         notes.append("The motor drives are an emulator (--motor-telemetry sim): nothing physical moves.")
     elif services and not real:
         notes.append("The real motor drives are read live for display only; nothing is sent to them.")
     tooltip = "\n".join(lines + ([""] + notes if notes else []))
-    return InstrumentMode(parts, badge, state, footer, tooltip, name, about)
+    return InstrumentMode(found, badge, state, footer, tooltip, name, about)

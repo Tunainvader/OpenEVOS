@@ -62,6 +62,8 @@ class ImageView(QGraphicsView):
         self.show_crosshair = False
         self.badge = ""
         self.badge_color = theme.SIM
+        #: one line centred on the image, on a dark pill (e.g. "Light off · click a light channel to light it")
+        self.hint = ""
         self.watermark = ""
         self.markers: list[Marker] = []
         self.shapes: list[tuple[str, tuple, tuple, str, str]] = []  # kind, p0, p1, colour, label
@@ -230,6 +232,17 @@ class ImageView(QGraphicsView):
             painter.drawRoundedRect(QRectF(12, 12, w, 22), 5, 5)
             painter.setPen(QColor(theme.on(self.badge_color)))
             painter.drawText(QRectF(12, 12, w, 22), Qt.AlignCenter, self.badge)
+        if self.hint and self._size:
+            f = QFont(painter.font().family())
+            f.setPixelSize(14)
+            painter.setFont(f)
+            w = min(vw - 24, painter.fontMetrics().horizontalAdvance(self.hint) + 32)
+            box = QRectF((vw - w) / 2, (vh - 36) / 2, w, 36)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 170))  # the image surround is black in both themes: a dark pill reads
+            painter.drawRoundedRect(box, 18, 18)
+            painter.setPen(QColor(255, 255, 255, 230))
+            painter.drawText(box, Qt.AlignmentFlag.AlignCenter, self.hint)
         if self.watermark:
             painter.setPen(QColor(255, 255, 255, 150))
             painter.setFont(QFont(painter.font().family(), 9))

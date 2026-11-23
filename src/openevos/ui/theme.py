@@ -135,6 +135,10 @@ QPushButton#nav:checked {{ color: {t.acc_tx}; background: {t.acc_dim}; font-weig
 QPushButton#objective {{ border-radius: 21px; {raised} min-width: 42px; max-width: 42px; min-height: 42px;
     max-height: 42px; padding: 0; font-weight: 600; }}
 QPushButton#objective:checked {{ background: {t.acc_dim}; border: 2px solid {t.acc}; color: {t.acc_tx}; }}
+QPushButton#objective[pending="true"], QPushButton#objective[pending="true"]:disabled {{
+    border: 2px dashed {t.acc}; color: {t.acc_tx}; }}
+QToolButton#noticeclose {{ border: none; background: transparent; padding: 3px; border-radius: 6px; }}
+QToolButton#noticeclose:hover {{ background: {t.s3}; }}
 QPushButton#menu {{ background: transparent; border: none; padding: 4px 9px; border-radius: 6px; color: {t.t2};
     font-weight: 400; }}
 QPushButton#menu:hover {{ background: {t.s2}; color: {t.tx}; }}

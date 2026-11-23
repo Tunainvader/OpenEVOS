@@ -75,9 +75,11 @@ from openevos.ui.dialogs import (
     ZStackDialog,
 )
 from openevos.ui.icons import icon
+from openevos.ui.instrument_mode import parts as instrument_parts
 from openevos.ui.widgets.controls import ChannelButton, Joystick, LevelsHistogram, _mix
 from openevos.ui.widgets.focus_pad import ZFocusPanel, fmt_um
 from openevos.ui.widgets.image_view import ImageView
+from openevos.ui.widgets.notice import NoticeBar
 from openevos.ui.widgets.param import ParamRow
 from openevos.ui.widgets.segmented import SegmentedControl
 from openevos.ui.widgets.status import Badge
@@ -122,6 +124,8 @@ def joystick_direction(vx: float, vy: float) -> tuple[int, int] | None:
 
 class CapturePage(QWidget):
     request_page = Signal(str)  # e.g. "save"
+    #: an objective change's current step (target slot, "2/4 · Turning to 10X"), emitted from the worker thread
+    objective_step = Signal(int, str)
 
     def __init__(self, model, parent=None):
         super().__init__(parent)
@@ -207,6 +211,7 @@ class CapturePage(QWidget):
         self.seg_live.buttons["live"].setToolTip("Stream frames from the selected camera (Ctrl+L)")
         self.seg_live.buttons["stopped"].setToolTip("Stop the stream; the camera idles and the last frame stays")
         lay.addWidget(self.seg_live)
+        self._objectives_block(lay)  # the optical path together: camera, live view, objective
         # objective and vessel readouts stay as labels (other code reads them) but are not shown: the checked
         # objective button and the vessel map already say the same (UI audit 2026-11-17)
         for name in ("objective", "vessel"):
@@ -273,7 +278,14 @@ class CapturePage(QWidget):
         lay.addWidget(self.jog_speed)
         lay.addWidget(self.lbl_speed)
         self._show_speed()
-        lay.addWidget(label("Objectives", "section"))
+        lay.addStretch(1)
+        return f
+
+    def _objectives_block(self, lay) -> None:
+        """The objective row, high in the Instrument column, with the change's step underneath while it runs. It was
+        the column's last item: below the fold at 1280 x 800 and cut off in a 1616 px window, although an objective
+        change is the page's biggest move (stage centring, turret swing, Z retract and return; critique 2026-11-24)."""
+        lay.addWidget(label("Objective", "section"))
         self.obj_group = QButtonGroup(self)
         self.obj_group.setExclusive(True)
         orow = QHBoxLayout()
@@ -293,8 +305,9 @@ class CapturePage(QWidget):
             orow.addWidget(b)
         orow.addStretch(1)
         lay.addLayout(orow)
-        lay.addStretch(1)
-        return f
+        self.lbl_obj_step = label("", "caption", wrap=True)
+        self.lbl_obj_step.setVisible(False)
+        lay.addWidget(self.lbl_obj_step)
 
     def _center(self) -> QWidget:
         f, lay = panel(None, margins=10)
@@ -346,6 +359,10 @@ class CapturePage(QWidget):
         self.view.show_scale_bar = self.btn_scale.isChecked()
         self.view.setAccessibleName("Image viewport")
         lay.addWidget(self.view, 1)
+        # why something did not happen, on this page (critique 2026-11-24): refusals for a few seconds, a stage lock or
+        # a drive needing recovery for as long as it holds
+        self.notice = NoticeBar()
+        lay.addWidget(self.notice)
         bottom = QHBoxLayout()
         bottom.setSpacing(12)
         self.hist = LevelsHistogram()
@@ -479,6 +496,12 @@ class CapturePage(QWidget):
         m.settings_changed.connect(self._refresh_settings)
         m.tasks.busy_changed.connect(self._on_busy)
         m.tasks.progress.connect(lambda n, i, t, msg: self.lbl_task.setText(f"{n}: {msg}"))
+        m.log_added.connect(self._on_log)
+        self.notice.action_requested.connect(self._notice_action)
+        self._notice_timer = QTimer(self)  # STOP, a stage lock and device faults are read, not all signalled
+        self._notice_timer.setInterval(500)
+        self._notice_timer.timeout.connect(self._refresh_notice)
+        self._notice_timer.start()
         self.btn_vessel.clicked.connect(self._vessel_expert)
         self.map.move_requested.connect(self._goto_vessel)
         self.btn_align.clicked.connect(self._align_step)
@@ -486,6 +509,7 @@ class CapturePage(QWidget):
         self.joy.jog.connect(self._jog)
         self.joy.released.connect(self._joy_released)
         self.obj_group.idClicked.connect(self._objective)
+        self.objective_step.connect(self._objective_progress)
         for b in self.ch_buttons.values():
             b.clicked.connect(self._channel_clicked)
         self.btn_power.toggled.connect(self._power)
@@ -524,6 +548,48 @@ class CapturePage(QWidget):
         self.btn_auto.clicked.connect(self._auto_levels)
         self.chk_sci.toggled.connect(self._set_scientific)
         self.btn_hist.toggled.connect(self._show_histogram)
+
+    # ================================================================== notices (critique 2026-11-24)
+    def _on_log(self, _t: str, level: str, text: str) -> None:
+        """A warning or error anywhere (a refused move, a failed step) shows on this page for a few seconds."""
+        if level in ("warn", "error"):
+            self.notice.show_passing(level, text)
+
+    def standing_notice(self) -> tuple[str, str, tuple[str, str] | None] | None:
+        """(level, text, action) for what holds now and needs the operator: STOP latched, the stage locked by the
+        drift monitor, a stage / focus / turret / light / camera drive that needs recovery. None when all is well."""
+        s = self.session
+        router = s.core.router
+        if router.stop_latched:
+            return "error", f"STOP is engaged ({router.stop_reason}): nothing is accepted until it is cleared", None
+        for svc in getattr(s, "telemetry", None) or []:
+            mon = getattr(svc, "monitor", None)
+            if mon is not None and mon.latched:
+                why = mon.latch.message if mon.latch else "drift"
+                text = (f"Stage locked by the drift monitor: {why}. The stage does not move until the lock is "
+                        "released or the stage is re-homed")
+                return "error", text, ("mic.release", "Release stage lock…")
+        for part in instrument_parts(s):
+            snap = s.core.store.get(part.device_id)
+            if snap is not None and (snap.recovery_required or snap.health is Health.FAULT):
+                what = "needs recovery" if snap.recovery_required else "reports a fault"
+                note = f" ({snap.note})" if snap.note else ""
+                title = part.title[:1].upper() + part.title[1:]
+                text = f"{title} {what}{note}: it takes no commands until it is recovered"
+                return "error", text, ("mic.recover", "Recover…")
+        return None
+
+    def _refresh_notice(self) -> None:
+        held = self.standing_notice()
+        if held is None:
+            self.notice.set_standing(None)
+        else:
+            self.notice.set_standing(*held)
+
+    def _notice_action(self, key: str) -> None:
+        run = getattr(self.window(), "run_command", None)
+        if callable(run):
+            run(key)
 
     def _initial_state(self) -> None:
         self._on_vessel()
@@ -916,8 +982,16 @@ class CapturePage(QWidget):
         label_ch = ch.display if ch else (slot or "—")
         md = frame.metadata
         if not self._comparing:
-            self.view.badge = f"{label_ch} • LIVE • {'SIMULATED' if md.synthetic else 'CAMERA'}"
-            self.view.badge_color = theme.SIM if md.synthetic else theme.OK
+            # with the light off the image is the camera's noise: say so, in a quiet colour, and say what to do
+            # (critique 2026-11-24: "TRANS • LIVE • CAMERA" over grey noise read as a broken or unfocused camera)
+            lit = self.ctl.light.enabled
+            if lit:
+                self.view.badge = f"{label_ch} • LIVE • {'SIMULATED' if md.synthetic else 'CAMERA'}"
+                self.view.badge_color = theme.SIM if md.synthetic else theme.OK
+            else:
+                self.view.badge = f"{label_ch} • LIGHT OFF • LIVE" + (" • SIMULATED" if md.synthetic else "")
+                self.view.badge_color = theme.MUTED
+            self.view.hint = "" if lit else "Light off · click a light channel to light it"
         extra = dict(md.extra)
         self.lbl_frame.setText(f"{md.device_id} #{md.frame_index} · {label_ch} · {md.exposure_ms:g} ms · "
                                f"gain {extra.get('gain', '?')} · LED {'on' if self.ctl.light.enabled else 'off'} · "
@@ -1146,11 +1220,22 @@ class CapturePage(QWidget):
         safe = self.settings.basic.focus_limit_um.get(str(slot))
         z_back = None if z0 is None else min(z0, safe) if safe is not None else z0
         stays = "the stage stays centred" if centre else "Z stays retracted"
+        short = o.short if o else f"slot {slot}"
+        steps = (["Centring the stage"] if centre else []) + [f"Turning to {short}"] + \
+            (["Stage back"] if centre else []) + ["Z back"]
+
+        def step(i: int) -> None:  # from the worker thread: the signal is queued to the page
+            self.objective_step.emit(slot, f"{i + 1}/{len(steps)} · {steps[i]}")
 
         def go() -> str:
+            i = 0
             if centre:
+                step(i)
+                i += 1
                 ctl.run(ctl.move_stage(cx, y, timeout_s=30.0), timeout=40.0)  # X alone
                 ctl.run(ctl.move_stage(cx, cy, timeout_s=30.0), timeout=40.0)  # then Y alone
+            step(i)
+            i += 1
             try:
                 ctl.run(session.change_objective(slot), timeout=TURRET_TIMEOUT_S + 30.0)
             except Exception as exc:
@@ -1158,13 +1243,17 @@ class CapturePage(QWidget):
             if ctl.objective_slot() != slot:
                 raise RuntimeError(f"the turret reads slot {ctl.objective_slot()}, not {slot}; {stays}")
             if centre:
+                step(i)
+                i += 1
                 ctl.run(ctl.move_stage(cx, y, timeout_s=30.0), timeout=40.0)  # back: Y alone
                 ctl.run(ctl.move_stage(x, y, timeout_s=30.0), timeout=40.0)  # then X alone
+            step(i)
             if z_back is not None and z_back > Z_RETURN_MIN_UM:
                 ctl.run(ctl.move_focus(z_back, timeout_s=60.0), timeout=70.0)  # Z last, at the sample position
             return name
 
         def done(n: str) -> None:
+            self._objective_progress(0, "")
             where = f"stage back at X {x / 1000:.1f}, Y {y / 1000:.1f} mm; " if centre else ""
             if z_back is None or z_back <= Z_RETURN_MIN_UM:
                 z_note = "Z retracted: refocus"
@@ -1177,7 +1266,22 @@ class CapturePage(QWidget):
         if centre:
             log("info", f"{name}: centring the stage for the turret (X {cx / 1000:g}, then Y {cy / 1000:g} mm); it "
                         f"returns to X {x / 1000:.1f}, Y {y / 1000:.1f} mm after the turn")
-        self._run(f"Change to {name}", go, on_done=done)
+        self._objective_progress(slot, f"Changing to {short}…")
+        if not self._run(f"Change to {name}", go, on_done=done, on_fail=lambda _msg: self._objective_progress(0, "")):
+            self._objective_progress(0, "")  # not started (another task owns the instrument)
+
+    def _objective_progress(self, slot: int, text: str) -> None:
+        """The objective change in progress, where it was asked for: the target button marked, the step under the row
+        (critique 2026-11-24: the sequence was narrated only by a caption under the histogram). slot 0 / "" ends it;
+        the other objective buttons are held while the change runs (the page is busy)."""
+        for s, b in self.obj_buttons.items():
+            pending = bool(text) and s == slot
+            if b.property("pending") != pending:
+                b.setProperty("pending", pending)
+                b.style().unpolish(b)
+                b.style().polish(b)
+        self.lbl_obj_step.setText(text)
+        self.lbl_obj_step.setVisible(bool(text))
 
     def _move_z(self, z: float, *, confirmed: bool = False) -> None:
         self.coalesce.request("focus", lambda: self.ctl.move_focus(z, confirmed=confirmed))
@@ -1506,9 +1610,14 @@ class CapturePage(QWidget):
             self.model.add_log("info", "image copied to the clipboard (display rendering, 8-bit)")
 
     # ================================================================== actions: capture
-    def _run(self, name: str, fn, on_done=None, progress=False) -> None:
-        self.submit_when_idle(name, fn, on_done=on_done, with_progress=progress,
-                              on_error=lambda msg: self.lbl_task.setText(f"{name} failed: {msg}"))
+    def _run(self, name: str, fn, on_done=None, progress=False, on_fail=None) -> bool:
+        def failed(msg: str) -> None:
+            self.lbl_task.setText(f"{name} failed: {msg}")
+            self.model.add_log("warn", f"{name} failed: {msg}")  # and so on the notice line, not only the caption
+            if on_fail is not None:
+                on_fail(msg)
+
+        return self.submit_when_idle(name, fn, on_done=on_done, with_progress=progress, on_error=failed)
 
     def submit_when_idle(self, name: str, fn, **kw) -> bool:
         return self.model.submit_when_idle(name, fn, **kw)
@@ -1655,6 +1764,7 @@ class CapturePage(QWidget):
         self.btn_vessel.setIcon(icon("vessel"))
         self.view.setBackgroundBrush(QColor(theme.STAGE))
         self._refresh_thumbnails()
+        self.notice.retint()
         QTimer.singleShot(0, self._fit_toolbar)  # the new stylesheet changes the buttons' sizes
         self.update()
 

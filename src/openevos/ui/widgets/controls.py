@@ -363,8 +363,13 @@ class ChannelButton(QWidget):
             p.setPen(QPen(QColor(self.color), 1.5))
             p.setBrush(_mix(theme.PANEL_2, self.color, 0.22))
             p.drawRoundedRect(r, 10, 10)
-        else:  # raised at rest; the accent edge of a checked control when selected but dark
-            theme.paint_surface(p, top, 10, inset=self.selected)
+        elif self.selected:  # selected but dark: sunken and neutral, edge in the secondary text colour, no accent
+            r = top.adjusted(0.6, 0.6, -0.6, -0.6)
+            p.setPen(QPen(QColor(theme.TEXT_2), 1.25))
+            p.setBrush(QColor(theme.INPUT))
+            p.drawRoundedRect(r, 10, 10)
+        else:  # raised at rest
+            theme.paint_surface(p, top, 10)
         if self.hasFocus():
             p.setPen(QPen(QColor(theme.ACCENT), 1.5))
             p.setBrush(Qt.NoBrush)
@@ -392,7 +397,9 @@ class ChannelButton(QWidget):
         f.setBold(True)
         f.setPixelSize(12)
         p.setFont(f)
-        p.setPen(QColor(theme.ACCENT_TX if self.selected and not self.lit else theme.TEXT))
+        # the text stays the text colour when selected but dark: the inset surface marks the selection, and only a lit
+        # channel stands out (critique 2026-11-24: the selected-but-dark TRANS looked active)
+        p.setPen(QColor(theme.TEXT))
         p.drawText(QRectF(20, top.top() + 3, top.width() - 21, 20), Qt.AlignLeft | Qt.AlignVCenter, self.label)
         f.setPixelSize(11)
         f.setBold(self.lit)
