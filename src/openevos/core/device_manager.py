@@ -14,12 +14,13 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
-from openevos.core.command_scheduler import DeviceWorker
+from openevos.core.command_scheduler import DeviceWorker, Worker
 from openevos.core.event_bus import EventBus, HardwareFaultEvent, Severity
 from openevos.core.models import new_id
 from openevos.core.runtime_state_store import RuntimeStateStore
-from openevos.hal.backend import DeviceBackend
+from openevos.hal.backend import DeviceBackend, Reporter
 from openevos.safety.capabilities import DeviceCapabilities
 
 
@@ -63,14 +64,14 @@ class DeviceRecord:
 class DeviceManager:
     def __init__(self, store: RuntimeStateStore, bus: EventBus, *,
                  ownership: OwnershipRegistry = PROCESS_OWNERSHIP,
-                 worker_factory: Callable[[str], object] = DeviceWorker,
+                 worker_factory: Callable[[str], Worker] = DeviceWorker,
                  owner_id: str | None = None):
         self.store, self.bus, self.ownership = store, bus, ownership
         self.owner_id = owner_id or f"openevos-{new_id()[:8]}"
         self._worker_factory = worker_factory
         self._lock = threading.Lock()
         self._records: dict[str, DeviceRecord] = {}
-        self._workers: dict[str, object] = {}
+        self._workers: dict[str, Worker] = {}
 
     def register(self, backend: DeviceBackend, capabilities: DeviceCapabilities) -> DeviceRecord:
         if capabilities.device_id != backend.device_id:
@@ -92,11 +93,11 @@ class DeviceManager:
         backend.attach(self._reporter_for(backend))
         return rec
 
-    def _reporter_for(self, backend: DeviceBackend):
+    def _reporter_for(self, backend: DeviceBackend) -> Reporter:
         store, bus = self.store, self.bus
         device_id, source = backend.device_id, f"backend:{backend.device_id}"
 
-        def report(*, seq: int, reason: str | None = None, fault: str | None = None, **fields) -> bool:
+        def report(*, seq: int, reason: str | None = None, fault: str | None = None, **fields: Any) -> bool:
             applied = store.observe(device_id, source=source, seq=seq, reason=reason, **fields)
             if applied and fault:
                 bus.publish(HardwareFaultEvent(device_id, fault, Severity.ERROR, "DEVICE_FAULT"))
@@ -111,7 +112,7 @@ class DeviceManager:
         with self._lock:
             return self._records.get(device_id)
 
-    def worker(self, device_id: str):
+    def worker(self, device_id: str) -> Worker:
         with self._lock:
             return self._workers[device_id]
 

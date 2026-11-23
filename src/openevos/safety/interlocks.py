@@ -8,7 +8,7 @@ move (exclusive on the stage) cannot start while frames that need a fixed positi
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -30,7 +30,8 @@ World = Mapping[str, DeviceSnapshot]
 class Interlock(Protocol):
     """A cross-device rule. It reads only store snapshots (observed state), never a device."""
 
-    name: str
+    @property
+    def name(self) -> str: ...  # read-only, so a frozen dataclass's field satisfies it
 
     def check(self, command: Command, world: World) -> list[str]: ...
 
@@ -134,7 +135,7 @@ class FocusSafeHeight:
     None when no height is set."""
 
     focus_id: str
-    limit_for: object  # Callable[[], tuple[str, float] | None]
+    limit_for: Callable[[], tuple[str, float] | None]
     tolerance: float = 0.5
     name: str = "focus_safe_height"
 

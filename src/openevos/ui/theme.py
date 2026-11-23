@@ -220,13 +220,18 @@ def apply_theme(name_or_tokens: str | tk.Tokens, app=None) -> tk.Tokens:
     _T = tk.THEMES[name_or_tokens] if isinstance(name_or_tokens, str) else name_or_tokens
     _refresh_globals(_T)
     if app is not None:
+        from PySide6.QtWidgets import QWidget
+
         app.setStyleSheet(QSS)
+        # repaint what is on screen: painter-drawn widgets read the module colours when they paint. A hidden window
+        # repaints when it is shown again; walking every object of every closed window from Python took minutes once
+        # many windows had been closed (the test suite hung here, 2026-11-24)
         for w in app.topLevelWidgets():
+            if not w.isVisible():
+                continue
             w.update()
-            for child in w.findChildren(object):
-                upd = getattr(child, "update", None)
-                if callable(upd) and hasattr(child, "isWidgetType") and child.isWidgetType():
-                    upd()
+            for child in w.findChildren(QWidget):
+                child.update()
     return _T
 
 

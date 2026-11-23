@@ -15,6 +15,7 @@ import logging
 import queue
 import threading
 from collections.abc import Callable
+from typing import Protocol
 
 from openevos.safety.interlocks import ResourceClaim
 
@@ -79,6 +80,13 @@ class ResourceTable:
             if res in self._exclusive:
                 out.add(self._exclusive[res])
             return out
+
+
+class Worker(Protocol):
+    """What the device manager and router need of a device's worker: DeviceWorker, or ManualWorker in tests."""
+
+    def submit(self, fn: Callable[[], None]) -> None: ...
+    def stop(self, timeout: float = ...) -> None: ...
 
 
 class DeviceWorker:

@@ -32,7 +32,7 @@ import itertools
 import queue
 import threading
 from collections.abc import Callable, Iterable
-from typing import Any
+from typing import Any, Protocol
 
 from openevos.backends.ledboard.protocol import (
     ALLOWED_COMMANDS,
@@ -149,6 +149,12 @@ UNIT_CUBE_SLOTS = {"RFP": 1, "DAPI": 3, "GFP": 4}
 CarriageMover = Callable[[str], tuple[bool, str]]
 
 
+class EpiTimer(Protocol):
+    """The epi light's maximum-on timer (threading.Timer, or a test's stand-in): only cancel() is used."""
+
+    def cancel(self) -> None: ...
+
+
 class LedLinkError(RuntimeError):
     """An exchange with the board failed (no reply, BUSY, bad write, unexpected reply)."""
 
@@ -199,7 +205,7 @@ class RealLedIllumination:
 
     def __init__(self, hid: HidBackend, channels: Iterable[str], labels: dict[str, str] | None = None, *,
                  device_id: str = DEVICE_ID, start_channel: str | None = None, epi_max_on_s: float = EPI_MAX_ON_S,
-                 timer_factory: Callable[[float, Callable[[], None]], object] | None = None):
+                 timer_factory: Callable[[float, Callable[[], None]], EpiTimer] | None = None):
         self.device_id = device_id
         self.physical_id = "hid:0DAD:0051"  # one owner per physical board
         self.channels = tuple(channels)
@@ -223,14 +229,14 @@ class RealLedIllumination:
         self._lock = threading.RLock()
         self._jobs: queue.Queue = queue.Queue()
         self._pending: tuple[str, ExecutionContext] | None = None
-        self._epi_timer = None
+        self._epi_timer: EpiTimer | None = None
         self._timer_factory = timer_factory or self._thread_timer
         self._worker = threading.Thread(target=self._run, name=f"{device_id}-io", daemon=True)
         self._worker.start()
 
     # ------------------------------------------------------------------ plumbing
     @staticmethod
-    def _thread_timer(delay: float, fn: Callable[[], None]):
+    def _thread_timer(delay: float, fn: Callable[[], None]) -> EpiTimer:
         t = threading.Timer(delay, fn)
         t.daemon = True
         t.start()
@@ -239,7 +245,7 @@ class RealLedIllumination:
     def attach(self, reporter: Reporter) -> None:
         self._report = reporter
 
-    def _obs(self, **fields) -> None:
+    def _obs(self, **fields: Any) -> None:
         if self._report is not None:
             self._report(seq=next(self._seq), **fields)
 

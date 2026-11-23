@@ -35,7 +35,7 @@ from openevos.core.models import (
 
 class Reporter(Protocol):
     def __call__(self, *, seq: int, connection: Connection | None = None, health: Health | None = None,
-                 activity: Activity | None = None, position: Position | None = ...,  # type: ignore[assignment]
+                 activity: Activity | None = None, position: Position | None = ...,
                  firmware_mode: FirmwareMode | None = None, attributes: dict | None = None,
                  reason: str | None = None, fault: str | None = None) -> bool: ...
 

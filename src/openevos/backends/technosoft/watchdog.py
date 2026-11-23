@@ -93,12 +93,13 @@ class LegWatch:
         """The profile row. `rest`: POSERR, CPOS and APOS read at rest after the leg (None when the leg did not end
         normally): the cross-check that decides whether POSERR can be trusted as the following error."""
         dur = max(self.t_last - self.t0, 0.0)
-        fe_rest = cmd_rest = ""
+        fe_rest: int | str = ""  # "" = not read at rest (the CSV cell stays empty)
+        cmd_rest: int | str = ""
         trusted = False
         if rest is not None:
-            fe_rest = signed16(rest["POSERR"])
-            cmd_rest = rest["CPOS"] - rest["APOS"]
-            trusted = self.fe_reads > 0 and abs(fe_rest - cmd_rest) <= CROSSCHECK_COUNTS
+            fe, cmd = signed16(rest["POSERR"]), int(rest["CPOS"] - rest["APOS"])
+            fe_rest, cmd_rest = fe, cmd
+            trusted = self.fe_reads > 0 and abs(fe - cmd) <= CROSSCHECK_COUNTS
         sign = ("+" if (self.fe_peak > 0) == (self.direction > 0) else "-") if self.fe_peak and self.direction else "0"
         return {"utc": datetime.now(timezone.utc).isoformat(timespec="milliseconds"), "axis": self.axis,
                 "speed_preset": self.speed_preset, "start": self.start, "target": self.target,

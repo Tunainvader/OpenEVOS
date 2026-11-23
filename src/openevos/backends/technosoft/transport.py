@@ -20,6 +20,8 @@ from openevos.backends.technosoft import protocol as tp
 
 class Port(Protocol):
     name: str
+    #: exact extra frames the port accepts for one operation (ADR-0056/0058), set by the stage service only
+    extra_writes: frozenset[bytes]
 
     def configure(self, baud: int) -> None: ...
     def purge_rx(self) -> None: ...

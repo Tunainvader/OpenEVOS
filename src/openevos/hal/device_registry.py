@@ -45,7 +45,7 @@ class DeviceRegistry:
 
     def __contains__(self, role: object) -> bool:
         try:
-            return Role(role) in self._devices  # type: ignore[arg-type]
+            return Role(role) in self._devices
         except ValueError:
             return False
 

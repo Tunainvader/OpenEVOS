@@ -10,6 +10,7 @@ import json
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from openevos.acquisition.autofocus import Autofocus
 from openevos.acquisition.calibration import CalibrationStore
@@ -29,6 +30,13 @@ from openevos.instrument.vessels import (
     solve_plate_alignment,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from openevos.backends.rig.rig import Rig
+    from openevos.core.command_router import CommandTicket
+    from openevos.instrument.profile import CameraRole
+
 ALIGNMENT_ATTEMPTS_FILE = "plate-alignment-attempts.jsonl"
 
 
@@ -43,7 +51,7 @@ class Session:
     controller: InstrumentController
     capture: CaptureService
     autofocus: Autofocus
-    rig: object | None = None  # simulator rig (simulation only)
+    rig: Rig | None = None  # simulator rig (simulation only)
     settings_path: Path | None = None
     listeners: list = field(default_factory=list)
     calibration: CalibrationStore = field(default_factory=CalibrationStore)
@@ -59,7 +67,8 @@ class Session:
         self.nominal_map = self.stage_map
         self.capture.defects_for = lambda role: (self.calibration.hot_pixels.get(role.value, [])
                                                  if self.calibration.hot_pixel_correction else [])
-        self.capture.pixel_size_for = lambda role, slot: self.calibration.pixel_size_um.get(role.value, {}).get(slot)
+        self.capture.pixel_size_for = lambda role, slot: (self.calibration.pixel_size_um.get(role.value, {}).get(slot)
+                                                          if slot is not None else None)
         self._apply_vessel_offset()
 
     # ------------------------------------------------------------------ calibration application
@@ -77,7 +86,7 @@ class Session:
         self.stage_map = self.nominal_map.model_copy(update={
             "offset_x": off[0] if off else 0.0, "offset_y": off[1] if off else 0.0, "verified": bool(off)})
 
-    def pixel_size_um(self, role, slot: int | None) -> float | None:
+    def pixel_size_um(self, role: CameraRole, slot: int | None) -> float | None:
         if slot is None:
             return None
         measured = self.calibration.pixel_size_um.get(role.value, {}).get(slot)
@@ -91,7 +100,7 @@ class Session:
     F_MIRROR_COUNTS = 128000
     F_AT_TOLERANCE = 200
 
-    def route_light_path(self, role) -> str:
+    def route_light_path(self, role: CameraRole) -> str:
         """Put the F carriage where `role`'s camera sees the sample (operator, 2026-11-18: "no image colour cam"):
         the colour camera needs F at the mirror; the mono camera gets F back to slot 1 when it is at the mirror (a
         cube channel then moves F to its own cube as before, ADR-0051). Only with real motor control and carriage
@@ -120,7 +129,7 @@ class Session:
         ok, msg = svc.move_carriage(dest)
         return f"filter carriage to {dest} for the {role.value} camera" if ok else f"filter carriage not moved: {msg}"
 
-    def change_objective(self, slot: int):
+    def change_objective(self, slot: int) -> CommandTicket:
         """Turret command; once verified, apply calibrated parfocal (Z) and parcentric (XY) compensation so the
         same sample point stays centred and in focus (what the original software does after calibration)."""
         ctl = self.controller
@@ -131,7 +140,8 @@ class Session:
         cal = self.calibration
         dz = (cal.parfocal_um.get(slot, 0.0) - cal.parfocal_um.get(prev, 0.0)) if prev in cal.parfocal_um and \
             slot in cal.parfocal_um else 0.0
-        a, b = cal.parcentric_um.get(prev), cal.parcentric_um.get(slot)
+        a = cal.parcentric_um.get(prev) if prev is not None else None
+        b = cal.parcentric_um.get(slot)
         dxy = (a[0] - b[0], a[1] - b[1]) if a is not None and b is not None else (0.0, 0.0)
         if abs(dz) < 0.05 and abs(dxy[0]) < 0.05 and abs(dxy[1]) < 0.05:
             return ticket
@@ -176,7 +186,8 @@ class Session:
             fn("vessel")
         return residual
 
-    def _record_alignment_attempt(self, wells, outcome: str, message: str, **extra) -> None:
+    def _record_alignment_attempt(self, wells: list[tuple[str, tuple[float, float], tuple[float, float]]],
+                                  outcome: str, message: str, **extra: Any) -> None:
         """Every alignment attempt, saved or refused, as one JSON line next to calibration.json (2026-11-21: two
         refusals were only in the on-screen log and were lost)."""
         if self.calibration.path is None:
@@ -262,7 +273,7 @@ def build_sim_session(clock: Clock, *, fast: bool = False, settings: AppSettings
                       calibration_path: Path | None = None,
                       telemetry: dict[str, dict] | None = None, audit_path: Path | None = None,
                       cameras: dict[str, str] | None = None, illumination: str | None = None,
-                      led_hid=None) -> Session:
+                      led_hid: Any = None) -> Session:
     """Simulated optics session. `telemetry` (e.g. {"technosoft": {"port": "COM3", "motion": False}})
     adds the physical motor drives (ADR-0023); with "motion": True the controller's stage becomes the
     real X/Y stage (ADR-0024): every move still passes the router's safety checks, and the drive
@@ -338,7 +349,7 @@ def _install_interlocks(session: Session) -> None:
     def safe_height() -> tuple[str, float] | None:
         slot = ctl.objective_slot()
         v = session.settings.basic.focus_limit_um.get(str(slot)) if slot else None
-        if v is None:
+        if v is None or slot is None:
             return None
         obj = p.objective(slot)
         return (obj.short if obj else f"position {slot}"), float(v)
@@ -364,7 +375,7 @@ def real_colour_camera_present() -> bool:
     return ueye_present()
 
 
-def real_led_board_present(hid=None) -> bool:
+def real_led_board_present(hid: Any = None) -> bool:
     """Read-only probe for the UI's `--illumination auto`: exactly one LED board application (0DAD:0051) and no
     bootloader interface. SetupAPI enumeration only; nothing is opened or sent (ADR-0048)."""
     from openevos.backends.ledboard import present_application_interfaces
@@ -377,7 +388,7 @@ def real_led_board_present(hid=None) -> bool:
     return len(apps) == 1 and not boot
 
 
-def _real_illumination_factory(illumination: str | None, hid=None):
+def _real_illumination_factory(illumination: str | None, hid: Any = None) -> Callable[..., Any] | None:
     """'real' -> factory for the LED board backend (ADR-0048); None/'sim' -> the simulator."""
     if illumination in (None, "sim"):
         return None
@@ -441,14 +452,14 @@ def unit_objectives():
                  for s, label, mag, na, ring in UNIT_OBJECTIVES)
 
 
-def _enable_focus_and_turret(core, services) -> bool:
+def _enable_focus_and_turret(core: CoreServices, services: list[Any]) -> bool:
     """ADR-0053: with real motor control (and focus/turret control, on by default with it), the app's focus and
     objective controls drive the real Z and turret through the stage service, the single owner of the motor port."""
     motion = [s for s in services if getattr(s, "motion", False) and getattr(s, "zo_control", False)]
     return len(motion) == 1
 
 
-def _link_carriage(light_factory, services) -> None:
+def _link_carriage(light_factory: Callable[..., Any] | None, services: list[Any]) -> None:
     """ADR-0051: with the real LED board AND real motor control, a cube channel drives the F carriage to its cube
     before the light goes on. The stage service is the only owner of the motor port, so it makes the move."""
     if light_factory is None:

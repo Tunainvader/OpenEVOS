@@ -142,12 +142,19 @@ def test_inert_states_block_the_pad(app, window):
     cap = window.pages["capture"]
     f = cap.focus
     seen = []
-    f.step_requested.connect(seen.append)
-    for state in ("locked", "fault", "objective"):
-        f.set_state(state, "test")
-        assert not f.pad.up.isEnabled() and not f.pad.down.isEnabled()
-        f.pad.stepped.emit(1, 1, False)  # a wheel / key step while inert
-        f.pad.stepped.emit(1, 1, True)  # a held repeat while inert
+
+    def record(step, held):
+        seen.append((step, held))
+
+    f.step_requested.connect(record)  # disconnected below: the window is shared by the whole module
+    try:
+        for state in ("locked", "fault", "objective"):
+            f.set_state(state, "test")
+            assert not f.pad.up.isEnabled() and not f.pad.down.isEnabled()
+            f.pad.stepped.emit(1, 1, False)  # a wheel / key step while inert
+            f.pad.stepped.emit(1, 1, True)  # a held repeat while inert
+    finally:
+        f.step_requested.disconnect(record)
     assert seen == []
     f.set_state("locked", "Not homed")
     f.set_values(None, 8050.0, None, None)

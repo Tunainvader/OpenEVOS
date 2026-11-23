@@ -13,6 +13,7 @@ import math
 import threading
 import uuid
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from openevos.core.application import CoreServices
 from openevos.core.event_bus import CommandLifecycleEvent, DeviceStateChanged
@@ -28,8 +29,13 @@ from openevos.core.models import (
     SetIllumination,
     SetTurretPosition,
 )
-from openevos.instrument.profile import CameraRole, InstrumentProfile
+from openevos.instrument.profile import CameraProfile, CameraRole, InstrumentProfile
 from openevos.safety.interlocks import claim_for_acquisition
+
+if TYPE_CHECKING:
+    from openevos.core.command_router import CommandTicket
+    from openevos.core.models import Command, DeviceSnapshot
+    from openevos.safety.capabilities import DeviceCapabilities
 
 #: turret command deadline: 4 steps x 10 s (telemetry TURRET_STEP_S_MAX) + the service's 5 s + Z retract margin
 TURRET_TIMEOUT_S = 60.0
@@ -114,7 +120,7 @@ class InstrumentController:
             except RuntimeError:
                 pass  # an acquisition owns the camera right now; it restores live itself
 
-    def _camera_command(self, role: CameraRole, cmd):
+    def _camera_command(self, role: CameraRole, cmd: Command) -> CommandTicket:
         """Camera settings need an idle camera (fail-closed safety). If live view is running it is
         paused for the command and resumed once the command has finished."""
         cam = self.camera_backend(role)
@@ -126,18 +132,19 @@ class InstrumentController:
         return self.core.router.submit(cmd)
 
     # ------------------------------------------------------------------ device lookup
-    def _caps(self, device_id: str):
+    def _caps(self, device_id: str) -> DeviceCapabilities | None:
         rec = self.core.devices.get(device_id)
         return rec.capabilities if rec else None
 
-    def camera_backend(self, role: CameraRole):
+    def camera_backend(self, role: CameraRole) -> Any:  # a camera backend: streaming, start_stream, ... beyond the
+        # DeviceBackend protocol
         cam = self.profile.camera(role)
         rec = self.core.devices.get(cam.device_id) if cam else None
         if rec is None:
             raise AcquisitionError(f"no {role.value} camera registered")
         return rec.backend
 
-    def snapshot(self, device_id: str):
+    def snapshot(self, device_id: str) -> DeviceSnapshot | None:
         return self.core.store.get(device_id)
 
     # ------------------------------------------------------------------ observed state
@@ -171,20 +178,20 @@ class InstrumentController:
     def stage_frame(self) -> tuple[str, str]:
         caps = self._caps(self.profile.stage_device)
         ax = caps.axis("x") if caps else None
-        return (ax.limits.unit if ax and ax.limits else "um", ax.coordinate_frame if ax else "")
+        return (ax.limits.unit if ax and ax.limits else "um", (ax.coordinate_frame or "") if ax else "")
 
     def focus_frame(self) -> tuple[str, str]:
         caps = self._caps(self.profile.focus_device)
         ax = caps.axis("z") if caps else None
-        return (ax.limits.unit if ax and ax.limits else "um", ax.coordinate_frame if ax else "")
+        return (ax.limits.unit if ax and ax.limits else "um", (ax.coordinate_frame or "") if ax else "")
 
     # ------------------------------------------------------------------ commands
-    def move_stage(self, x: float, y: float, timeout_s: float = 30.0):
+    def move_stage(self, x: float, y: float, timeout_s: float = 30.0) -> CommandTicket:
         unit, frame = self.stage_frame()
         return self.core.router.submit(MoveStageAbsolute(device_id=self.profile.stage_device, origin=self.origin,
                                                          x=x, y=y, unit=unit, frame=frame, timeout_s=timeout_s))
 
-    def move_stage_by(self, dx: float, dy: float):
+    def move_stage_by(self, dx: float, dy: float) -> CommandTicket:
         cur = self.stage_xy()
         if cur is None:
             raise CommandError("stage.move_relative", CommandStatus.REJECTED, "stage position unknown")
@@ -208,7 +215,7 @@ class InstrumentController:
             y = min(max(y, lim_y[0]), lim_y[1])
         return self.move_stage(x, y)
 
-    def move_focus(self, z: float, timeout_s: float = 30.0, *, confirmed: bool = False):
+    def move_focus(self, z: float, timeout_s: float = 30.0, *, confirmed: bool = False) -> CommandTicket:
         """`confirmed`: the operator explicitly approved going above the objective's safe height (APP-03)."""
         unit, frame = self.focus_frame()
         return self.core.router.submit(MoveFocusAbsolute(device_id=self.profile.focus_device, origin=self.origin,
@@ -220,25 +227,25 @@ class InstrumentController:
     #: (UI, scans, time-lapse, calibration)
     turret_safe_z_um: float | None = None
 
-    def set_objective(self, slot: int):
+    def set_objective(self, slot: int) -> CommandTicket:
         if not self.profile.turret_device:
             raise CommandError("turret.set_position", CommandStatus.REJECTED, "no turret device")
         safe, z = self.turret_safe_z_um, self.focus_z()
         retract = safe is not None and z is not None and z > safe and self.objective_slot() != slot
-        if retract:
+        if retract and safe is not None:
             self.move_focus(safe).wait(30)  # the interlock then decides from the observed Z
         # the longest turn is 4 Geneva steps (positions decrease: 1->5->4->3->2) of up to 10 s each, plus Z's retract;
         # the drive service's own deadline is steps x 10 s + 5 s. 15 s timed a real 1->4 turn out mid-swing
         # (2026-11-18 18:33): the turret finished, but the command ended "state uncertain"
         ticket = self.core.router.submit(SetTurretPosition(device_id=self.profile.turret_device, origin=self.origin,
                                                            position=slot, timeout_s=TURRET_TIMEOUT_S))
-        if retract and ticket.wait(30) is CommandStatus.SUCCEEDED:
+        if retract and z is not None and ticket.wait(30) is CommandStatus.SUCCEEDED:
             # Z back where it was before the turn, so every caller (calibration, scans, time-lapse, review) continues
             # at its focus height; only a turret that does not lower Z itself takes this path (the simulator)
             self.move_focus(z).wait(30)
         return ticket
 
-    def set_light(self, channel: str, intensity_percent: float, enabled: bool):
+    def set_light(self, channel: str, intensity_percent: float, enabled: bool) -> CommandTicket:
         if not self.profile.illumination_device:
             raise CommandError("illumination.set", CommandStatus.REJECTED, "no illumination device")
         cmd = SetIllumination(device_id=self.profile.illumination_device, origin=self.origin, channel=channel,
@@ -249,16 +256,22 @@ class InstrumentController:
         self._pending_light[cmd.command_id] = LightState(channel, intensity_percent, enabled)
         return self.core.router.submit(cmd)
 
-    def set_exposure(self, role: CameraRole, exposure_ms: float):
+    def _camera_or_refuse(self, role: CameraRole, command: str) -> CameraProfile:
         cam = self.profile.camera(role)
+        if cam is None:
+            raise CommandError(command, CommandStatus.REJECTED, f"no {role.value} camera in this profile")
+        return cam
+
+    def set_exposure(self, role: CameraRole, exposure_ms: float) -> CommandTicket:
+        cam = self._camera_or_refuse(role, "camera.set_exposure")
         # any direct setting (Capture page, Actual mode) makes apply_camera's cache stale: forget it, so the
         # next capture re-sends its values instead of trusting a value the camera no longer has
         self._camera_values.pop(role, None)
         return self._camera_command(role, SetCameraExposure(device_id=cam.device_id, origin=self.origin,
                                                             exposure_ms=exposure_ms, timeout_s=5.0))
 
-    def set_gain(self, role: CameraRole, gain: float):
-        cam = self.profile.camera(role)
+    def set_gain(self, role: CameraRole, gain: float) -> CommandTicket:
+        cam = self._camera_or_refuse(role, "camera.set_gain")
         if not gain >= 1.0:
             raise CommandError("camera.set_gain", CommandStatus.REJECTED, f"gain factor {gain} is below 1x")
         self._camera_values.pop(role, None)  # see set_exposure
@@ -268,7 +281,7 @@ class InstrumentController:
                                                         timeout_s=5.0))
 
     @staticmethod
-    def run(ticket, timeout: float = 60.0) -> None:
+    def run(ticket: CommandTicket, timeout: float = 60.0) -> None:
         status = ticket.wait(timeout)
         if status is not CommandStatus.SUCCEEDED:
             rec = ticket.record

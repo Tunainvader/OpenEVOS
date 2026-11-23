@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, TextIO
 
 import numpy as np
 
@@ -345,7 +345,7 @@ class NpyDirectorySink:
     def __init__(self, root: Path):
         self.root = Path(root)
         self._dir: Path | None = None
-        self._index = None
+        self._index: TextIO | None = None
 
     def open(self, acquisition_id: str) -> None:
         self._dir = self.root / acquisition_id

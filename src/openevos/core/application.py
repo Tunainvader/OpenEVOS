@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from openevos.core.clock import Clock
 from openevos.core.command_router import CommandRouter
-from openevos.core.command_scheduler import DeviceWorker, ResourceTable
+from openevos.core.command_scheduler import DeviceWorker, ResourceTable, Worker
 from openevos.core.device_manager import PROCESS_OWNERSHIP, DeviceManager, OwnershipRegistry
 from openevos.core.event_bus import EventBus
 from openevos.core.frame_transport import FrameTransport, PreviewCache
@@ -38,7 +38,7 @@ class CoreServices:
         self.devices.shutdown()
 
 
-def build_core(clock: Clock, *, worker_factory: Callable[[str], object] = DeviceWorker,
+def build_core(clock: Clock, *, worker_factory: Callable[[str], Worker] = DeviceWorker,
                ownership: OwnershipRegistry = PROCESS_OWNERSHIP, preview_capacity: int = 1) -> CoreServices:
     bus = EventBus()
     store = RuntimeStateStore(bus)

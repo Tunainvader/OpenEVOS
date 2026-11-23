@@ -45,7 +45,7 @@ class VesselMap(QWidget):
         self.setMinimumSize(220, 150)
         self.setMouseTracking(True)
         if interactive or selectable:
-            self.setFocusPolicy(Qt.StrongFocus)
+            self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAccessibleName("Vessel map")
 
     def sizeHint(self) -> QSize:
@@ -190,18 +190,23 @@ class VesselMap(QWidget):
 
     def _step(self, key) -> None:
         v = self.vessel
+        if v is None or not v.regions:
+            return
         n = len(v.regions)
         cols = v.cols if v.is_plate and v.cols else 1
-        moves = {Qt.Key_Left: -1, Qt.Key_Right: 1, Qt.Key_Up: -cols, Qt.Key_Down: cols}
-        if key == Qt.Key_Home:
+        K = Qt.Key
+        moves = {K.Key_Left: -1, K.Key_Right: 1, K.Key_Up: -cols, K.Key_Down: cols}
+        if key == K.Key_Home:
             i = 0
-        elif key == Qt.Key_End:
+        elif key == K.Key_End:
             i = n - 1
         else:
             i = self._kfocus + moves[key]
         self._kfocus = min(max(i, 0), n - 1)
 
     def _activate(self) -> None:
+        if self.vessel is None or not self.vessel.regions:
+            return
         r = self.vessel.regions[self._kfocus]
         if self.selectable:
             self.selected ^= {r.region_id}

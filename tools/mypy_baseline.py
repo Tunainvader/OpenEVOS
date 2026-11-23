@@ -4,7 +4,8 @@
     python tools/mypy_baseline.py --update   # record the current errors as the baseline (after a reviewed change)
 
 Errors are matched on (file, error code, message) with counts, not on line numbers, so editing a file does not turn its
-old errors into "new" ones. Config: [tool.mypy] in pyproject.toml.
+old errors into "new" ones. Config: [tool.mypy] in pyproject.toml. Code under STRICT_PATHS (what commands the
+instrument) gets no baseline allowance at all: any error there fails.
 """
 
 from __future__ import annotations
@@ -18,6 +19,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = ROOT / "mypy-baseline.txt"
+#: the code that commands the instrument: held at zero mypy errors, with stricter settings ([[tool.mypy.overrides]] in
+#: pyproject.toml); the baseline never covers an error here (2026-11-24)
+STRICT_PATHS = (
+    "src/openevos/core/",
+    "src/openevos/safety/",
+    "src/openevos/hal/",
+    "src/openevos/backends/technosoft/",
+    "src/openevos/backends/ledboard/",
+    "src/openevos/acquisition/controller.py",
+    "src/openevos/acquisition/session.py",
+)
 LINE = re.compile(r"^(?P<file>[^:]+):\d+(?::\d+)?: error: (?P<msg>.*?)\s+\[(?P<code>[a-z0-9-]+)\]$")
 
 
@@ -55,6 +67,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"baseline: {sum(now.values())} errors in {len(now)} distinct entries")
         return 0
     base = load()
+    strict = {k: n for k, n in now.items() if k.startswith(STRICT_PATHS)}
+    if strict:  # no baseline allowance here, even for an error that is listed in it
+        print(f"{sum(strict.values())} mypy error(s) in code held to zero (STRICT_PATHS):")
+        for k, n in sorted(strict.items()):
+            print(f"  {n}x {k}")
+        return 1
     new = {k: n - base.get(k, 0) for k, n in now.items() if n > base.get(k, 0)}
     fixed = sum(max(0, n - now.get(k, 0)) for k, n in base.items())
     if new:

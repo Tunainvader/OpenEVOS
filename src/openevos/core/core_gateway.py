@@ -26,7 +26,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypedDict
 
 from openevos.core.application import CoreServices
 from openevos.core.audit import AuditEvent, AuditTrail, utc_now_iso
@@ -48,6 +48,7 @@ from openevos.core.command_language import (
 from openevos.core.event_bus import CommandLifecycleEvent
 from openevos.core.models import (
     AllIlluminationOff,
+    Command,
     CommandOrigin,
     CommandStatus,
     HomeFocus,
@@ -104,7 +105,7 @@ class ReadOnlyView:
 @dataclass(frozen=True)
 class CommandResult:
     command: str
-    role: Role
+    role: Role | None  # None for a command addressed by device id, not role (motor_jog: the physical stage)
     value: Any
     args: dict[str, Any]
     duration_ms: float
@@ -168,6 +169,23 @@ class PolicyView:
         if mode not in AVAILABLE_MODES:
             raise ModeNotAvailable(f"{mode.display} mode needs a validated real backend; not available in this build")
         self.mode = mode
+
+
+class Issuer(TypedDict):
+    """Who issues a command: `gw.execute(name, **issuer, ...)`, typed so a wrong actor or owner is caught."""
+
+    actor: Actor
+    owner: str | None
+
+
+class _CommandFields(TypedDict):
+    """The fields every core command takes from the gateway (typed, so each command's own fields are checked)."""
+
+    device_id: str
+    origin: CommandOrigin
+    owner: str | None
+    confirmed: bool
+    timeout_s: float
 
 
 @dataclass(frozen=True)
@@ -418,9 +436,9 @@ class CoreGateway:
         return role, args
 
     def _build(self, name: str, role: Role, a: dict[str, Any], spec: CommandSpec, actor: Actor,
-               owner: str | None, confirmed: bool, p: _Pending):
-        kw = {"device_id": role.value, "origin": ORIGIN[actor], "owner": owner, "confirmed": confirmed,
-              "timeout_s": spec.timeout_s}
+               owner: str | None, confirmed: bool, p: _Pending) -> Command:
+        kw: _CommandFields = {"device_id": role.value, "origin": ORIGIN[actor], "owner": owner,
+                              "confirmed": confirmed, "timeout_s": spec.timeout_s}
         if name in ("xy.move_absolute", "xy.move_relative"):
             if name == "xy.move_relative":
                 x, y = self._observed(p, spec, role, ("x", "y"))

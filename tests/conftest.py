@@ -39,6 +39,25 @@ def _own_instance_section(monkeypatch):
     monkeypatch.setattr(instance_guard, "SECTION_NAME", f"Local\\OpenEVOS-instrument-test-{os.getpid()}")
 
 
+@pytest.fixture(autouse=True, scope="module")
+def _drop_closed_windows():
+    """Delete the closed, parentless top-level windows earlier test modules left behind (2026-11-24: 118 of them by
+    the focus-pad tests; every stylesheet change re-styled them all, and a theme switch in the full suite took
+    minutes, so the run looked hung). At a module's start every fixture of the modules before it has ended; a window
+    still showing, or one with a parent (a menu, a popup), is left alone."""
+    if "PySide6.QtWidgets" in sys.modules:
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is not None:
+            for w in app.topLevelWidgets():
+                if w.parent() is None and not w.isVisible():
+                    w.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    yield
+
+
 def load(name: str):
     return json.loads((FIX / name).read_text("utf-8"))
 

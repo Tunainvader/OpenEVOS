@@ -31,7 +31,7 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, TypedDict
 
 from openevos.backends.technosoft import power_up_record, watchdog
 from openevos.backends.technosoft import protocol as tp
@@ -52,6 +52,7 @@ from openevos.backends.technosoft.transport import (
 from openevos.core.models import (
     Activity,
     BackendKind,
+    Command,
     Connection,
     DeviceKind,
     FirmwareMode,
@@ -61,6 +62,7 @@ from openevos.core.models import (
     Position,
     SetTurretPosition,
 )
+from openevos.hal.backend import ExecutionContext, Reporter
 from openevos.safety.capabilities import (
     AxisCapability,
     AxisLimits,
@@ -106,7 +108,7 @@ CLOSED_LOOP = ("X", "Y", "Z", "F")
 SEQUENTIAL_XY = True
 
 
-def calibrated_travel_box(parsed_calibration) -> tuple[dict[str, tuple[float, float]] | None, str]:
+def calibrated_travel_box(parsed_calibration: Any) -> tuple[dict[str, tuple[float, float]] | None, str]:
     """PC travel box from the git-ignored parsed calibration (Step D + pearl_persistent): per axis
     0 .. (calibrated max - 2 mm), exactly the range Motor Gate 8 verified. Validated like Gate 7
     (min within (-2 mm, 0], span within 0.5 mm of the stored spans); any problem -> (None, reason)."""
@@ -126,7 +128,7 @@ def calibrated_travel_box(parsed_calibration) -> tuple[dict[str, tuple[float, fl
             return None, f"{ax} calibration limits fail validation"
         box[ax.lower()] = (0.0, round(um_from_counts(ax, hi) - CALIBRATION_MARGIN_UM, 1))
     return box, ""
-def calibrated_limits_counts(parsed_calibration) -> tuple[dict[str, tuple[int, int]] | None, str]:
+def calibrated_limits_counts(parsed_calibration: Any) -> tuple[dict[str, tuple[int, int]] | None, str]:
     """The X/Y drive limits Gate 7 loads (counts), validated exactly as Gate 7's load_limits does: lMin within
     (-2 mm, 0], span within 0.5 mm of the stored span, lMax wider than the power-up 50,000. (None, why) otherwise."""
     from pathlib import Path
@@ -253,7 +255,7 @@ class DriveLink:
 @dataclass
 class _MoveJob:
     command_id: str
-    ctx: object
+    ctx: ExecutionContext
     targets: dict[str, int]  # axis -> counts
     target_um: tuple[float, float]
 
@@ -262,7 +264,7 @@ class _MoveJob:
 class _Leg:
     """One leg of a stage move while it runs (audit APP-16): what the steps of TelemetryService._move_leg share.
     `outcome` is what the monitor and the motion profile record; each step sets it before it acts."""
-    ctx: object
+    ctx: ExecutionContext
     axes: list[str]
     targets: dict[str, int]
     start: dict[str, int]
@@ -328,14 +330,16 @@ class _RehomeJob:
     record: dict = field(default_factory=dict)
 
 
-def _set_extra_writes(link: DriveLink, frames: frozenset) -> None:
+def _set_extra_writes(link: DriveLink, frames: frozenset[bytes]) -> None:
     """Register exact extra frames on the port for one operation (ADR-0056/0058); the transport's last check uses it."""
-    port: Any = link.port
-    port.extra_writes = frames
+    link.port.extra_writes = frames
 
 
 class _ReturnCtx:
-    """The minimal command context `_run_move` needs, for the re-home's own return move (no router command)."""
+    """The command context `_run_move` needs (hal.backend.ExecutionContext), for the re-home's own return move (no
+    router command)."""
+
+    command_id = "rehome-return"
 
     def __init__(self) -> None:
         self.cancel_requested = False
@@ -347,17 +351,20 @@ class _ReturnCtx:
     def mark_started(self) -> None:
         self.started = True
 
-    def complete(self, position=None) -> None:
-        if self.ok is None:
-            self.ok, self.position, self.message = True, position, "returned"
+    def report_progress(self, fraction: float, message: str | None = None) -> None:
+        pass
 
-    def fail(self, message: str, error_code: str = "") -> None:
+    def complete(self, result: Position | None = None, payload: object | None = None) -> None:
+        if self.ok is None:
+            self.ok, self.position, self.message = True, result, "returned"
+
+    def fail(self, message: str, error_code: str | None = None) -> None:
         if self.ok is None:
             self.ok, self.message = False, message
 
-    def mark_cancelled(self, position=None) -> None:
+    def mark_cancelled(self, result: Position | None = None) -> None:
         if self.ok is None:
-            self.ok, self.position, self.message = False, position, "return cancelled by a stop"
+            self.ok, self.position, self.message = False, result, "return cancelled by a stop"
 
 
 #: the re-home's limits (Gate 20 on the unit: started at the first poll, done in 10.6-17.7 s)
@@ -379,7 +386,7 @@ REHOME_PRE_READS = ("ESTATEV", "IINITONCEDONE", "SRH", "SRL", "MER", "ISTATUSFLA
 class _FocusJob:
     """Z to an absolute target in counts (ADR-0053)."""
     command_id: str
-    ctx: object
+    ctx: ExecutionContext
     counts: int
 
 
@@ -387,9 +394,12 @@ class _FocusJob:
 class _TurretJob:
     """Objective turret to position 1..5 (ADR-0053): Z retracted to 0 first, stage required in TURRET_STAGE_BOX_MM."""
     command_id: str
-    ctx: object
+    ctx: ExecutionContext
     position: int
 
+
+#: everything the service thread takes from its queue
+_Job = _MoveJob | _CarriageJob | _ReleaseJob | _RehomeJob | _FocusJob | _TurretJob
 
 ZO_DEVICES = ("motor.focus", "motor.objective_turret")
 #: Z: generous timeout floor (power-up CSPDCMD 10.0 is ~12,500 counts/s; Gate 18: 5 mm in < 4 s) and wrong-way guard
@@ -426,7 +436,7 @@ class TelemetryBackend:
         self.device_id, self.kind = spec.device_id, spec.kind
         self.physical_id = f"technosoft:{port_label}:{'+'.join(spec.axes)}"
         self._service = service
-        self._reporter = None
+        self._reporter: Reporter | None = None
         self._seq = itertools.count(1)
         self._lock = threading.Lock()
         self._position: Position | None = None
@@ -469,7 +479,7 @@ class TelemetryBackend:
                                                                      else ()),
                                   note=f"X/Y moves at power-up speed inside the {kind}")
 
-    def attach(self, reporter) -> None:
+    def attach(self, reporter: Reporter) -> None:
         self._reporter = reporter
 
     def connect(self) -> None:
@@ -478,7 +488,7 @@ class TelemetryBackend:
     def disconnect(self) -> None:
         self._service.stop()
 
-    def start(self, command, ctx) -> None:
+    def start(self, command: Command, ctx: ExecutionContext) -> None:
         if self.controllable and self.spec.device_id == "motor.focus" and isinstance(command, MoveFocusAbsolute):
             self._service.submit(_FocusJob(command.command_id, ctx, counts_from_um("Z", command.target().get("z"))))
             return
@@ -508,7 +518,7 @@ class TelemetryBackend:
         with self._lock:
             return self._position
 
-    def verify_result(self, command) -> tuple[bool, str]:
+    def verify_result(self, command: Command) -> tuple[bool, str]:
         """Turret: the drive's position sensor must read the commanded position (ADR-0053)."""
         if isinstance(command, SetTurretPosition):
             pos = self.read_position()
@@ -522,7 +532,7 @@ class TelemetryBackend:
         (power cycle or ADR-0057 release)."""
         self.report(health=Health.NORMAL, reason="recovered by the operator")
 
-    def report(self, **fields) -> None:
+    def report(self, **fields: Any) -> None:
         if "position" in fields:
             with self._lock:
                 self._position = fields["position"]
@@ -560,7 +570,7 @@ class TelemetryService:
         self.speed_control = False  # ADR-0032: the operator may choose slow/medium/fast (else drives untouched)
         self.speed_preset = "fast"
         self._speed_changed = False  # axis -> why; cleared only by restarting after a power cycle
-        self._jobs: queue.Queue[_MoveJob] = queue.Queue()
+        self._jobs: queue.Queue[_Job] = queue.Queue()
         self._started = False
         self._last: dict[str, dict[str, int]] | None = None
         self.cycles = 0
@@ -607,7 +617,7 @@ class TelemetryService:
             t.join(timeout=5)
 
     # ------------------------------------------------------------------ control requests (any thread)
-    def submit(self, job: _MoveJob) -> None:
+    def submit(self, job: _Job) -> None:
         self._jobs.put(job)
         self._wake.set()
 
@@ -626,7 +636,7 @@ class TelemetryService:
         if why:
             return False, why
         job = _ReleaseJob(threading.Event(), who)
-        self.submit(job)  # type: ignore[arg-type]
+        self.submit(job)
         if not job.done.wait(timeout_s):
             return False, f"no fresh X/Y reads within {timeout_s:g} s; the lock stays"
         return job.ok, job.message
@@ -649,7 +659,7 @@ class TelemetryService:
             return why
         job = _RehomeJob(threading.Event(), who)
         self._rehome = job
-        self.submit(job)  # type: ignore[arg-type]
+        self.submit(job)
         return job
 
     def move_carriage(self, dest: str, timeout_s: float = CARRIAGE_WAIT_S) -> tuple[bool, str]:
@@ -664,7 +674,7 @@ class TelemetryService:
         except tp.ProtocolRefused as exc:
             return False, str(exc)
         job = _CarriageJob(dest, threading.Event())
-        self.submit(job)  # type: ignore[arg-type]
+        self.submit(job)
         if not job.done.wait(timeout_s):
             self.request_stop("carriage timeout")
             return False, f"F did not report back within {timeout_s:g} s; STOP sent"
@@ -674,9 +684,9 @@ class TelemetryService:
     def poll_once(self, link: DriveLink, interruptible: bool = False) -> dict[str, dict[str, int]] | None:
         """All axes' status. With `interruptible`, returns None as soon as a move or stop is waiting, so an
         operator command never waits for a full poll (~35 reads) to finish."""
-        out = {}
+        out: dict[str, dict[str, int]] = {}
         for ax in tp.AXIS_IDS:
-            vals = {}
+            vals: dict[str, int] = {}
             for name in READ_ORDER[ax]:
                 if interruptible and (not self._jobs.empty() or self._stop_request.is_set()):
                     return None
@@ -865,13 +875,15 @@ class TelemetryService:
                   for ax in ("X", "Y") for var, val in zip(("LPOSMIN", "LPOSMAX"), self.calibrated_limits[ax],
                                                            strict=True)]
         port = link.port
-        record = {"utc": datetime.now(timezone.utc).isoformat(timespec="milliseconds"), "writes": [], "ok": False}
+        writes: list[dict[str, Any]] = []
+        record: dict[str, Any] = {"utc": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                                  "writes": writes, "ok": False}
         port.extra_writes = frozenset(f for *_r, f in frames)
         try:
             for ax, var, val, frame in frames:
                 link.write(frame)
                 got = link.read(tp.VARS[ax][var])
-                record["writes"].append({"axis": ax, "var": var, "value": val, "read_back": got})
+                writes.append({"axis": ax, "var": var, "value": val, "read_back": got})
                 if got != val:
                     raise _LinkError(f"{ax} {var} read back {got}, wrote {val}")
             record["ok"] = True
@@ -938,7 +950,7 @@ class TelemetryService:
             obs["reason"] = "; ".join(st["warnings"])
         return obs
 
-    def _report_all(self, **fields) -> None:
+    def _report_all(self, **fields: Any) -> None:
         for b in self.backends:
             b.report(**fields)
 
@@ -1010,7 +1022,10 @@ class TelemetryService:
                 continue
             if isinstance(job, (_FocusJob, _TurretJob)):
                 try:
-                    (self._run_focus if isinstance(job, _FocusJob) else self._run_turret)(link, job)
+                    if isinstance(job, _FocusJob):
+                        self._run_focus(link, job)
+                    else:
+                        self._run_turret(link, job)
                 except (_LinkError, TransportError, OSError, tp.ProtocolRefused) as exc:
                     job.ctx.fail(f"motor link error: {exc}", error_code="link")
                     raise
@@ -1405,10 +1420,10 @@ class TelemetryService:
             reason=f"objective {TURRET_OBJECTIVES.get(position, '?')}" if position else "turret between positions")
         return pos
 
-    def _stop_requested(self, ctx=None) -> bool:
+    def _stop_requested(self, ctx: ExecutionContext | None = None) -> bool:
         return self._stop_request.is_set() or self._stop.is_set() or bool(getattr(ctx, "cancel_requested", False))
 
-    def _z_move(self, link: DriveLink, target: int, ctx=None) -> str:
+    def _z_move(self, link: DriveLink, target: int, ctx: ExecutionContext | None = None) -> str:
         """Z to `target` counts as Motor Gate 18 did (ADR-0053): target, ESTATE 8, completion on SRH bit 9 + ESTATEV 13 +
         CPOS = target, APOS within LCONVERGEBAND, then ESTATE 6 at rest. '' = done; otherwise why it stopped (Z's stop
         sent). Never writes speed or acceleration."""  # noqa: E501
@@ -1546,7 +1561,7 @@ class TelemetryService:
         """True when a newly seen position is not on the path or goes back along it."""
         return pos not in path or (last in path and path.index(pos) < path.index(last))
 
-    def _turret_turn(self, link: DriveLink, ctx, cur: int, n: int) -> str:
+    def _turret_turn(self, link: DriveLink, ctx: ExecutionContext, cur: int, n: int) -> str:
         """Start the turn from `cur` to `n` and poll it. '' = settled at n; otherwise why it was stopped."""
         o = tp.VARS["O"]
         z0 = link.read(tp.VARS["Z"]["APOS"])
@@ -1604,7 +1619,7 @@ class TelemetryService:
         except OSError:
             return why
 
-    def _turret_abort(self, link: DriveLink, ctx, why: str) -> None:
+    def _turret_abort(self, link: DriveLink, ctx: ExecutionContext, why: str) -> None:
         """The vendor's AXISOFF, once (and the X/Y stop on an operator STOP); then cancel or fail the command."""
         link.write(tp.O_AXISOFF_FRAME)
         if why == "stopped" and self._stop_request.is_set():
@@ -1708,7 +1723,7 @@ class TelemetryService:
         job.ok = True
         job.message = f"F at {job.dest}: APOS {fin['APOS']} in {time.monotonic() - t0:.1f} s"
 
-    def _settle_between_legs(self, link: DriveLink, ctx) -> None:
+    def _settle_between_legs(self, link: DriveLink, ctx: ExecutionContext) -> None:
         """Fast X/Y samples for the monitor's settle time before the next leg takes the still axis' reference.
         A drive reports motion complete inside its 5-count band, and the axis keeps converging: on COM3 (2026-11-16)
         X went -19 -> -1 -> 0 after its go-to leg, while Y's leg had already started. A reference taken mid-settle
@@ -2096,6 +2111,16 @@ def observation(spec: DeviceSpec, values: dict[str, dict[str, int]], *, controll
             "reason": "telemetry"}
 
 
+class _ServiceOptions(TypedDict):
+    """TelemetryService's keyword options as create_telemetry passes them (typed, so a wrong one is caught)."""
+
+    poll_interval_s: float
+    motion: bool
+    travel_box_um: dict[str, tuple[float, float]] | None
+    monitor: StageMonitor
+    fast_log: bool
+
+
 def create_telemetry(options: dict) -> TelemetryService:
     """TELEMETRY factory. options: {"port": "COM3" | "auto" | "sim", "poll_interval_s": float,
     "motion": bool (ADR-0024: X/Y stage control; default False = read-only),
@@ -2110,8 +2135,8 @@ def create_telemetry(options: dict) -> TelemetryService:
     monitor = StageMonitor(options.get("monitor_dir"), record=bool(options.get("stage_log")))
     if options.get("power_cycled") and port.lower() != "sim":
         monitor.power_cycle_seen(str(options["power_cycled"]))
-    kw = {"poll_interval_s": interval, "motion": motion, "travel_box_um": box, "monitor": monitor,
-          "fast_log": bool(options.get("fast_log", motion))}
+    kw: _ServiceOptions = {"poll_interval_s": interval, "motion": motion, "travel_box_um": box, "monitor": monitor,
+                           "fast_log": bool(options.get("fast_log", motion))}
     locked = [str(a).upper() for a in options.get("locked_axes") or ()]
     if port.lower() == "sim":
         chain = SimulatedDriveChain(allow_motion=motion)

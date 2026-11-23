@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import ctypes
 import sys
+from collections.abc import Callable
 from ctypes import wintypes
 from dataclasses import dataclass
+from typing import Any
 
 if sys.platform != "win32":  # pragma: no cover - importable elsewhere for tests, unusable
     raise ImportError("openevos.backends.ledboard.winhid needs Windows")
@@ -191,7 +193,7 @@ class WinHidChannel:
     def __enter__(self) -> WinHidChannel:  # noqa: PYI034 - typing.Self needs Python 3.11
         return self
 
-    def __exit__(self, *_exc) -> None:
+    def __exit__(self, *_exc: object) -> None:
         self.close()
 
     def close(self) -> None:
@@ -203,7 +205,7 @@ class WinHidChannel:
         if not _hid.HidD_FlushQueue(self._h):
             raise _err("HidD_FlushQueue")
 
-    def _io(self, fn, buf, length: int, timeout_s: float, what: str) -> int:
+    def _io(self, fn: Callable[..., Any], buf: Any, length: int, timeout_s: float, what: str) -> int:
         ev = _k32.CreateEventW(None, True, False, None)
         if not ev:
             raise _err("CreateEventW")

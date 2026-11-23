@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 import threading
 from collections.abc import Callable
@@ -130,7 +131,7 @@ class EventBus:
                 self._deliver(sub, event)
             else:
                 try:
-                    sub.dispatcher(lambda s=sub, e=event: self._deliver(s, e))
+                    sub.dispatcher(functools.partial(self._deliver, sub, event))
                 except BaseException as exc:  # noqa: BLE001
                     self._fail(exc, event)
 

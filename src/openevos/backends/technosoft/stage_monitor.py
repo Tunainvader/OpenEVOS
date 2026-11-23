@@ -33,9 +33,11 @@ import json
 import threading
 import time
 from collections import deque
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from openevos.backends.technosoft import protocol as tp
 
@@ -105,7 +107,8 @@ class Latch:
 
 
 class StageMonitor:
-    def __init__(self, evidence_dir: Path | str | None = None, *, clock=time.monotonic, record: bool = False):
+    def __init__(self, evidence_dir: Path | str | None = None, *, clock: Callable[[], float] = time.monotonic,
+                 record: bool = False):
         self.evidence_dir = Path(evidence_dir) if evidence_dir else None
         self._clock = clock
         self._t0 = clock()
@@ -127,7 +130,7 @@ class StageMonitor:
         self.evidence_written: list[Path] = []
         self._rehomed = dict.fromkeys(AXES, False)
         self._evidence_due: float | None = None
-        self._record = None
+        self._record: _RowWriter | None = None
         self.record_path: Path | None = None
         self.carried_over = False  # the latch came from the latch file (an earlier session), not from this one
         #: still axes knocked (within CROSS_AXIS_TOLERANCE_COUNTS) by the move in progress: axis -> largest change
@@ -215,8 +218,11 @@ class StageMonitor:
                                     "would lock again")
             if problems:
                 return "; ".join(problems) + f": {RECOVERY}"
-            self.latch.values["release_reads"] = {ax: dict(values[ax]) for ax in AXES}
-            self._clear(f"{who} release: {self.latch.rule} on {self.latch.axis}, recorded drift "
+            latch = self.latch
+            if latch is None:  # _release_blocker refuses this already; kept so the release cannot act on no lock
+                return "the stage is not locked"
+            latch.values["release_reads"] = {ax: dict(values[ax]) for ax in AXES}
+            self._clear(f"{who} release: {latch.rule} on {latch.axis}, recorded drift "
                         f"{self.latch_drift():+d} counts; X and Y read homed, idle, fault-free, powered and within "
                         f"{MOVE_DRIFT_MAX_COUNTS} counts of their command")
             return ""
@@ -432,7 +438,7 @@ class StageMonitor:
             self.commands.append((round(t, 3), "move " + ", ".join(f"{a} {positions.get(a)} -> {c}"
                                                                     for a, c in targets.items())))
 
-    def end_move(self, axes, why: str = "done") -> None:
+    def end_move(self, axes: Iterable[str], why: str = "done") -> None:
         t = self._now()
         with self._lock:
             for ax in axes:
@@ -542,7 +548,7 @@ class StageMonitor:
                 self._record = None
 
     # ------------------------------------------------------------------ internals
-    def _flag_rule(self, ax: str, isf: int | None, srl: int | None):
+    def _flag_rule(self, ax: str, isf: int | None, srl: int | None) -> tuple[str, str, str, dict[str, int]] | None:
         if isf is not None and isf & ISF_OVERCURRENT:
             msg = (f"{ax} drive over-current trip recorded (ISTATUSFLAGS 0x{isf:04X} bit 0; the drive switched {ax} "
                    "off; MER reads 0 after this)")
@@ -625,12 +631,16 @@ class StageMonitor:
 
     def _open_record(self) -> None:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        folder = self.evidence_dir
+        if folder is None:  # memory only: nothing to record to
+            return
         try:
-            self.evidence_dir.mkdir(parents=True, exist_ok=True)
-            self.record_path = self.evidence_dir / f"stage-log-{stamp}.csv"
+            folder.mkdir(parents=True, exist_ok=True)
+            self.record_path = folder / f"stage-log-{stamp}.csv"
             self._record_fh = open(self.record_path, "w", newline="", encoding="utf-8")  # noqa: SIM115 - kept open
-            self._record = _RowWriter(csv.writer(self._record_fh))
-            self._record.writerow(CSV_COLUMNS, raw=True)
+            writer = _RowWriter(csv.writer(self._record_fh))
+            writer.writerow(CSV_COLUMNS, raw=True)
+            self._record = writer
         except OSError:
             self._record, self.record_path = None, None
 
@@ -658,7 +668,7 @@ class _RowWriter:
     def __init__(self, writer):
         self._w = writer
 
-    def writerow(self, row, raw: bool = False) -> None:
+    def writerow(self, row: tuple[Any, ...], raw: bool = False) -> None:
         self._w.writerow(row if raw else _csv_row(row))
 
 

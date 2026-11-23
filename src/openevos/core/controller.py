@@ -22,7 +22,7 @@ from typing import Any
 from openevos.core.acquisition import AcquiredFrame, AcquisitionEngine, AcquisitionPlan, Progress
 from openevos.core.channels import FLUORESCENCE, ChannelPreset, ChannelSettings, build_presets
 from openevos.core.command_language import Actor, CommandRejected
-from openevos.core.core_gateway import CoreGateway, StopReport
+from openevos.core.core_gateway import CoreGateway, Issuer, StopReport
 from openevos.hal.types import Frame, IncubatorTelemetry, ObjectiveInfo, Role
 
 INCUBATOR_SETPOINT_COMMANDS = {
@@ -169,7 +169,7 @@ class MicroscopeController:
                        start_live: bool | None = None) -> None:
         gw = self.gw
         s = settings or self._settings[preset.name]
-        kw = {"actor": actor, "owner": owner}
+        kw: Issuer = {"actor": actor, "owner": owner}
         prev = self._active
         if prev is not None and prev.camera != preset.camera and self._is_live(prev.camera):
             gw.execute("camera.stop_live", camera=prev.camera.value, **kw)
@@ -255,7 +255,7 @@ class MicroscopeController:
 
     def _change_objective(self, position: int, actor: Actor, owner: str | None) -> None:
         gw = self.gw
-        kw = {"actor": actor, "owner": owner}
+        kw: Issuer = {"actor": actor, "owner": owner}
         current = self.objective()
         if position == current.position:
             return
@@ -287,7 +287,7 @@ class MicroscopeController:
 
     def _snap(self, actor: Actor, owner: str | None) -> Frame:
         cam = self.active_camera.value
-        kw = {"actor": actor, "owner": owner}
+        kw: Issuer = {"actor": actor, "owner": owner}
         was_live = self._is_live(self.active_camera)
         if was_live:
             self.gw.execute("camera.stop_live", camera=cam, **kw)
@@ -317,7 +317,8 @@ class MicroscopeController:
     # ------------------------------------------------------------------------------ incubator
     def incubator_set(self, control: str, value: float, *, confirmed: bool) -> None:
         cmd, param = INCUBATOR_SETPOINT_COMMANDS[control]
-        self.gw.execute(cmd, confirmed=confirmed, **{param: value})
+        params: dict[str, Any] = {param: value}
+        self.gw.execute(cmd, confirmed=confirmed, **params)
 
     def incubator_enable(self, control: str, enabled: bool, *, confirmed: bool) -> None:
         self.gw.execute("incubator.set_enabled", control=control, enabled=enabled,

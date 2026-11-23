@@ -66,9 +66,31 @@ omit = ["src/openevos/backends/ledboard/winhid.py", "src/openevos/maintenance/wi
 # errors stand out. Third-party packages without stubs are not checked.
 files = ["src/openevos"]
 python_version = "3.12"
+# the hardware backends are Windows-only (ctypes.windll, wintypes); every CI runner checks as Windows, so the result
+# (and the baseline, recorded on Windows) is the same on ubuntu-latest
+platform = "win32"
 ignore_missing_imports = true
 warn_unused_configs = true
 show_error_codes = true
+
+# The code that commands the instrument (core command path, safety checks, HAL, the Technosoft drives, the LED board,
+# the controller and session that build them) is held stricter, with no baseline allowance: any error there fails
+# tools/mypy_baseline.py (STRICT_PATHS). 2026-11-24: brought to zero errors (was ~260 in the baseline).
+[[tool.mypy.overrides]]
+module = [
+    "openevos.core.*",
+    "openevos.safety.*",
+    "openevos.hal.*",
+    "openevos.backends.technosoft.*",
+    "openevos.backends.ledboard.*",
+    "openevos.acquisition.controller",
+    "openevos.acquisition.session",
+]
+check_untyped_defs = true
+disallow_incomplete_defs = true
+strict_equality = true
+warn_unused_ignores = true
+warn_redundant_casts = true
 
 [tool.ruff]
 # the code is written to 120 columns (100 flagged 4,332 lines, 120 flags 187); audit APP-17

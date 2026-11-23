@@ -70,7 +70,7 @@ class BackendUnavailable(RuntimeError):
     pass
 
 
-def load_backend(name: str):
+def load_backend(name: str) -> Any:
     target = BACKENDS.get(name)
     if target is None:
         raise BackendUnavailable(f"backend '{name}' is not available (known: {sorted(BACKENDS)})")
@@ -78,7 +78,7 @@ def load_backend(name: str):
     return getattr(importlib.import_module(module_name), attr)
 
 
-def load_telemetry(name: str):
+def load_telemetry(name: str) -> Any:
     target = TELEMETRY.get(name)
     if target is None:
         raise BackendUnavailable(f"telemetry source '{name}' is not available (known: {sorted(TELEMETRY)})")

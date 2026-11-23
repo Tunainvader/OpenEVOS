@@ -254,7 +254,7 @@ READ_METHODS: dict[type, tuple[str, ...]] = {
 }
 
 #: Interface each role must implement.
-ROLE_INTERFACE: dict[Role, type[HardwareDevice]] = {
+ROLE_INTERFACE: dict[Role, type] = {  # abstract interfaces: `type`, as READ_METHODS (type[...] wants a concrete class)
     Role.CAMERA_MONO: CameraDevice,
     Role.CAMERA_COLOR: CameraDevice,
     Role.XY_STAGE: XYStageDevice,

@@ -25,6 +25,7 @@ reject banned command kinds before they are parsed.
 from __future__ import annotations
 
 import re
+from typing import Any
 
 # Normalised (lowercase, alphanumerics only) fragments. A name containing any of them is banned.
 _BANNED_FRAGMENTS: tuple[str, ...] = (
@@ -308,7 +309,7 @@ class FirmwareModeRefusal:
     """Bootloader quarantine reasons for a device snapshot (duck-typed to avoid import cycles)."""
 
     @staticmethod
-    def reasons(snapshot) -> list[str]:
+    def reasons(snapshot: Any) -> list[str]:  # a DeviceSnapshot, duck-typed (import cycle)
         mode = getattr(snapshot.firmware_mode, "value", str(snapshot.firmware_mode))
         kind = getattr(snapshot.backend_kind, "value", str(snapshot.backend_kind))
         if mode in ("bootloader", "recovery"):

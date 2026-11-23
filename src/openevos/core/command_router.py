@@ -178,6 +178,9 @@ class CommandRouter:
             if not decision.allowed:
                 self._transition(entry, S.REJECTED, decision.message, check=decision.first_check or "safety")
                 return ticket
+            if rec is None:  # the safety check refuses a device with no capability record; this keeps it so here too
+                self._transition(entry, S.REJECTED, f"{command.device_id} is not registered", check="state")
+                return ticket
             claim = claim_for_command(command)
             covered = command.owner is not None and command.owner in self._long and self._covers(command.owner, claim)
             if not covered:
