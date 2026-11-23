@@ -51,6 +51,12 @@ def _table(headers: list[str]) -> QTableWidget:
     return t
 
 
+def _fit_rows(t: QTableWidget) -> None:
+    """At least tall enough for the header and every row, so a short fixed list never needs an inner scroll bar."""
+    h = t.horizontalHeader().height() + sum(t.rowHeight(r) for r in range(t.rowCount())) + 2 * t.frameWidth() + 4
+    t.setMinimumHeight(max(h, 120))
+
+
 def _set_row(t: QTableWidget, r: int, values, colors: dict[int, str] | None = None) -> None:
     for c, v in enumerate(values):
         it = QTableWidgetItem(str(v))
@@ -694,6 +700,7 @@ class CalibrationPage(QWidget):
             res = self.results.get(key) or ("applied" if st.get(key) else "not run — nominal values in use")
             _set_row(self.table, r, (title, page, st.get(key) or "—", res), {3: theme.OK if st.get(key) else theme.MUTED})  # noqa: E501
         self.table.resizeRowsToContents()
+        _fit_rows(self.table)  # every procedure visible, no inner scroll bar (UI review 2026-11-24)
         v = self.session.vessel
         self.lbl_nominal.setText(f"{v.display_name}: focus nominal {v.focus_nominal_um:.1f} µm · Find sample range "
                                  f"{v.focus_range_um:.0f} µm")

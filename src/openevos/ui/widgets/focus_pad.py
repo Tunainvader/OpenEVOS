@@ -841,8 +841,7 @@ class ZFocusPanel(QWidget):
         af = QHBoxLayout()
         af.setSpacing(6)
         self.btn_find = QPushButton("Find sample")
-        self.btn_fine = QPushButton("Auto fine")
-        self.btn_fine.setObjectName("primary")
+        self.btn_fine = QPushButton("Auto fine")  # a plain button: Capture is the page's one primary action
         self.btn_snap = QPushButton("Snap to last")
         self.btn_find.setToolTip("Wide search around the vessel focus nominal")
         self.btn_fine.setToolTip("Narrow search around the current focus (Ctrl+F)")

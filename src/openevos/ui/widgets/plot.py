@@ -34,7 +34,7 @@ class MiniPlot(QWidget):
         p.setBrush(QColor(theme.INPUT))
         p.drawRect(r)
         f = QFont(self.font())
-        f.setPixelSize(10)
+        f.setPixelSize(11)
         p.setFont(f)
         p.setPen(QColor(theme.TEXT_2))
         p.drawText(QRectF(r.left(), 2, r.width(), 14), Qt.AlignLeft | Qt.AlignVCenter, self.title or "Select a line or ROI")  # noqa: E501

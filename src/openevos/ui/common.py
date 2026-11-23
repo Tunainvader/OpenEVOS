@@ -99,6 +99,23 @@ def empty_hint(view, text: str):
     return view
 
 
+def empty_combo(combo, text: str):
+    """A drop-down that says why it is empty and is disabled until it has items (UI review 2026-11-24: empty boxes
+    drew as blank outlines). The placeholder shows while nothing is chosen."""
+    combo.setPlaceholderText(text)
+
+    def sync(*_a):
+        combo.setEnabled(combo.count() > 0)
+        if combo.count() == 0:
+            combo.setCurrentIndex(-1)
+
+    m = combo.model()
+    for sig in (m.rowsInserted, m.rowsRemoved, m.modelReset):
+        sig.connect(sync)
+    sync()
+    return combo
+
+
 def expanding(w: QWidget) -> QWidget:
     w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
     return w

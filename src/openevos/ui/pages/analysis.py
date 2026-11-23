@@ -53,7 +53,7 @@ from openevos.analysis.count import (
 )
 from openevos.imaging.composite import Layer, auto_range, composite
 from openevos.ui import theme
-from openevos.ui.common import channel_color, hbox, label, panel, render_frame
+from openevos.ui.common import channel_color, empty_combo, hbox, label, panel, render_frame
 from openevos.ui.icons import icon
 from openevos.ui.widgets.image_view import ImageView, Marker
 from openevos.ui.widgets.param import ParamRow
@@ -94,7 +94,7 @@ class AnalysisPage(QWidget):
         top = QHBoxLayout()
         top.addWidget(label("Analysis", "title"))
         top.addStretch(1)
-        self.source = QComboBox()
+        self.source = empty_combo(QComboBox(), "No image yet")
         self.source.setAccessibleName("Image to analyse")
         top.addWidget(label("Image", "rowlabel"))
         top.addWidget(self.source)
@@ -135,7 +135,7 @@ class AnalysisPage(QWidget):
         self.ov_box = QVBoxLayout()
         lay.addLayout(self.ov_box)
         self.ov_checks: dict[str, QCheckBox] = {}
-        self.ov_pick = QComboBox()
+        self.ov_pick = empty_combo(QComboBox(), "No channel")
         self.ov_pick.setAccessibleName("Channel to adjust")
         lay.addWidget(hbox(label("Adjust", "rowlabel"), self.ov_pick, None))
         self.ov_b = ParamRow("Brightness", -100, 100, 0, step=1)

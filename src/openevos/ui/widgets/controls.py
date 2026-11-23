@@ -394,7 +394,7 @@ class ChannelButton(QWidget):
         p.setFont(f)
         p.setPen(QColor(theme.ACCENT_TX if self.selected and not self.lit else theme.TEXT))
         p.drawText(QRectF(20, top.top() + 3, top.width() - 21, 20), Qt.AlignLeft | Qt.AlignVCenter, self.label)
-        f.setPixelSize(10)
+        f.setPixelSize(11)
         f.setBold(self.lit)
         f.setLetterSpacing(QFont.AbsoluteSpacing, 0.6 if self.lit else 0.2)
         p.setFont(f)
@@ -433,7 +433,7 @@ class MarkedSlider(QSlider):
         p = QPainter(self)
         p.setPen(QPen(QColor(theme.WARN), 2))
         f = QFont(self.font())
-        f.setPointSize(7)
+        f.setPixelSize(11)
         f.setBold(True)
         p.setFont(f)
         if self.orientation() == Qt.Vertical:
@@ -541,7 +541,7 @@ class LevelsHistogram(QWidget):
         p.setBrush(QColor(theme.INPUT))
         p.drawRoundedRect(r, 4, 4)
         f = QFont(self.font())
-        f.setPixelSize(10)
+        f.setPixelSize(11)
         if self.rgb is not None:
             logs = [np.log1p(c.astype(float)) for c in self.rgb]
             peak = max((float(c.max()) for c in logs if c.size), default=0.0) or 1.0  # one scale: heights compare

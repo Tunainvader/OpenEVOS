@@ -53,7 +53,7 @@ from openevos.acquisition.timelapse import (
     populate_wells,
 )
 from openevos.instrument.profile import CameraRole
-from openevos.ui.common import empty_hint, hbox, label, panel, render_frame
+from openevos.ui.common import empty_combo, empty_hint, hbox, label, panel, render_frame
 from openevos.ui.icons import icon
 from openevos.ui.widgets.image_view import ImageView
 from openevos.ui.widgets.vessel_map import VesselMap
@@ -139,8 +139,12 @@ class _RoutineBase(QWidget):
         for c in self.profile.cameras:
             self.camera.addItem(c.display_name, c.role)
         self.channels_box = QWidget()
-        self.channels_lay = QHBoxLayout(self.channels_box)
+        # a grid, three to a row: five channels in one row ran past the panel edge (TRANS clipped by PHASE, UI review
+        # 2026-11-24)
+        self.channels_lay = QGridLayout(self.channels_box)
         self.channels_lay.setContentsMargins(0, 0, 0, 0)
+        self.channels_lay.setHorizontalSpacing(12)
+        self.channels_lay.setVerticalSpacing(4)
         self.channel_checks: dict[str, QCheckBox] = {}
         form.addRow("Objective", self.objective)
         form.addRow("Camera", self.camera)
@@ -153,12 +157,12 @@ class _RoutineBase(QWidget):
             cb.deleteLater()
         self.channel_checks.clear()
         role = CameraRole(self.camera.currentData() or 'mono')
-        for c in self.profile.channels_for(role):
+        for i, c in enumerate(self.profile.channels_for(role)):
             cb = QCheckBox(c.display)
             cb.setChecked(c.slot in ("cube1", "cube2") or (role is CameraRole.COLOR and c.slot == "trans"))
             cb.toggled.connect(self.replan)
             self.channel_checks[c.slot] = cb
-            self.channels_lay.addWidget(cb)
+            self.channels_lay.addWidget(cb, i // 3, i % 3)
         self.replan()
 
     def selected_channels(self) -> list[str]:
@@ -261,7 +265,7 @@ class ScanPage(_RoutineBase):
         self.rx, self.ry, self.rw, self.rh = (QDoubleSpinBox(decimals=2, maximum=130, singleStep=0.5) for _ in range(4))
         self.rw.setValue(2.0)
         self.rh.setValue(2.0)
-        self.rect_on = QCheckBox("Limit to a rectangle in each region (offset/size mm)")
+        self.rect_on = QCheckBox("Limit to a rectangle in each region")  # units are on the rows below
         form.addRow("", self.rect_on)
         form.addRow("   Offset x / y (mm)", hbox(self.rx, self.ry))
         form.addRow("   Size w / h (mm)", hbox(self.rw, self.rh))
@@ -304,7 +308,8 @@ class ScanPage(_RoutineBase):
         g2, gl = panel("Plan & run")
         self.map = VesselMap(selectable=True)
         self.map.setMinimumHeight(300)
-        gl.addWidget(label("Click wells to select them (none selected = all regions).", "muted"))
+        gl.addWidget(label("Click wells to select them, or Tab to the map and use the arrow keys and Space "
+                            "(none selected = all regions).", "muted"))
         gl.addWidget(self.map, 1)
         self.lbl_plan = label("", "value", wrap=True)
         self.lbl_warn = label("", "warn", wrap=True)
@@ -314,7 +319,7 @@ class ScanPage(_RoutineBase):
         self.mosaic = ImageView()
         self.mosaic.placeholder = "Scan mosaic appears here after a run"
         self.mosaic.setMinimumHeight(280)
-        self.mosaic_ch = QComboBox()
+        self.mosaic_ch = empty_combo(QComboBox(), "No result yet")
         self.quality = QComboBox()
         for q, ds in (("High (full resolution)", 1), ("Medium (½)", 2), ("Low (¼)", 4)):
             self.quality.addItem(q, ds)
@@ -574,7 +579,15 @@ class TimelapsePage(_RoutineBase):
         self.water = QCheckBox("Watermark")
         self.water.setChecked(True)
         self.sep = QCheckBox("Save channels separately")
-        lay.addWidget(hbox(label("5  Output", "muted"), self.video, self.water, self.sep, None))
+        # two rows: three checkboxes and the label ran past the panel edge (UI review 2026-11-24)
+        out = QGridLayout()
+        out.setHorizontalSpacing(12)
+        out.addWidget(label("5  Output", "muted"), 0, 0)
+        out.addWidget(self.video, 0, 1)
+        out.addWidget(self.water, 0, 2)
+        out.addWidget(self.sep, 1, 1, 1, 2)
+        out.setColumnStretch(3, 1)
+        lay.addLayout(out)
         self._library(lay)
         lay.addStretch(1)
         root.addWidget(f)

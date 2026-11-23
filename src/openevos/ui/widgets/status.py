@@ -73,7 +73,7 @@ class StatusPill(QWidget):
         fm = p.fontMetrics()
         p.drawText(QRectF(26, 3, r.width() - 30, 16), Qt.AlignLeft | Qt.AlignVCenter,
                    fm.elidedText(self.title, Qt.ElideRight, int(r.width() - 30)))
-        f.setPixelSize(10)
+        f.setPixelSize(11)
         f.setWeight(QFont.Medium)
         p.setFont(f)
         p.setPen(c if self.state not in ("unknown", "unavailable") else QColor(theme.TEXT_2))
@@ -183,7 +183,7 @@ class Badge(QWidget):
         w = min(self.width(), self.sizeHint().width())
         p.drawRoundedRect(QRectF(0, 0, w, 20), 5, 5)
         f = QFont(self.font())
-        f.setPixelSize(10)
+        f.setPixelSize(11)
         f.setWeight(QFont.DemiBold)
         f.setLetterSpacing(QFont.PercentageSpacing, 104)
         p.setFont(f)

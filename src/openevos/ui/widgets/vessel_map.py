@@ -1,7 +1,13 @@
 """Virtual vessel (manual p.8): regions drawn to scale, draggable crosshair, click a well to centre
-it, current field of view, reachable-stage outline, optional tile/beacon overlays and selection."""
+it, current field of view, reachable-stage outline, optional tile/beacon overlays and selection.
+
+Keyboard (UI review 2026-11-24: the map was mouse-only): Tab focuses it; arrow keys move a focus ring between wells
+(Home/End: first/last); typing a well name such as D7 jumps there; Space or Enter toggles the well on a selection map,
+or centres the stage on it on the navigation map (the same as a click); Escape clears a selection."""
 
 from __future__ import annotations
+
+import time
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
@@ -9,6 +15,13 @@ from PySide6.QtWidgets import QWidget
 
 from openevos.instrument.vessels import RegionShape, Vessel
 from openevos.ui import theme
+
+
+def _small_font(base: QFont) -> QFont:
+    """Row/column and beacon labels: 11 px (was 7 pt, about 9 px; UI review 2026-11-24)."""
+    f = QFont(base)
+    f.setPixelSize(11)
+    return f
 
 
 class VesselMap(QWidget):
@@ -27,8 +40,13 @@ class VesselMap(QWidget):
         self.interactive, self.selectable = interactive, selectable
         self._drag: QPointF | None = None
         self._press: QPointF | None = None
+        self._kfocus = 0  # index into vessel.regions of the keyboard focus ring
+        self._typed, self._typed_at = "", 0.0  # type-ahead buffer for a well name ("D7")
         self.setMinimumSize(220, 150)
         self.setMouseTracking(True)
+        if interactive or selectable:
+            self.setFocusPolicy(Qt.StrongFocus)
+        self.setAccessibleName("Vessel map")
 
     def sizeHint(self) -> QSize:
         return QSize(260, 175)
@@ -39,6 +57,8 @@ class VesselMap(QWidget):
     def set_vessel(self, v: Vessel) -> None:
         self.vessel = v
         self.selected.clear()
+        self._kfocus = 0
+        self._describe()
         self.update()
 
     # ------------------------------------------------------------------ geometry
@@ -90,17 +110,27 @@ class VesselMap(QWidget):
                 p.drawEllipse(rect)
             else:
                 p.drawRoundedRect(rect, 2, 2)
-        if v.is_plate and s * (v.regions[1].cx - v.regions[0].cx if len(v.regions) > 1 else 10) > 13:
+        if self.hasFocus() and v.regions:  # the keyboard focus ring
+            r = v.regions[min(self._kfocus, len(v.regions) - 1)]
+            ring = QRectF(self.to_widget(r.cx - r.w / 2, r.cy - r.h / 2),
+                          self.to_widget(r.cx + r.w / 2, r.cy + r.h / 2)).adjusted(-3, -3, 3, 3)
+            p.setPen(QPen(QColor(theme.ACCENT), 2))
+            p.setBrush(Qt.NoBrush)
+            if r.shape is RegionShape.CIRCLE:
+                p.drawEllipse(ring)
+            else:
+                p.drawRoundedRect(ring, 3, 3)
+        if v.is_plate and s * (v.regions[1].cx - v.regions[0].cx if len(v.regions) > 1 else 10) > 16:
             p.setPen(QColor(theme.MUTED))
-            p.setFont(QFont(self.font().family(), 7))
+            p.setFont(_small_font(self.font()))
             for c in range(v.cols):
                 r = v.regions[c]
                 q = self.to_widget(r.cx, r.cy - r.h / 2)
-                p.drawText(QRectF(q.x() - 10, q.y() - 13, 20, 12), Qt.AlignCenter, str(c + 1))
+                p.drawText(QRectF(q.x() - 11, q.y() - 15, 22, 14), Qt.AlignCenter, str(c + 1))
             for row in range(v.rows):
                 r = v.regions[row * v.cols]
                 q = self.to_widget(r.cx - r.w / 2, r.cy)
-                p.drawText(QRectF(q.x() - 14, q.y() - 6, 12, 12), Qt.AlignCenter, chr(65 + row) if row < 26 else "")
+                p.drawText(QRectF(q.x() - 16, q.y() - 7, 14, 14), Qt.AlignCenter, chr(65 + row) if row < 26 else "")
         tc = QColor(theme.TEAL)
         p.setPen(QPen(tc, 0.8))
         tc.setAlpha(60)
@@ -115,7 +145,7 @@ class VesselMap(QWidget):
             p.setBrush(QColor(245, 185, 66, 90))
             p.drawEllipse(q, 4, 4)
             if len(self.beacons_mm) <= 24:
-                p.setFont(QFont(self.font().family(), 7))
+                p.setFont(_small_font(self.font()))
                 p.drawText(q + QPointF(5, -4), label)
         if self.position_mm:
             q = self.to_widget(*self.position_mm)
@@ -134,6 +164,83 @@ class VesselMap(QWidget):
             p.drawLine(QPointF(self._drag.x() - 12, self._drag.y()), QPointF(self._drag.x() + 12, self._drag.y()))
             p.drawLine(QPointF(self._drag.x(), self._drag.y() - 12), QPointF(self._drag.x(), self._drag.y() + 12))
 
+    # ------------------------------------------------------------------ keyboard
+    def _describe(self) -> None:
+        """The accessible description: the focused well, its selection state and how many are selected."""
+        v = self.vessel
+        if not v or not v.regions:
+            self.setAccessibleDescription("")
+            return
+        rid = v.regions[min(self._kfocus, len(v.regions) - 1)].region_id
+        state = (" selected" if rid in self.selected else " not selected") if self.selectable else ""
+        n = f"; {len(self.selected)} selected" if self.selectable else ""
+        self.setAccessibleDescription(f"{v.display_name}: well {rid}{state}{n}")
+
+    def focus_well(self, region_id: str) -> bool:
+        """Move the keyboard focus ring to a well by name. False when the vessel has no such well."""
+        if not self.vessel:
+            return False
+        for i, r in enumerate(self.vessel.regions):
+            if r.region_id.upper() == region_id.upper():
+                self._kfocus = i
+                self._describe()
+                self.update()
+                return True
+        return False
+
+    def _step(self, key) -> None:
+        v = self.vessel
+        n = len(v.regions)
+        cols = v.cols if v.is_plate and v.cols else 1
+        moves = {Qt.Key_Left: -1, Qt.Key_Right: 1, Qt.Key_Up: -cols, Qt.Key_Down: cols}
+        if key == Qt.Key_Home:
+            i = 0
+        elif key == Qt.Key_End:
+            i = n - 1
+        else:
+            i = self._kfocus + moves[key]
+        self._kfocus = min(max(i, 0), n - 1)
+
+    def _activate(self) -> None:
+        r = self.vessel.regions[self._kfocus]
+        if self.selectable:
+            self.selected ^= {r.region_id}
+            self.region_clicked.emit(r.region_id)
+        elif self.interactive:  # the same as a click on the well: centre the stage on it
+            self.region_clicked.emit(r.region_id)
+            self.move_requested.emit(r.cx, r.cy)
+
+    def keyPressEvent(self, e):
+        if not self.vessel or not self.vessel.regions or not (self.interactive or self.selectable):
+            super().keyPressEvent(e)
+            return
+        k = e.key()
+        if k in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down, Qt.Key_Home, Qt.Key_End):
+            self._step(k)
+        elif k in (Qt.Key_Space, Qt.Key_Return, Qt.Key_Enter):
+            self._activate()
+        elif k == Qt.Key_Escape and self.selectable and self.selected:
+            self.selected.clear()
+            self.region_clicked.emit("")
+        elif e.text() and e.text().isalnum():
+            now = time.monotonic()
+            self._typed = (self._typed if now - self._typed_at < 1.0 else "") + e.text()
+            self._typed_at = now
+            self.focus_well(self._typed)
+        else:
+            super().keyPressEvent(e)
+            return
+        self._describe()
+        self.update()
+
+    def focusInEvent(self, e):
+        super().focusInEvent(e)
+        self.update()
+
+    def focusOutEvent(self, e):
+        super().focusOutEvent(e)
+        self.update()
+
     # ------------------------------------------------------------------ interaction
     def mousePressEvent(self, e):
         if not self.vessel or not self.interactive:
@@ -142,6 +249,7 @@ class VesselMap(QWidget):
         r = self.vessel.region_at(x, y)
         if self.selectable:
             if r is not None:
+                self._kfocus = self.vessel.regions.index(r)
                 self.selected ^= {r.region_id}
                 self.region_clicked.emit(r.region_id)
                 self.update()
