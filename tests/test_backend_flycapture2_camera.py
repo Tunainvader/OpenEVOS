@@ -132,6 +132,85 @@ def test_retrieval_error_restarts_capture_in_place_and_recovers(monkeypatch):
     assert "restarted" in next(r["reason"] for r in reports if r.get("health") is fcam.Health.WARNING)
 
 
+class QuickRestartChameleon(FakeChameleon):
+    """The instrument, 2026-11-24 (every capture): capture started again within moments of a stop sends a burst of
+    incomplete frames, longer than the loop skips, so live view resumed right after a snap restarted with a camera
+    warning each time. A pause after the stop (the restart path's RESTART_PAUSE_S) brings clean frames."""
+
+    QUICK_S = 0.1
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.stopped_at = None
+        self.start_gaps = []
+
+    def _fc2StopCapture(self, ctx):
+        self.stopped_at = time.monotonic()
+        return 0
+
+    def _fc2StartCapture(self, ctx):
+        if self.stopped_at is not None:
+            gap = time.monotonic() - self.stopped_at
+            self.start_gaps.append(gap)
+            if gap < self.QUICK_S:
+                self.consistency_errors = fcam.MAX_CONSECUTIVE_INCOMPLETE + 3
+        return 0
+
+
+def _wait(cond, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while not cond() and time.monotonic() < deadline:
+        time.sleep(0.005)
+    return cond()
+
+
+def test_live_view_resumed_after_a_snap_starts_clean():
+    """InstrumentController.acquire: the one-frame snap stream stops, then live view starts again at once. The
+    camera settles first, so live view resumes without the burst, the restart and the warning."""
+    t = Transport()
+    cam = QuickRestartChameleon()
+    dev, _, reports = make(cam, t)
+    dev.connect()
+    dev.start_stream(acquisition_id="acq-1", n_frames=1)  # the snap
+    assert _wait(lambda: len(t.frames) == 1 and not dev.streaming)
+    t0 = time.monotonic()
+    dev.start_stream()  # live view resumes
+    assert time.monotonic() - t0 < 0.05  # the settle is on the stream thread: the capture task is not held up
+    assert _wait(lambda: len(t.frames) >= 3)
+    dev.stop_stream()
+    assert dev.stream_restarts == 0 and not any(r.get("health") is fcam.Health.WARNING for r in reports)
+    assert cam.start_gaps[-1] >= fcam.LIVE_RESTART_SETTLE_S - 0.01
+
+
+def test_snap_starts_at_once_after_live_view_stops():
+    """A snap is not delayed: the instrument delivers it complete right after live view stops (14:04 and 14:12
+    captures, 2026-11-24); only live view, which restarts with nothing waiting for it, settles first."""
+    t = Transport()
+    dev, _cam, _ = make(transport=t)
+    dev.connect()
+    dev.start_stream()
+    assert t.got.wait(2.0)
+    dev.stop_stream("paused for acquisition")
+    t0 = time.monotonic()
+    dev.start_stream(acquisition_id="acq-1", n_frames=1)
+    assert _wait(lambda: not dev.streaming)
+    assert time.monotonic() - t0 < fcam.LIVE_RESTART_SETTLE_S
+
+
+def test_live_view_stopped_while_settling_never_starts_capture():
+    t = Transport()
+    dev, cam, _ = make(transport=t)
+    dev.connect()
+    dev.start_stream(acquisition_id="acq-1", n_frames=1)
+    assert _wait(lambda: len(t.frames) == 1 and not dev.streaming)
+    starts = cam.calls.count("fc2StartCapture")
+    dev.start_stream()  # live view: settling
+    dev.stop_stream("paused for acquisition")  # the next snap, before live view started capture
+    time.sleep(fcam.LIVE_RESTART_SETTLE_S + 0.1)
+    assert cam.calls.count("fc2StartCapture") == starts and not dev.streaming
+    assert not dev._sdk._capturing  # the camera is not left capturing with no one reading it
+
+
 def test_persistent_retrieval_error_faults_after_the_restart_budget(monkeypatch):
     monkeypatch.setattr(fcam, "RESTART_PAUSE_S", 0.0)
 

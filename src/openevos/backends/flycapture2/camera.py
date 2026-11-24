@@ -59,6 +59,12 @@ MAX_CONSECUTIVE_INCOMPLETE = 5
 MAX_STREAM_RESTARTS = 3
 RESTART_WINDOW_S = 60.0
 RESTART_PAUSE_S = 0.3
+#: live view started again within this long of a stop waits out the rest first. Operator 2026-11-24 ("camera error
+#: everytime of capture"): each snap stops capture and live view started it again at once; 20-50 ms later the camera
+#: sent more incomplete frames than the loop skips, and the stream restarted with a warning, every capture. After the
+#: restart path's own pause the frames were clean every time, so live view waits the same. Only live view waits: it
+#: runs on its own thread with nothing waiting for it; a snap right after live view stops arrives complete.
+LIVE_RESTART_SETTLE_S = RESTART_PAUSE_S
 BIT_SHIFT = 4  # 12-bit data left-aligned in 16 bits
 STALE_FRAMES_AFTER_LIGHT = 1  # lag check 2026-11-16: first snap after LED ON was dark, after OFF part-lit
 
@@ -75,6 +81,7 @@ class FlyCapture2MonoCamera:
         self._sdk = sdk or fc.FlyCapture2SettingsBackend()
         self._channel_fn, self._extra_fn = channel_fn, extra_fn
         self._restarts: list[float] = []  # monotonic times of in-place capture restarts (last RESTART_WINDOW_S)
+        self._stopped_at: float | None = None  # monotonic time capture last stopped (LIVE_RESTART_SETTLE_S)
         self._degraded = False
         self.stream_restarts = 0
         self.width, self.height = fc.F7_WIDTH, fc.F7_HEIGHT
@@ -262,12 +269,29 @@ class FlyCapture2MonoCamera:
                 raise RuntimeError("camera not connected")
             self._stream = {"acq": acquisition_id, "n": n_frames, "i": 0, "done": on_finished}
             self._stop.clear()
-            with self._io:
-                self._sdk._call("fc2StartCapture", self._sdk._ctx)
-                self._sdk._capturing = True
-            self._thread = threading.Thread(target=self._loop, name=f"camera:{self.device_id}", daemon=True)
+            settle = 0.0
+            if acquisition_id is None and self._stopped_at is not None:
+                settle = LIVE_RESTART_SETTLE_S - (time.monotonic() - self._stopped_at)
+            if settle <= 0:
+                with self._io:
+                    self._sdk._call("fc2StartCapture", self._sdk._ctx)
+                    self._sdk._capturing = True
+            self._thread = threading.Thread(target=self._loop, args=(max(settle, 0.0),),
+                                            name=f"camera:{self.device_id}", daemon=True)
             self._thread.start()
         self._obs(activity=Activity.ACQUIRING, reason=f"streaming (acquisition={acquisition_id})")
+
+    def _start_after_settle(self, settle_s: float) -> bool:
+        """Live view's deferred start (LIVE_RESTART_SETTLE_S). False = stopped while settling: capture never
+        started. Checked and started under _io, which stop_stream also takes, so a stop is never missed."""
+        if self._stop.wait(settle_s):
+            return False
+        with self._io:
+            if self._stop.is_set():
+                return False
+            self._sdk._call("fc2StartCapture", self._sdk._ctx)
+            self._sdk._capturing = True
+        return True
 
     def stop_stream(self, reason: str = "stopped") -> None:
         with self._lock:
@@ -275,11 +299,14 @@ class FlyCapture2MonoCamera:
             if s is None:
                 return
             self._stop.set()
+            self._stopped_at = time.monotonic()  # a live view started from here on settles (updated once stopped)
             t = self._thread
         try:
-            self._sdk._stop_capture()  # aborts a blocked RetrieveBuffer
+            with self._io:  # a settling live view either started capture already or sees the stop
+                self._sdk._stop_capture()  # aborts a blocked RetrieveBuffer (that call is not made under _io)
         except Exception:  # noqa: BLE001, S110
             pass
+        self._stopped_at = time.monotonic()
         if t is not None and t is not threading.current_thread():
             t.join(RETRIEVE_TIMEOUT_S)
         self._thread = None
@@ -296,7 +323,9 @@ class FlyCapture2MonoCamera:
         s = self._stream
         return s["acq"] if s is not None else None
 
-    def _loop(self) -> None:
+    def _loop(self, settle_s: float = 0.0) -> None:
+        if settle_s > 0 and not self._start_after_settle(settle_s):
+            return
         img = fc.Image()
         self._sdk._call("fc2CreateImage", C.byref(img))
         consecutive_bad = 0
