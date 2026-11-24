@@ -124,18 +124,29 @@ def test_toolbar_labels_stay_when_they_fit_and_go_under_icons_when_tight(win):
     app, w, _s = win
     cap = w.pages["capture"]
     assert cap.btn_overlay.property("icon_name") == "overlay" and cap.btn_sat.property("icon_name") == "saturation"
-    assert all(b.objectName() == "tool" for b in cap.toolbuttons) and len(cap.tooldivs) == 3
+    assert all(b.objectName() == "tool" for b in cap.toolbuttons)
+    # four joined groups (source | zoom | marks | levels), not eleven separate pills (operator 2026-11-24)
+    assert [g.layout().count() for g in cap.toolgroups] == [2, 2, 5, 2]
     w.resize(2400, 1000)
     pump(app, 0.2)
     wide = cap.toolbar_style
     w.resize(1200, 800)
     pump(app, 0.2)
     narrow = cap.toolbar_style
-    order = [Qt.ToolButtonIconOnly, Qt.ToolButtonTextUnderIcon, Qt.ToolButtonTextBesideIcon]
+    tbs = Qt.ToolButtonStyle
+    order = [tbs.ToolButtonIconOnly, tbs.ToolButtonTextUnderIcon, tbs.ToolButtonTextBesideIcon]
     assert order.index(wide) >= order.index(narrow)
-    assert wide != Qt.ToolButtonIconOnly  # a wide window shows the words
-    need = sum(b.sizeHint().width() for b in cap.toolbuttons)
-    assert need <= cap.toolbar.width()  # whatever was chosen fits
+    assert wide != tbs.ToolButtonIconOnly  # a wide window shows the words
+    assert sum(g.width() for g in cap.toolgroups) <= cap.toolbar.width()  # whatever was chosen fits
+    if narrow == tbs.ToolButtonIconOnly:  # icons only: every button the same square
+        assert {(b.width(), b.height()) for b in cap.toolbuttons} == {(cap.TOOL_SQUARE, cap.TOOL_SQUARE)}
+    cap._size_tools(tbs.ToolButtonTextUnderIcon, True)  # labels under the icons: one width inside each group
+    i = 0
+    for g in cap.toolgroups:
+        n = g.layout().count()
+        assert len({b.minimumWidth() for b in cap.toolbuttons[i:i + n]}) == 1
+        i += n
+    cap._fit_toolbar()
 
 
 # ------------------------------------------------------------------ the light channels show their state

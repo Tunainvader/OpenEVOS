@@ -338,18 +338,22 @@ class CapturePage(QWidget):
                                        tip="Hold to see the raw frame mapped linearly over its full range (or hold B)")
         self.toolbuttons = [self.btn_live, self.btn_overlay, self.btn_fit, self.btn_11, self.btn_cross, self.btn_scale,
                             self.btn_clip, self.btn_sat, self.btn_loupe, self.btn_hist, self.btn_compare]
-        # groups: source | zoom | marks on the image | levels (UI 2026-11-23: dividers, labels kept when they fit)
-        self.tooldivs: list[QFrame] = []
-        for i, b in enumerate(self.toolbuttons):
-            if i in (2, 4, 9):
-                d = QFrame()
-                d.setObjectName("tooldiv")
-                d.setFixedWidth(1)
-                self.tooldivs.append(d)
-                top.addSpacing(3)
-                top.addWidget(d)
-                top.addSpacing(3)
-            top.addWidget(b)
+        # groups: source | zoom | marks on the image | levels, each one joined control (one outline, borderless
+        # buttons that fill only when hovered or on). Operator 2026-11-24: "the proportion of buttons look weird":
+        # eleven separately outlined pills of eleven widths, split by hairline dividers
+        self.toolgroups: list[QFrame] = []
+        for members in ((0, 2), (2, 4), (4, 9), (9, 11)):
+            g = QFrame()
+            g.setObjectName("toolgroup")
+            g.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            gl = QHBoxLayout(g)
+            gl.setContentsMargins(2, 2, 2, 2)
+            gl.setSpacing(2)
+            for b in self.toolbuttons[members[0]:members[1]]:
+                gl.addWidget(b)
+            self.toolgroups.append(g)
+            top.addWidget(g)
+        top.setSpacing(8)
         self.toolbar_style = Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         self._toolbar_layout = top
         self.toolbar.installEventFilter(self)  # labels fit to the toolbar's own width (_fit_toolbar)
@@ -1723,38 +1727,68 @@ class CapturePage(QWidget):
         self._fitting = True
         try:
             top = self._toolbar_layout
-            fixed, items = 0, 0  # what the layout adds besides the title and the buttons: spacers, dividers, gaps
-            for i in range(top.count()):
-                it = top.itemAt(i)
-                if it is None:
-                    continue
-                w = it.widget()
-                if w is self.lbl_view or w in self.toolbuttons:
-                    continue
-                items += 1
-                sp = it.spacerItem()
-                fixed += w.minimumWidth() if w is not None else (sp.sizeHint().width() if sp is not None else 0)
-            gaps = fixed + top.spacing() * (items + len(self.toolbuttons) - 1)
             title = self.lbl_view.sizeHint().width() + top.spacing()
+            gaps = top.spacing() * (len(self.toolgroups) - 1)
             # the view title steps aside before the labels go: the image badge says the same (GFP • LIVE • ...)
             tbs = Qt.ToolButtonStyle
-            chosen, show_title = tbs.ToolButtonIconOnly, True
-            for style, keep_title in ((tbs.ToolButtonTextBesideIcon, True), (tbs.ToolButtonTextUnderIcon, True),
-                                      (tbs.ToolButtonTextUnderIcon, False)):
-                need = gaps + (title if keep_title else 0)
-                for b in self.toolbuttons:
-                    b.setToolButtonStyle(style)
-                    need += b.sizeHint().width()
+            chosen, show_title, even = tbs.ToolButtonIconOnly, True, True
+            under = tbs.ToolButtonTextUnderIcon
+            for style, keep_title, uniform in ((tbs.ToolButtonTextBesideIcon, True, False), (under, True, True),
+                                               (under, False, True), (under, False, False)):
+                need = gaps + (title if keep_title else 0) + sum(self._tool_widths(style, uniform)[1])
                 if need <= self.toolbar.width():
-                    chosen, show_title = style, keep_title
+                    chosen, show_title, even = style, keep_title, uniform
                     break
-            for b in self.toolbuttons:
-                if b.toolButtonStyle() != chosen:
-                    b.setToolButtonStyle(chosen)
+            self._size_tools(chosen, even)
             self.lbl_view.setVisible(show_title)
             self.toolbar_style = chosen
         finally:
             self._fitting = False
+
+    #: the toolbar's button shapes: icons only = squares; labels under the icons = one width within each group
+    TOOL_SQUARE = 32
+    TOOL_GROUP_PAD = 2  # a group's inner margin and the gap between its buttons
+
+    def _tool_widths(self, style, uniform: bool = True) -> tuple[list[int], list[int]]:
+        """(each button's width, each group's width) in `style`, without changing what is shown. `uniform`: labels
+        under the icons get one width within each group (a narrow window falls back to each button's own)."""
+        tbs = Qt.ToolButtonStyle
+        if style == tbs.ToolButtonIconOnly:
+            widths = [self.TOOL_SQUARE] * len(self.toolbuttons)
+        else:
+            hints = []
+            for b in self.toolbuttons:
+                was = b.toolButtonStyle()
+                b.setToolButtonStyle(style)
+                hints.append(b.sizeHint().width())
+                b.setToolButtonStyle(was)
+            widths = hints
+        groups, i = [], 0
+        for g in self.toolgroups:
+            lay = g.layout()
+            n = lay.count() if lay is not None else 0
+            if style == tbs.ToolButtonTextUnderIcon and uniform:  # one width in a group: it reads as one control
+                widths[i:i + n] = [max(widths[i:i + n])] * n
+            groups.append(sum(widths[i:i + n]) + self.TOOL_GROUP_PAD * (n + 1) + 2)  # + the 1 px outline each side
+            i += n
+        return widths, groups
+
+    def _size_tools(self, style, uniform: bool = True) -> None:
+        """One shape per mode: squares with icons only, one width within each group with labels under the icons,
+        each button its own width (one height) with labels beside them."""
+        widths, _groups = self._tool_widths(style, uniform)
+        tbs = Qt.ToolButtonStyle
+        for b, w in zip(self.toolbuttons, widths, strict=True):
+            b.setToolButtonStyle(style)
+            if style == tbs.ToolButtonIconOnly:
+                b.setIconSize(QSize(18, 18))
+                b.setFixedSize(self.TOOL_SQUARE, self.TOOL_SQUARE)
+            else:
+                b.setIconSize(QSize(16, 16))
+                b.setMinimumSize(0, 0)
+                b.setMaximumSize(16777215, 16777215)
+                if style == tbs.ToolButtonTextUnderIcon:
+                    b.setFixedWidth(w)
 
     def retint(self) -> None:
         for b in self.toolbuttons:

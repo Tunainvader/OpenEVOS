@@ -98,6 +98,14 @@ QFrame#tooldiv {{ background: {t.bd}; border: none; margin: 6px 0; }}
 QToolButton#tool {{ padding: 4px 6px; font-size: 11px; font-weight: 500; color: {t.t2}; }}
 QToolButton#tool:hover {{ color: {t.acc_tx}; }}
 QToolButton#tool:checked {{ color: {t.acc_tx}; font-weight: 600; }}
+QFrame#toolgroup {{ background: {t.s2}; border: 1px solid {t.bdd}; border-radius: {r['button']}px; }}
+QFrame#toolgroup QToolButton#tool {{ background: transparent; border: 1px solid transparent;
+    border-radius: {max(4, r['button'] - 2)}px; padding: 4px 4px; }}
+QFrame#toolgroup QToolButton#tool:hover {{ background: {t.s3}; color: {t.acc_tx}; }}
+QFrame#toolgroup QToolButton#tool:pressed {{ background: {t.s3}; }}
+QFrame#toolgroup QToolButton#tool:checked {{ background: {t.acc_dim}; border: 1px solid {t.acc}; color: {t.acc_tx}; }}
+QFrame#toolgroup QToolButton#tool:focus {{ border: 2px solid {t.focus}; }}
+QFrame#toolgroup QToolButton#tool:disabled {{ background: transparent; border: 1px solid transparent; color: {t.t3}; }}
 QToolButton#swatch {{ background: transparent; border: 1px solid transparent; border-radius: {r['button']}px;
     padding: 2px 6px; font-size: 11px; color: {t.t2}; min-width: 44px; }}
 QToolButton#swatch:hover {{ background: {t.s2}; color: {t.tx}; border: 1px solid transparent; }}
