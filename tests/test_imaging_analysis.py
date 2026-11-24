@@ -115,7 +115,14 @@ def test_save_files_preserve_raw_and_label_simulated(tmp_path):
     rgb = np.zeros((6, 8, 3), np.uint8)
     o2 = save(tmp_path, "Raw", rgb8=rgb, raw=img, opts=SaveOptions(save_underlying=True), channels={"cube2": img})
     assert o2.image.name == "Raw_0002.tif" and len(o2.underlying) == 1
-    assert tifffile.imread(o2.underlying[0]).dtype == np.uint16
+    under = tifffile.imread(o2.underlying[0])
+    # operator 2026-11-24: "16-bit monochrome" channel files held the 12-bit counts unscaled (0-4095), so they opened
+    # nearly black; now they match the main 16-bit save (counts x16, exact) and say so
+    assert under.dtype == np.uint16 and np.array_equal(under, raw * 16)
+    assert json.loads(o2.sidecar.read_text())["openevos_save"]["underlying"] == {
+        "mode": "16bit_mono", "files": {"cube2": "Raw_0002_cube2.tif"}, "counts_scale": {"cube2": 16}}
+    with tifffile.TiffFile(o2.underlying[0]) as tf:
+        assert json.loads(tf.pages[0].description)["counts_scale"] == 16
     with pytest.raises(SaveError):
         save(tmp_path, "x", rgb8=rgb, raw=_img(rgb, color=True), opts=SaveOptions(as_color=False, bit_depth=8,
                                                                                  include_annotations=False))

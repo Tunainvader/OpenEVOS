@@ -4,7 +4,8 @@
 * 16-bit is only possible as TIFF *and* monochrome (raw camera data, no annotations burnt in).
 * JPEG and PNG, and anything saved as colour (composites, pseudo colour, colour camera), are 8-bit.
 * "Save underlying channels" writes each channel of an overlay as well (Mono settings: underlying
-  channel save as 8-bit colour or 16-bit monochrome).
+  channel save as 8-bit colour or 16-bit monochrome; 16-bit fills 0-65535 like the main 16-bit save, and the sidecar
+  and each file's description record the counts scale).
 
 Each image gets a JSON sidecar with acquisition metadata and provenance; simulated frames are
 labelled SIMULATED there and in the TIFF description.
@@ -144,20 +145,27 @@ def save(folder: Path, base: str, *, rgb8: np.ndarray | None, raw: CapturedImage
             **(extra_metadata or {})}
     synthetic = (raw is not None and raw.synthetic) or any(v.synthetic for v in (channels or {}).values())
     meta["provenance"] = "SIMULATED — synthetic simulator frames, not measurements" if synthetic else "camera data"
+    # Underlying channel files. "16bit_mono" fills 0-65535 exactly as the main 16-bit save does (counts x 2**(16 -
+    # native bits)): operator 2026-11-24, the unscaled 12-bit counts opened nearly black in ordinary viewers.
+    under: list[tuple[str, Path, np.ndarray, ImageFormat, int]] = []  # slot, path, pixels, format, counts scale
+    if opts.save_underlying and channels:
+        for slot, img in channels.items():
+            if opts.underlying_mode == "16bit_mono" and not img.is_color:
+                px, k = mono_pixels(img, 16)
+                under.append((slot, path.with_name(f"{path.stem}_{slot}.tif"), px, ImageFormat.TIFF, k))
+            else:
+                under.append((slot, path.with_name(f"{path.stem}_{slot}{opts.image_format.suffix}"),
+                              img.data if img.is_color else _mono8(img.data), opts.image_format, 0))
+        meta["openevos_save"]["underlying"] = {"mode": opts.underlying_mode,
+                                               "files": {s: p.name for s, p, _d, _f, _k in under},
+                                               "counts_scale": {s: k for s, _p, _d, _f, k in under}}
     _write(path, data, opts.image_format, json.dumps(meta, default=str))
     sidecar = path.with_suffix(".json")
     sidecar.write_text(json.dumps(meta, indent=2, default=str), "utf-8")
     out = SavedFiles(path, sidecar)
-    if opts.save_underlying and channels:
-        for slot, img in channels.items():
-            if opts.underlying_mode == "16bit_mono" and not img.is_color:
-                p = path.with_name(f"{path.stem}_{slot}.tif")
-                _write(p, img.data, ImageFormat.TIFF, json.dumps(img.metadata(), default=str))
-            else:
-                p = path.with_name(f"{path.stem}_{slot}{opts.image_format.suffix}")
-                _write(p, img.data if img.is_color else _mono8(img.data), opts.image_format,
-                       json.dumps(img.metadata(), default=str))
-            out.underlying.append(p)
+    for slot, p, px, fmt, k in under:
+        _write(p, px, fmt, json.dumps({**(channels or {})[slot].metadata(), "counts_scale": k}, default=str))
+        out.underlying.append(p)
     return out
 
 
