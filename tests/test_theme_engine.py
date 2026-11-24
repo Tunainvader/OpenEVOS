@@ -192,9 +192,16 @@ def test_view_menu_switches_colour_theme_and_high_contrast(app, window):
     assert tk.contrast(theme.MUTED, theme.PANEL) >= 7.0
     window.run_command("view.theme.light")
     assert theme.current().name == "light" and theme.LAST_BUILD.passes
-    # no custom theme yet: the command explains instead of switching
-    window.run_command("view.theme.preset.custom")
-    assert window.session.settings.basic.theme_preset == "iris"
+    # no custom theme yet: the command opens the colour picker; cancelled, nothing changes (the picker's own test
+    # covers the preview and OK)
+    opened = []
+    picker = window.pages["settings"].theme_picker
+    picker.pick_colour, real = (lambda color=None: opened.append(color)), picker.pick_colour
+    try:
+        window.run_command("view.theme.preset.custom")
+    finally:
+        picker.pick_colour = real
+    assert opened == [None] and window.session.settings.basic.theme_preset == "iris"
 
 
 def test_settings_picker_custom_colour_import_and_export(app, window, tmp_path):
@@ -202,7 +209,8 @@ def test_settings_picker_custom_colour_import_and_export(app, window, tmp_path):
 
     window.navigate("settings")
     picker = window.pages["settings"].theme_picker
-    assert set(picker.swatches) == {*te.PRESETS, "custom"} and not picker.swatches["custom"].isEnabled()
+    # Custom is always usable: with no custom theme yet it opens the colour picker (operator 2026-11-24)
+    assert set(picker.swatches) == {*te.PRESETS, "custom"} and picker.swatches["custom"].isEnabled()
 
     picker.pick_colour("#1A237E")  # a dark navy: too dark for dark mode, the engine lightens it
     b = window.session.settings.basic
@@ -225,6 +233,63 @@ def test_settings_picker_custom_colour_import_and_export(app, window, tmp_path):
 
     picker.chk_hc.setChecked(True)
     assert b.high_contrast and "AAA" in picker.summary.text()
+
+
+def test_custom_opens_the_picker_and_cancel_changes_nothing(app, window, monkeypatch):
+    """Operator 2026-11-24: "custom theme not working". Custom with no custom theme yet opens the colour picker (from
+    the swatch and from View › Theme); Cancel leaves the theme in use; OK applies and keeps the chosen colour."""
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QColorDialog
+
+    from openevos.ui import theme
+    from openevos.ui.widgets import theme_picker as tp
+
+    b = window.session.settings.basic
+    b.theme_custom = None
+    window.set_theme_preset("moss")
+    picker = window.pages["settings"].theme_picker
+    opened: list[str] = []
+
+    class FakeDialog(QColorDialog):  # no modal loop: answers at once with the colour it was given
+        answer = QColorDialog.DialogCode.Rejected
+
+        def exec(self):
+            opened.append(self.currentColor().name())
+            self.setCurrentColor(QColor("#C75BD8"))
+            return self.answer
+
+        def selectedColor(self):
+            return self.currentColor()
+
+    monkeypatch.setattr(tp, "QColorDialog", FakeDialog)
+    window.run_command("view.theme.preset.custom")  # nothing saved yet: opens the picker
+    assert len(opened) == 1
+    assert b.theme_preset == "moss" and not b.theme_custom  # cancelled: Moss stays, nothing kept
+    assert theme.ACCENT == te.build(te.PRESETS["moss"], theme.current().name).tokens.acc
+
+    FakeDialog.answer = QColorDialog.DialogCode.Accepted
+    picker.swatches["custom"].click()  # the swatch opens it too
+    assert len(opened) == 2
+    assert b.theme_preset == "custom" and b.theme_custom["main"] == "#C75BD8"
+    assert picker.swatches["custom"].isChecked()
+    window.run_command("view.theme.preset.custom")  # a custom theme exists now: the command switches, no dialog
+    assert len(opened) == 2
+
+
+def test_presets_differ_in_hue_and_surfaces():
+    """Operator 2026-11-24: "all colour palette looks similar". Every preset pair differs in its main hue or its
+    surfaces, by a step anyone can see."""
+    for mode in MODES:
+        built = {pid: te.build(spec, mode).tokens for pid, spec in te.PRESETS.items()}
+        ids = list(built)
+        for i, a in enumerate(ids):
+            for other in ids[i + 1:]:
+                ta, tb = built[a], built[other]
+                hue = te.hue_distance(ta.acc, tb.acc)
+                chroma = abs(te.to_oklch(ta.acc)[1] - te.to_oklch(tb.acc)[1])
+                surface = max(abs(int(ta.bg[k:k + 2], 16) - int(tb.bg[k:k + 2], 16)) for k in (1, 3, 5))
+                assert hue >= 25 or chroma > 0.08 or surface >= 4, (mode, a, other)
+        assert len(te.PRESETS) >= 6
 
 
 def test_every_preset_paints_the_window(app, window):

@@ -115,9 +115,10 @@ class ThemePicker(QWidget):
         for pid, b in self.swatches.items():
             if pid == "custom":
                 spec, _note = te.spec_from_settings("custom", self.basic.theme_custom)
-                b.setEnabled(bool(self.basic.theme_custom))
-                b.setToolTip("Your custom theme" if self.basic.theme_custom else "No custom theme yet: use Custom "
-                             "colour… or Import…")
+                # always usable: with no custom theme yet it opens the colour picker (operator 2026-11-24: "custom
+                # theme not working": the swatch was disabled until one existed, and clicking it did nothing)
+                b.setToolTip("Your custom theme" if self.basic.theme_custom else "Pick a main colour for your own "
+                             "theme")
             else:
                 spec = te.PRESETS[pid]
                 b.setToolTip(f"{spec.name} colours")
@@ -142,6 +143,10 @@ class ThemePicker(QWidget):
         self.refresh()
 
     def _choose(self, preset: str) -> None:
+        if preset == "custom" and not self.basic.theme_custom:
+            self.refresh()  # the swatch's own check state: unchanged until a colour is chosen
+            self.pick_colour()
+            return
         f = self._win("set_theme_preset")
         if f:
             f(preset)
@@ -170,14 +175,15 @@ class ThemePicker(QWidget):
         self.refresh()
 
     def pick_colour(self, color: str | None = None) -> None:
+        """Choose the custom theme's main colour; OK applies it, Cancel changes nothing. No live preview on the app:
+        a theme switch re-styles every widget (about 1.6 s on the full window), which would freeze the dialog."""
         if color is None:
-            start = theme.ACCENT
             spec, _ = te.spec_from_settings(self.basic.theme_preset, self.basic.theme_custom)
-            start = spec.main or start
-            c = QColorDialog.getColor(QColor(start), self, "Main colour")
-            if not c.isValid():
+            dlg = QColorDialog(QColor(spec.main or theme.ACCENT), self)
+            dlg.setWindowTitle("Main colour for your theme")
+            if dlg.exec() != QColorDialog.DialogCode.Accepted or not dlg.selectedColor().isValid():
                 return
-            color = c.name().upper()
+            color = dlg.selectedColor().name().upper()
         self.use_spec(te.custom_from_color(color))
 
     def import_file(self, path: str | None = None) -> bool:

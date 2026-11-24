@@ -367,10 +367,8 @@ class MainWindow(QMainWindow):
             self._cmd(tm, f"view.theme.preset.{pid}", f"{spec.name} colours", lambda p=pid: self.set_theme_preset(p),
                       group=gp, checked=lambda p=pid: self.session.settings.basic.theme_preset == p,
                       path="View › Theme")
-        self._cmd(tm, "view.theme.preset.custom", "Custom colours", lambda: self.set_theme_preset("custom"), group=gp,
-                  checked=lambda: self.session.settings.basic.theme_preset == "custom", path="View › Theme",
-                  why=lambda: "" if self.session.settings.basic.theme_custom else
-                  "no custom theme yet: pick a colour or import one in Settings › Interface")
+        self._cmd(tm, "view.theme.preset.custom", "Custom colours…", lambda: self.set_theme_preset("custom"),
+                  group=gp, checked=lambda: self.session.settings.basic.theme_preset == "custom", path="View › Theme")
         tm.addSeparator()
         self._cmd(tm, "view.theme.high_contrast", "High contrast",
                   lambda: self.set_high_contrast(not self.session.settings.basic.high_contrast),
@@ -736,7 +734,11 @@ class MainWindow(QMainWindow):
     def set_theme_preset(self, preset: str) -> None:
         """Colour theme: a preset id, or "custom" for the saved custom theme (ADR-0063)."""
         if preset == "custom" and not self.session.settings.basic.theme_custom:
-            self.model.add_log("warn", "No custom theme yet: pick a colour or import one in Settings › Interface")
+            # no custom theme yet: open the colour picker rather than refuse in the log (operator 2026-11-24:
+            # "custom theme not working")
+            picker = getattr(self.pages.get("settings"), "theme_picker", None)
+            if picker is not None:
+                picker.pick_colour()
             return
         self.session.settings.basic.theme_preset = preset
         self._apply_theme_settings()

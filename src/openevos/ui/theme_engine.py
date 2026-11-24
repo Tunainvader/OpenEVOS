@@ -181,11 +181,16 @@ class ThemeSpec(BaseModel):
         return v.upper()
 
 
+#: each preset its own hue AND its own surfaces (operator 2026-11-24: "all colour pallete looks similar": Lab, Iris and
+#: Cobalt were three blue-violets on the same greys). Hues kept away from the state colours (ok green ~150°, warn
+#: amber, danger red, SIMULATED teal): the build warns within 22°, and none of these does in either mode
 PRESETS: dict[str, ThemeSpec] = {
-    "lab": ThemeSpec(id="lab", name="Lab"),
-    "iris": ThemeSpec(id="iris", name="Iris", main="#8B7BF7", violet="#5BB8F5"),
-    "cobalt": ThemeSpec(id="cobalt", name="Cobalt", main="#2F7DF6", neutral_hue=255, neutral_chroma=1.4),
-    "graphite": ThemeSpec(id="graphite", name="Graphite", main="#8C9BB4", neutral_chroma=0.0),
+    "lab": ThemeSpec(id="lab", name="Lab"),  # the hand-tuned blue on neutral greys
+    "iris": ThemeSpec(id="iris", name="Iris", main="#8B7BF7", violet="#5BB8F5", neutral_hue=290, neutral_chroma=2.0),
+    "cobalt": ThemeSpec(id="cobalt", name="Cobalt", main="#3B82F6", neutral_hue=250, neutral_chroma=2.0),
+    "graphite": ThemeSpec(id="graphite", name="Graphite", main="#C9CED6", neutral_chroma=0.0),  # monochrome
+    "moss": ThemeSpec(id="moss", name="Moss", main="#8DB33A", neutral_hue=130, neutral_chroma=1.4),
+    "orchid": ThemeSpec(id="orchid", name="Orchid", main="#C75BD8", neutral_hue=320, neutral_chroma=1.6),
 }
 
 
