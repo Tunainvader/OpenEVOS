@@ -229,3 +229,50 @@ def test_acquire_refused_while_stage_moves(sim):
     with pytest.raises(AcquisitionError, match="busy"):
         ctl.acquire(CameraRole.MONO)
     ctl.run(t)
+
+
+def test_zstack_plan_runs_start_to_stop_and_never_overshoots():
+    from openevos.acquisition.capture import plan_zstack
+
+    assert plan_zstack(100, 110, 2) == pytest.approx([100, 102, 104, 106, 108, 110])
+    assert plan_zstack(110, 100, 2) == pytest.approx([110, 108, 106, 104, 102, 100])  # downward: start above stop
+    assert plan_zstack(0, 11, 4) == pytest.approx([0, 4, 8])  # the last slice stays inside start..stop
+    assert plan_zstack(5, 5, 1) == pytest.approx([5])
+    with pytest.raises(CaptureRejected):
+        plan_zstack(0, 10, 0)
+    with pytest.raises(CaptureRejected, match="200"):
+        plan_zstack(0, 1000, 1)
+
+
+def test_zstack_downward_goes_from_start_to_stop(sim):
+    _goto_well(sim)
+    z0 = sim.controller.focus_z()
+    st = sim.capture.zstack("cube1", z0 + 4, z0 - 4, 2)
+    assert st.z_um == pytest.approx((z0 + 4, z0 + 2, z0, z0 - 2, z0 - 4))
+    assert st.complete and st.direction == -1
+    assert sim.controller.focus_z() == pytest.approx(z0)
+
+
+def test_zstack_stop_keeps_the_slices_taken_and_returns_focus(sim):
+    _goto_well(sim)
+    z0 = sim.controller.focus_z()
+
+    def progress(i, _n, _msg):
+        if i == 3:
+            sim.capture.cancel_zstack()  # Stop pressed while slice 4 is about to start
+
+    st = sim.capture.zstack("cube1", z0 - 10, z0 + 10, 2, progress=progress)
+    assert not st.complete and len(st.images) == 3 and st.planned == 11
+    assert sim.capture.buffers.zstack is st
+    assert sim.controller.focus_z() == pytest.approx(z0)
+    st2 = sim.capture.zstack("cube1", z0 - 2, z0 + 2, 2)  # a stop does not carry over into the next stack
+    assert st2.complete and len(st2.images) == 3
+
+
+def test_zstack_leaves_a_dark_live_view_dark(sim):
+    _goto_well(sim)
+    z0 = sim.controller.focus_z()
+    sim.capture.light_power = False
+    sim.controller.run(sim.controller.set_light("cube1", 20.0, False))
+    sim.capture.zstack("cube1", z0 - 2, z0 + 2, 2)
+    assert not sim.controller.light.enabled  # the LED is not left on, bleaching the sample, after the stack

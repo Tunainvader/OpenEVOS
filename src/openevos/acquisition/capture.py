@@ -19,7 +19,7 @@ from datetime import datetime
 
 import numpy as np
 
-from openevos.acquisition.controller import AcquisitionError, InstrumentController
+from openevos.acquisition.controller import AcquisitionError, CommandError, InstrumentController
 from openevos.core.frame_transport import Frame
 from openevos.core.models import utcnow
 from openevos.instrument.profile import CameraRole, ChannelKind, InstrumentProfile
@@ -78,11 +78,41 @@ class CapturedImage:
         }
 
 
+#: most slices one Z-stack may take (operator rule: the Z-stack is capped at 200 slices)
+MAX_ZSTACK_SLICES = 200
+
+
+def plan_zstack(start_um: float, stop_um: float, step_um: float) -> list[float]:
+    """Slice heights from `start_um` towards `stop_um` in steps of `step_um`, in acquisition order. Upward when stop is
+    above start, downward when below. The last slice never passes `stop_um` (a range that is not a whole number of steps
+    ends short of stop rather than beyond it, where the focus limit may be)."""
+    if step_um <= 0:
+        raise CaptureRejected("Z step must be positive")
+    n = int(abs(stop_um - start_um) / step_um + 1e-6) + 1
+    if n > MAX_ZSTACK_SLICES:
+        raise CaptureRejected(f"{n} slices requested; limit is {MAX_ZSTACK_SLICES}")
+    sign = 1 if stop_um >= start_um else -1
+    return [start_um + sign * i * step_um for i in range(n)]
+
+
 @dataclass(frozen=True)
 class ZStack:
     channel: str
-    z_um: tuple[float, ...]
+    z_um: tuple[float, ...]  # acquisition order: start first
     images: tuple[CapturedImage, ...]
+    planned: int = 0  # slices planned (0 = as many as were taken)
+    stop_um: float | None = None  # the requested stop height (the last slice may end short of it)
+
+    @property
+    def complete(self) -> bool:
+        """False when Stop ended the stack early (the slices taken are kept)."""
+        return not self.planned or len(self.images) >= self.planned
+
+    @property
+    def direction(self) -> int:
+        """+1 when the stack went up in Z (start below stop), -1 when it went down."""
+        end = self.stop_um if self.stop_um is not None else (self.z_um[-1] if self.z_um else 0.0)
+        return -1 if self.z_um and end < self.z_um[0] else 1
 
 
 class ImageBuffers:
@@ -140,6 +170,10 @@ class CaptureService:
         #: Capture-tab POWER toggle (live view); starts dark (a real LED never lights at launch); captures always light
         #: the sample
         self.light_power = False
+        #: set by Stop (SessionModel.stop_all) to end a running Z-stack after the slice in progress
+        self._zstack_cancel = threading.Event()
+        #: (planned slice heights, requested stop) of the Z-stack running now, None when none is (for the slice map)
+        self.zstack_running: tuple[tuple[float, ...], float] | None = None
 
     # ------------------------------------------------------------------ checks
     def check_capture(self, role: CameraRole, slot: str) -> None:
@@ -211,33 +245,55 @@ class CaptureService:
 
     def zstack(self, slot: str, start_um: float, stop_um: float, step_um: float,
                role: CameraRole | None = None, progress: Callable[[int, int, str], None] | None = None) -> ZStack:
+        """Slices from `start_um` to `stop_um` (either way up), each a verified Z move then one exposure; focus returns
+        to where it started. Stop (`cancel_zstack`) ends it after the slice in progress and keeps the slices taken."""
         role = role or self.settings.active_camera
-        if step_um <= 0:
-            raise CaptureRejected("Z step must be positive")
-        n = round(abs(stop_um - start_um) / step_um) + 1
-        if n > 200:
-            raise CaptureRejected(f"{n} slices requested; limit is 200")
-        sign = 1 if stop_um >= start_um else -1
-        zs = [start_um + sign * i * step_um for i in range(n)]
+        zs = plan_zstack(start_um, stop_um, step_um)
+        n = len(zs)
         lim = self.ctl.axis_limits(self.profile.focus_device, "z")
         if lim and (min(zs) < lim[0] or max(zs) > lim[1]):
-            raise CaptureRejected(f"Z range {min(zs):.1f}-{max(zs):.1f} outside focus limits {lim}")
+            raise CaptureRejected(f"Z range {min(zs):.1f}-{max(zs):.1f} µm is outside the focus limits "
+                                  f"{lim[0]:.0f}-{lim[1]:.0f} µm")
         self.check_capture(role, slot)
+        self._zstack_cancel.clear()
         z_home = self.ctl.focus_z()
+        prev = self.ctl.light
         self.prepare_channel(role, slot)
-        imgs = []
+        imgs: list[CapturedImage] = []
+        self.zstack_running = (tuple(zs), stop_um)
         try:
             for i, z in enumerate(zs):
                 if progress:
-                    progress(i, n, f"z={z:.1f}")
-                self.ctl.run(self.ctl.move_focus(z))
+                    progress(i, n, f"slice {i + 1}/{n} · z = {z:.1f} µm")
+                if self._zstack_cancel.is_set():
+                    break
+                try:
+                    self.ctl.run(self.ctl.move_focus(z))
+                except CommandError:
+                    if self._zstack_cancel.is_set():  # Stop cancelled this move: keep the slices taken
+                        break
+                    raise
                 imgs.append(self._to_captured(self.ctl.acquire(role, 1)[0], slot, role))
         finally:
-            if z_home is not None:
-                self.ctl.run(self.ctl.move_focus(z_home))
-        stack = ZStack(slot, tuple(zs), tuple(imgs))
+            self._zstack_cancel.clear()
+            self.zstack_running = None
+            try:
+                if z_home is not None:
+                    self.ctl.run(self.ctl.move_focus(z_home))
+            finally:
+                if not self.light_power and prev.channel is not None:  # restore a dark live view (as capture does)
+                    self.ctl.run(self.ctl.set_light(slot, prev.intensity_percent, False))
+        if not imgs:
+            raise CaptureRejected("Z-stack stopped before the first slice")
+        if progress and len(imgs) == n:
+            progress(n, n, f"{n} slices")
+        stack = ZStack(slot, tuple(zs[:len(imgs)]), tuple(imgs), planned=n, stop_um=stop_um)
         self.buffers.set_zstack(stack)
         return stack
+
+    def cancel_zstack(self) -> None:
+        """Stop a running Z-stack after the slice in progress (focus still returns; the slices taken are kept)."""
+        self._zstack_cancel.set()
 
     def snap_to_last(self):
         if self.last_capture_z is None:

@@ -163,14 +163,35 @@ class ZStackDialog(QDialog):
         self.below = QDoubleSpinBox(minimum=0, maximum=2000, value=10, suffix=" µm below")
         self.above = QDoubleSpinBox(minimum=0, maximum=2000, value=10, suffix=" µm above")
         self.step = QDoubleSpinBox(minimum=0.1, maximum=500, value=2, decimals=2, suffix=" µm")
-        form.addRow(label(f"Centred on the current focus z = {z_now:.1f} µm", "muted"))
+        self.z_now = z_now
+        form.addRow(label(f"Centred on the current focus z = {z_now:,.1f} µm. Start, stop and playback are on the "
+                          "Z-stack page.", "muted", wrap=True))
         form.addRow("Range below", self.below)
         form.addRow("Range above", self.above)
         form.addRow("Step", self.step)
+        self.lbl_plan = label("", "mono", wrap=True)
+        form.addRow(self.lbl_plan)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
+        self.ok = bb.button(QDialogButtonBox.StandardButton.Ok)
         form.addRow(bb)
+        for w in (self.below, self.above, self.step):
+            w.valueChanged.connect(self._plan)
+        self._plan()
+
+    def _plan(self, *_a) -> None:
+        """Range, slice count and direction before anything moves (a stack the service would refuse cannot start)."""
+        from openevos.acquisition.capture import CaptureRejected, plan_zstack
+
+        lo, hi = self.z_now - self.below.value(), self.z_now + self.above.value()
+        try:
+            n = len(plan_zstack(lo, hi, self.step.value()))
+            self.lbl_plan.setText(f"Start {lo:,.1f} → stop {hi:,.1f} µm (upward)\n{hi - lo:,.1f} µm range · {n} slices")
+            self.ok.setEnabled(True)
+        except CaptureRejected as exc:
+            self.lbl_plan.setText(f"Cannot start: {exc}")
+            self.ok.setEnabled(False)
 
 
 class TransfectionDialog(QDialog):

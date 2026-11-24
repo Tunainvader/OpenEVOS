@@ -141,6 +141,7 @@ class SessionModel(QObject):
             except Exception as exc:  # noqa: BLE001
                 self.add_log("error", f"stop: {exc}")
         self.session.autofocus.cancel_event.set()
+        self.session.capture.cancel_zstack()  # a running Z-stack ends after the slice in progress
         return self.session.core.router.cancel_all()
 
     def shutdown(self) -> None:

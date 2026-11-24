@@ -1684,14 +1684,22 @@ class CapturePage(QWidget):
             except RuntimeError as exc:
                 self.model.add_log("error", str(exc))
         elif action is HotButtonAction.ZSTACK:
-            z = self.ctl.focus_z() or 0.0
+            z = self.ctl.focus_z()
+            if z is None:  # was `or 0.0`: a stack centred on Z = 0 that the focus limit then refused
+                self.model.add_log("warn", "Z-stack: focus position unknown")
+                return
             dlg = ZStackDialog(z, self)
             if dlg.exec() == QDialog.Accepted:
                 lo, hi, step = z - dlg.below.value(), z + dlg.above.value(), dlg.step.value()
                 slot, role = self.channel, self.role
-                self._run("Z-Stack", lambda p: cap.zstack(slot, lo, hi, step, role, p),
-                          on_done=lambda st: (self.model.add_log("info", f"Z-stack: {len(st.images)} slices"),
-                                              self.request_page.emit("zstack")), progress=True)
+
+                def zstack_done(st) -> None:
+                    how = "" if st.complete else f" (stopped: {len(st.images)} of {st.planned})"
+                    self.model.add_log("info", f"Z-stack: {len(st.images)} slices{how}")
+                    self.request_page.emit("zstack")
+
+                self._run("Z-Stack", lambda p: cap.zstack(slot, lo, hi, step, role, p), on_done=zstack_done,
+                          progress=True)
         elif action is HotButtonAction.TRANSFECTION:
             dlg = TransfectionDialog(self.profile, self)
             if dlg.exec() == QDialog.Accepted and dlg.fl.currentData() and dlg.tr.currentData():
