@@ -297,7 +297,7 @@ Screenshot: `screenshots/10_save.png`.
 - **Format:** TIFF / PNG / JPEG / BMP.
 - **Bit depth:** only the depths the rules allow are listed (16-bit only for TIFF + monochrome).
 - **Output:** Colour or Monochrome (Monochrome disabled for colour-camera images).
-- **Options:** Include annotations; Save underlying channels (16-bit mono or 8-bit colour).
+- **Options:** Include annotations; Save underlying channels, in any mix of 16-bit mono (×16, opens normally), 12-bit camera counts and 8-bit for viewing, one file per channel each (`<name>_<slot>_<16bit|12bit|8bit>`).
 - **Destination:** folder and base name (`Base_0001.tif`, auto-increment; never overwrite).
 - **Rule violations:** shown in warn text, and Save is disabled.
 - **Annotations:** when included, the Measure annotations and, if "Save image as screenshot" is on, the

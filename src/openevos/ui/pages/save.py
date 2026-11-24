@@ -20,11 +20,13 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QRadioButton,
+    QVBoxLayout,
     QWidget,
 )
 
 from openevos.imaging.composite import composite
 from openevos.imaging.save import (
+    UNDERLYING_MODES,
     SaveError,
     SaveOptions,
     SavePreset,
@@ -82,9 +84,16 @@ class SavePage(QWidget):
         self.annot = QCheckBox("Include annotations")
         self.annot.setChecked(True)
         self.under = QCheckBox("Save underlying channels")
-        self.under_mode = QComboBox()
-        self.under_mode.addItem("16-bit monochrome", "16bit_mono")
-        self.under_mode.addItem("8-bit color", "8bit_color")
+        # any mix, one file per channel each (operator 2026-11-24); starts from Settings › Mono › Underlying channels
+        chosen = self.session.settings.mono.underlying_channel_save
+        self.under_modes: dict[str, QCheckBox] = {}
+        for mode, (_tag, text) in UNDERLYING_MODES.items():
+            cb = QCheckBox(text)
+            cb.setChecked(mode in chosen)
+            self.under_modes[mode] = cb
+        self.under_modes["16bit_mono"].setToolTip("Camera counts ×16 to fill 0–65535: opens normally in any viewer")
+        self.under_modes["12bit_mono"].setToolTip("The camera's counts unscaled (0–4095), for measurement")
+        self.under_modes["8bit_color"].setToolTip("8-bit grey, auto-ranged for viewing (in the chosen format)")
         self.folder = QLineEdit(str(default_capture_folder()))
         browse = QPushButton()  # was a bare "…": now a folder icon (UI audit 2026-11-17)
         browse.setIcon(icon("folder"))
@@ -98,7 +107,13 @@ class SavePage(QWidget):
         form.addRow("Output", hbox(self.color, self.mono, None))
         form.addRow("", self.annot)
         form.addRow("", self.under)
-        form.addRow("Underlying as", self.under_mode)
+        modes = QWidget()
+        ml = QVBoxLayout(modes)
+        ml.setContentsMargins(0, 0, 0, 0)
+        ml.setSpacing(2)
+        for cb in self.under_modes.values():
+            ml.addWidget(cb)
+        form.addRow("Underlying as", modes)
         form.addRow("Folder", hbox(self.folder, browse))
         form.addRow("Base name", self.base)
         gl.addLayout(form)
@@ -123,9 +138,9 @@ class SavePage(QWidget):
         root.addWidget(g)
 
         self.preset.currentIndexChanged.connect(self._apply_preset)
-        for w in (self.fmt, self.under_mode, self.depth):
+        for w in (self.fmt, self.depth):
             w.currentIndexChanged.connect(self._validate)
-        for w in (self.color, self.mono, self.annot, self.under):
+        for w in (self.color, self.mono, self.annot, self.under, *self.under_modes.values()):
             w.toggled.connect(self._validate)
         self.fmt.currentIndexChanged.connect(self._depths)
         self.color.toggled.connect(self._depths)
@@ -236,7 +251,7 @@ class SavePage(QWidget):
     def options(self) -> SaveOptions:
         return SaveOptions(ImageFormat(self.fmt.currentData()), self.depth.currentData() or 8, self.color.isChecked(),
                            self.annot.isChecked() and self.color.isChecked(), self.under.isChecked(),
-                           self.under_mode.currentData())
+                           tuple(m for m, cb in self.under_modes.items() if cb.isChecked()))
 
     def _validate(self) -> None:
         _rgb, raw, _ = self._selection() if self.source.count() else (None, None, {})
@@ -244,6 +259,8 @@ class SavePage(QWidget):
         errs = validate(o, source_is_color=raw.is_color, source_bits=raw.bit_depth) if raw is not None else \
             ["nothing captured yet"]
         self.annot.setEnabled(self.color.isChecked())
+        for cb in self.under_modes.values():
+            cb.setEnabled(self.under.isChecked())
         self.mono.setEnabled(not (raw is not None and raw.is_color))
         self.lbl_rules.setText("; ".join(errs))
         self.btn_save.setEnabled(not errs)
@@ -286,7 +303,7 @@ class SavePage(QWidget):
         if not as_color and q.image_format is ImageFormat.TIFF and role is CameraRole.MONO:
             bit = 12 if raw.bit_depth <= 12 else 16  # the camera's counts, unscaled
         opts = SaveOptions(q.image_format, bit, as_color, q.include_annotations and as_color, q.save_underlying,
-                           self.session.settings.mono.underlying_channel_save)
+                           tuple(self.session.settings.mono.underlying_channel_save))
         if opts.include_annotations:
             rgb, burned = self._burned(rgb, raw)
         else:

@@ -3,9 +3,9 @@
 * Default: 8-bit colour TIFF including annotations.
 * 16-bit is only possible as TIFF *and* monochrome (raw camera data, no annotations burnt in).
 * JPEG and PNG, and anything saved as colour (composites, pseudo colour, colour camera), are 8-bit.
-* "Save underlying channels" writes each channel of an overlay as well (Mono settings: underlying
-  channel save as 8-bit colour or 16-bit monochrome; 16-bit fills 0-65535 like the main 16-bit save, and the sidecar
-  and each file's description record the counts scale).
+* "Save underlying channels" writes each channel of an overlay as well, in any mix of 16-bit monochrome (fills
+  0-65535 like the main 16-bit save), 12-bit camera counts and 8-bit for viewing (UNDERLYING_MODES); the sidecar and
+  each file's description record the counts scale.
 
 Each image gets a JSON sidecar with acquisition metadata and provenance; simulated frames are
 labelled SIMULATED there and in the TIFF description.
@@ -36,7 +36,17 @@ class SaveOptions:
     as_color: bool = True
     include_annotations: bool = True
     save_underlying: bool = False
-    underlying_mode: str = "16bit_mono"  # "8bit_color" | "16bit_mono"
+    underlying_modes: tuple[str, ...] = ("16bit_mono",)  # any of UNDERLYING_MODES, one file per channel for each
+
+
+#: the formats a channel of an overlay can be written in, each as its own file: mode -> (file tag, label)
+#: 16-bit: counts scaled to fill 0-65535 (opens normally anywhere); 12-bit: the camera's counts unscaled (for
+#: measurement); 8-bit: auto-ranged grey for viewing. Operator 2026-11-24: any mix, at once.
+UNDERLYING_MODES: dict[str, tuple[str, str]] = {
+    "16bit_mono": ("16bit", "16-bit monochrome"),
+    "12bit_mono": ("12bit", "12-bit camera counts"),
+    "8bit_color": ("8bit", "8-bit for viewing"),
+}
 
 
 class SavePreset(str, Enum):
@@ -75,6 +85,11 @@ def validate(opts: SaveOptions, *, source_is_color: bool, source_bits: int | Non
         errs.append(f"12-bit keeps the camera's counts unscaled; this capture is {source_bits}-bit (save 16-bit)")
     if source_is_color and not opts.as_color:
         errs.append("a colour-camera image cannot be saved as monochrome")
+    if opts.save_underlying:
+        if not opts.underlying_modes:
+            errs.append("pick at least one format for the underlying channels")
+        if unknown := [m for m in opts.underlying_modes if m not in UNDERLYING_MODES]:
+            errs.append(f"unknown underlying channel format: {', '.join(unknown)}")
     return errs
 
 
@@ -145,27 +160,42 @@ def save(folder: Path, base: str, *, rgb8: np.ndarray | None, raw: CapturedImage
             **(extra_metadata or {})}
     synthetic = (raw is not None and raw.synthetic) or any(v.synthetic for v in (channels or {}).values())
     meta["provenance"] = "SIMULATED — synthetic simulator frames, not measurements" if synthetic else "camera data"
-    # Underlying channel files. "16bit_mono" fills 0-65535 exactly as the main 16-bit save does (counts x 2**(16 -
-    # native bits)): operator 2026-11-24, the unscaled 12-bit counts opened nearly black in ordinary viewers.
-    under: list[tuple[str, Path, np.ndarray, ImageFormat, int]] = []  # slot, path, pixels, format, counts scale
-    if opts.save_underlying and channels:
-        for slot, img in channels.items():
-            if opts.underlying_mode == "16bit_mono" and not img.is_color:
-                px, k = mono_pixels(img, 16)
-                under.append((slot, path.with_name(f"{path.stem}_{slot}.tif"), px, ImageFormat.TIFF, k))
-            else:
-                under.append((slot, path.with_name(f"{path.stem}_{slot}{opts.image_format.suffix}"),
-                              img.data if img.is_color else _mono8(img.data), opts.image_format, 0))
-        meta["openevos_save"]["underlying"] = {"mode": opts.underlying_mode,
-                                               "files": {s: p.name for s, p, _d, _f, _k in under},
-                                               "counts_scale": {s: k for s, _p, _d, _f, k in under}}
+    under = _underlying(path, opts, channels) if opts.save_underlying and channels else []
+    if under:
+        meta["openevos_save"]["underlying"] = {
+            "modes": list(opts.underlying_modes),
+            "files": {s: {m: p.name for s2, m, p, _d, _f, _k in under if s2 == s} for s in channels or {}},
+            "counts_scale": {s: {m: k for s2, m, _p, _d, _f, k in under if s2 == s} for s in channels or {}}}
     _write(path, data, opts.image_format, json.dumps(meta, default=str))
     sidecar = path.with_suffix(".json")
     sidecar.write_text(json.dumps(meta, indent=2, default=str), "utf-8")
     out = SavedFiles(path, sidecar)
-    for slot, p, px, fmt, k in under:
+    for slot, _m, p, px, fmt, k in under:
         _write(p, px, fmt, json.dumps({**(channels or {})[slot].metadata(), "counts_scale": k}, default=str))
         out.underlying.append(p)
+    return out
+
+
+def _underlying(path: Path, opts: SaveOptions, channels: dict[str, CapturedImage]
+                ) -> list[tuple[str, str, Path, np.ndarray, ImageFormat, int]]:
+    """(slot, mode, path, pixels, format, counts scale) for each channel in each chosen format:
+    `<stem>_<slot>_<16bit|12bit|8bit><ext>`. 16-/12-bit are TIFF whatever the format (the only one that holds them)
+    and fill 0-65535 / keep the counts as the main mono save does (operator 2026-11-24: the unscaled 16-bit channel
+    files opened nearly black). A colour-camera channel has no mono data: one 8-bit colour file."""
+    out = []
+    for slot, img in channels.items():
+        if img.is_color:
+            p = path.with_name(f"{path.stem}_{slot}_8bit{opts.image_format.suffix}")
+            out.append((slot, "8bit_color", p, img.data, opts.image_format, 0))
+            continue
+        for mode in opts.underlying_modes:
+            tag = UNDERLYING_MODES[mode][0]
+            if mode == "8bit_color":
+                out.append((slot, mode, path.with_name(f"{path.stem}_{slot}_{tag}{opts.image_format.suffix}"),
+                            _mono8(img.data), opts.image_format, 0))
+            else:
+                px, k = mono_pixels(img, 16 if mode == "16bit_mono" else 12)
+                out.append((slot, mode, path.with_name(f"{path.stem}_{slot}_{tag}.tif"), px, ImageFormat.TIFF, k))
     return out
 
 

@@ -117,7 +117,9 @@ class MonoSettings(BaseModel):
     pseudocolor_enabled: bool = True  # "Apply Pseudo Color" (Light & Camera dialog)
     highlight_saturated: bool = False
     block_condenser_in_fluorescence: bool = False  # needs condenser motion; locked on hardware for now
-    underlying_channel_save: str = "16bit_mono"  # "8bit_color" | "16bit_mono"
+    # formats each channel of an overlay is saved in, any mix (imaging.save.UNDERLYING_MODES); a single string from
+    # older settings files still loads
+    underlying_channel_save: list[str] = Field(default_factory=lambda: ["16bit_mono"])
     capture_all: list[str] = Field(default_factory=list)  # slots; empty => every installed fluorescence cube
     quick_save: QuickSaveSettings = Field(default_factory=QuickSaveSettings)
 
@@ -126,12 +128,14 @@ class MonoSettings(BaseModel):
     def _four(cls, v: list[HotButtonAction]) -> list[HotButtonAction]:
         return _pad_hot_buttons(v)
 
-    @field_validator("underlying_channel_save")
+    @field_validator("underlying_channel_save", mode="before")
     @classmethod
-    def _ucs(cls, v: str) -> str:
-        if v not in ("8bit_color", "16bit_mono"):
-            raise ValueError("underlying channel save must be 8bit_color or 16bit_mono")
-        return v
+    def _ucs(cls, v):
+        order = ("16bit_mono", "12bit_mono", "8bit_color")  # imaging.save.UNDERLYING_MODES
+        v = [v] if isinstance(v, str) else list(v)
+        if not v or any(m not in order for m in v):
+            raise ValueError(f"underlying channel save: one or more of {', '.join(order)}")
+        return [m for m in order if m in v]
 
 
 class ColorSettings(BaseModel):

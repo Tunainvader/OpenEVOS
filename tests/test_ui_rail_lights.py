@@ -165,7 +165,8 @@ def test_channel_buttons_show_which_light_is_on(win):
     assert [k for k, b in cap.ch_buttons.items() if b.lit] == [slot]
     cap.btn_power.setChecked(False)
     assert wait_for(app, lambda: not s.rig.light.enabled)
-    assert not cap.ch_buttons[slot].lit and cap.btn_power.styleSheet() == ""
+    # the buttons repaint on the page's next refresh after the light reports off: wait for it (it lagged under load)
+    assert wait_for(app, lambda: not cap.ch_buttons[slot].lit and cap.btn_power.styleSheet() == "")
 
 
 def test_channel_buttons_drop_empty_thumbnail_wells_until_a_capture(win):

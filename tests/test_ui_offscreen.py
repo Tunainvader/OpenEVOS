@@ -137,6 +137,42 @@ def test_save_page_rules_and_quick_save(app, window, tmp_path):
     assert list((tmp_path / "out").glob("Image_0001.tif"))
 
 
+def test_save_page_writes_the_overlay_and_each_channel_in_every_ticked_format(app, window, tmp_path):
+    """Operator 2026-11-24: after Capture All, the composite plus each channel, in any mix of formats."""
+    cap, s = window.pages["capture"], window.session
+    cap.capture_all()
+    assert wait_for(app, lambda: len(s.capture.buffers.all()) >= 2 and not window.model.tasks.busy, 20.0)
+    slots = sorted(k for k, v in s.capture.buffers.all().items() if not v.is_color)
+    sp = window.pages["save"]
+    window.navigate("save")
+    pump(app, 0.1)
+    sp.source.setCurrentIndex(sp.source.findData("overlay"))
+    sp.preset.setCurrentIndex(sp.preset.findData("default"))
+    sp.under.setChecked(True)
+    assert all(cb.isEnabled() for cb in sp.under_modes.values())
+    for cb in sp.under_modes.values():
+        cb.setChecked(False)
+    assert "pick at least one format" in sp.lbl_rules.text() and not sp.btn_save.isEnabled()
+    for cb in sp.under_modes.values():
+        cb.setChecked(True)
+    assert sp.btn_save.isEnabled()
+    sp.folder.setText(str(tmp_path / "mix"))
+    sp._save()
+    names = sorted(p.name for p in (tmp_path / "mix").iterdir())
+    assert "Image_0001.tif" in names and "Image_0001.json" in names
+    for slot in slots:
+        for tag in ("16bit", "12bit", "8bit"):
+            assert f"Image_0001_{slot}_{tag}.tif" in names
+    # Settings › Mono: the same three, and the last one cannot be unticked
+    ip = window.pages["settings"]
+    boxes = ip.under_modes
+    boxes["12bit_mono"].setChecked(True)
+    assert s.settings.mono.underlying_channel_save == ["16bit_mono", "12bit_mono"]
+    boxes["16bit_mono"].setChecked(False)
+    boxes["12bit_mono"].setChecked(False)
+    assert boxes["12bit_mono"].isChecked() and s.settings.mono.underlying_channel_save == ["12bit_mono"]
+
+
 def test_scan_page_plans_and_runs(app, window):
     sp = window.pages["scan"]
     sp.map.selected = {"D7"}

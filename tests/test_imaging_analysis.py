@@ -114,20 +114,63 @@ def test_save_files_preserve_raw_and_label_simulated(tmp_path):
     assert meta["provenance"].startswith("SIMULATED") and meta["primary"]["synthetic"] is True
     rgb = np.zeros((6, 8, 3), np.uint8)
     o2 = save(tmp_path, "Raw", rgb8=rgb, raw=img, opts=SaveOptions(save_underlying=True), channels={"cube2": img})
-    assert o2.image.name == "Raw_0002.tif" and len(o2.underlying) == 1
+    assert o2.image.name == "Raw_0002.tif" and [p.name for p in o2.underlying] == ["Raw_0002_cube2_16bit.tif"]
     under = tifffile.imread(o2.underlying[0])
     # operator 2026-11-24: "16-bit monochrome" channel files held the 12-bit counts unscaled (0-4095), so they opened
     # nearly black; now they match the main 16-bit save (counts x16, exact) and say so
     assert under.dtype == np.uint16 and np.array_equal(under, raw * 16)
-    assert json.loads(o2.sidecar.read_text())["openevos_save"]["underlying"] == {
-        "mode": "16bit_mono", "files": {"cube2": "Raw_0002_cube2.tif"}, "counts_scale": {"cube2": 16}}
     with tifffile.TiffFile(o2.underlying[0]) as tf:
         assert json.loads(tf.pages[0].description)["counts_scale"] == 16
+    with pytest.raises(SaveError):
+        save(tmp_path, "None", rgb8=rgb, raw=img, opts=SaveOptions(save_underlying=True, underlying_modes=()),
+             channels={"cube2": img})
     with pytest.raises(SaveError):
         save(tmp_path, "x", rgb8=rgb, raw=_img(rgb, color=True), opts=SaveOptions(as_color=False, bit_depth=8,
                                                                                  include_annotations=False))
     png = save(tmp_path, "P", rgb8=rgb, raw=img, opts=SaveOptions(ImageFormat.PNG))
     assert png.image.suffix == ".png"
+
+
+def test_underlying_channels_in_any_mix_of_formats(tmp_path):
+    """Operator 2026-11-24: the composite plus each channel, in every format wanted at once (16-bit to view and
+    measure, 12-bit camera counts, 8-bit to view)."""
+    import tifffile
+
+    a = np.arange(48, dtype=np.uint16).reshape(6, 8) * 80
+    b = a[::-1].copy()
+    chans = {"cube1": _img(a), "cube2": _img(b)}
+    rgb = np.zeros((6, 8, 3), np.uint8)
+    every = ("16bit_mono", "12bit_mono", "8bit_color")
+    out = save(tmp_path, "Mix", rgb8=rgb, raw=chans["cube1"], channels=chans,
+               opts=SaveOptions(save_underlying=True, underlying_modes=every))
+    assert sorted(p.name for p in out.underlying) == sorted(
+        f"Mix_0001_{s}_{t}.tif" for s in ("cube1", "cube2") for t in ("16bit", "12bit", "8bit"))
+    for slot, px in (("cube1", a), ("cube2", b)):
+        assert np.array_equal(tifffile.imread(tmp_path / f"Mix_0001_{slot}_16bit.tif"), px * 16)
+        assert np.array_equal(tifffile.imread(tmp_path / f"Mix_0001_{slot}_12bit.tif"), px)
+        assert tifffile.imread(tmp_path / f"Mix_0001_{slot}_8bit.tif").dtype == np.uint8
+    u = json.loads(out.sidecar.read_text())["openevos_save"]["underlying"]
+    assert u["modes"] == list(every)
+    assert u["files"]["cube2"] == {"16bit_mono": "Mix_0001_cube2_16bit.tif", "12bit_mono": "Mix_0001_cube2_12bit.tif",
+                                   "8bit_color": "Mix_0001_cube2_8bit.tif"}
+    assert u["counts_scale"]["cube1"] == {"16bit_mono": 16, "12bit_mono": 1, "8bit_color": 0}
+    # PNG: the 16-/12-bit files stay TIFF (the only format that holds them), the 8-bit one follows the format
+    out = save(tmp_path, "Png", rgb8=rgb, raw=chans["cube1"], channels={"cube1": chans["cube1"]},
+               opts=SaveOptions(ImageFormat.PNG, save_underlying=True, underlying_modes=("12bit_mono", "8bit_color")))
+    assert sorted(p.name for p in out.underlying) == ["Png_0001_cube1_12bit.tif", "Png_0001_cube1_8bit.png"]
+
+
+def test_old_settings_with_one_underlying_format_still_load():
+    from openevos.instrument.settings import MonoSettings
+
+    assert MonoSettings.model_validate({"underlying_channel_save": "8bit_color"}).underlying_channel_save == [
+        "8bit_color"]
+    assert MonoSettings().underlying_channel_save == ["16bit_mono"]
+    m = MonoSettings.model_validate({"underlying_channel_save": ["12bit_mono", "16bit_mono", "12bit_mono"]})
+    assert m.underlying_channel_save == ["16bit_mono", "12bit_mono"]  # one each, in a fixed order
+    for bad in ([], ["32bit"]):
+        with pytest.raises(ValidationError):
+            MonoSettings.model_validate({"underlying_channel_save": bad})
 
 
 # ------------------------------------------------------------------ focus metrics

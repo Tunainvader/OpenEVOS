@@ -803,14 +803,22 @@ class SettingsPage(QWidget):
         bc.setToolTip("Needs condenser/phase-wheel motion (P axis is locked on the physical unit); no effect in the "
                       "simulator. Not recommended for most users (slower channel/objective changes).")
         bc.toggled.connect(lambda v: setattr(m, "block_condenser_in_fluorescence", v))
-        uc = QComboBox()
-        uc.addItem("16-bit monochrome", "16bit_mono")
-        uc.addItem("8-bit color (256 colours)", "8bit_color")
-        uc.setCurrentIndex(uc.findData(m.underlying_channel_save))
-        uc.currentIndexChanged.connect(lambda _=0: setattr(m, "underlying_channel_save", uc.currentData()))
+        from openevos.imaging.save import UNDERLYING_MODES
+
+        ucw = QWidget()  # any mix, one file per channel each (operator 2026-11-24)
+        ucl = QHBoxLayout(ucw)
+        ucl.setContentsMargins(0, 0, 0, 0)
+        self.under_modes: dict[str, QCheckBox] = {}
+        for mode, (_tag, text) in UNDERLYING_MODES.items():
+            cb = QCheckBox(text)
+            cb.setChecked(mode in m.underlying_channel_save)
+            cb.toggled.connect(lambda on, mode=mode: self._underlying_mode(mode, on))
+            self.under_modes[mode] = cb
+            ucl.addWidget(cb)
+        ucl.addStretch(1)
         form.addRow("", hs)
         form.addRow("", bc)
-        form.addRow("Underlying channel save", uc)
+        form.addRow("Underlying channel save", ucw)
         caw = QWidget()
         cal = QGridLayout(caw)
         cal.setContentsMargins(0, 0, 0, 0)
@@ -822,6 +830,16 @@ class SettingsPage(QWidget):
         form.addRow("Capture All selection", caw)
         self._quick(form, m.quick_save)
         return w
+
+    def _underlying_mode(self, mode: str, on: bool) -> None:
+        """Keep at least one format: unticking the last one ticks it again."""
+        m = self.session.settings.mono
+        chosen = [k for k, cb in self.under_modes.items() if cb.isChecked()]
+        if not chosen:
+            self.under_modes[mode].setChecked(True)
+            return
+        m.underlying_channel_save = chosen
+        self.model.settings_changed.emit()
 
     def _capture_all(self, slot: str, on: bool) -> None:
         m = self.session.settings.mono
