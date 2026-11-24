@@ -501,6 +501,7 @@ class CapturePage(QWidget):
         m.tasks.busy_changed.connect(self._on_busy)
         m.tasks.progress.connect(lambda n, i, t, msg: self.lbl_task.setText(f"{n}: {msg}"))
         m.log_added.connect(self._on_log)
+        m.confirmed.connect(lambda text: self.notice.show_passing("ok", text))
         self.notice.action_requested.connect(self._notice_action)
         self._notice_timer = QTimer(self)  # STOP, a stage lock and device faults are read, not all signalled
         self._notice_timer.setInterval(500)

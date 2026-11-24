@@ -31,6 +31,9 @@ class SessionModel(QObject):
     buffers_changed = Signal()
     settings_changed = Signal()
     status_message = Signal(str)
+    #: an operator action done somewhere the operator cannot see (Quick Save from the Capture page): the text
+    #: the Capture page's notice line shows ("ok" level) so the operator knows it happened
+    confirmed = Signal(str)
 
     def __init__(self, session: Session, parent=None):
         super().__init__(parent)

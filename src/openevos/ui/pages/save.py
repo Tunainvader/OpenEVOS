@@ -300,6 +300,9 @@ class SavePage(QWidget):
             return
         self.lbl_result.setText(f"Quick saved {out.image.name}")
         self.model.add_log("info", f"quick saved {out.image}")
+        # Quick Save usually runs from the Capture page (hot button, Ctrl+Shift+S, gamepad Start), where the label
+        # above is out of sight: operator 2026-11-24, "no confirmation for the saved image"
+        self.model.confirmed.emit(f"Saved {out.image.name} in {out.image.parent}")
 
     def showEvent(self, e):
         super().showEvent(e)

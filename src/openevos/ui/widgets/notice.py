@@ -80,7 +80,8 @@ class NoticeBar(QFrame):
         return self._standing is not None
 
     def show_passing(self, level: str, text: str, seconds: float = NOTICE_S) -> None:
-        """A refusal or failed step ("warn" / "error"): shown for `seconds`, or until the next notice."""
+        """A refusal or failed step ("warn" / "error"), or an action done out of sight ("ok", e.g. Quick Save):
+        shown for `seconds`, or until the next notice."""
         self._passing = (level, text)
         self._timer.start(int(seconds * 1000))
         self._render()
@@ -111,7 +112,7 @@ class NoticeBar(QFrame):
         level, text = shown
         self.lbl_text.setText(text)
         self.lbl_text.setToolTip(text)
-        self.setAccessibleName(f"{'Error' if level == 'error' else 'Warning'}: {text}")
+        self.setAccessibleName(f"{ {'error': 'Error', 'ok': 'Done'}.get(level, 'Warning')}: {text}")
         standing = self._standing is not None
         self.btn_close.setVisible(not standing)
         self.btn_action.setVisible(standing and self._action is not None)
@@ -123,9 +124,9 @@ class NoticeBar(QFrame):
     def retint(self) -> None:
         """Colours from the current theme: a tint of the level's colour, its full colour on the edge and the icon."""
         level = self.level or "warn"
-        c = theme.FAULT if level == "error" else theme.WARN
+        c = {"error": theme.FAULT, "ok": theme.OK}.get(level, theme.WARN)
         self.setStyleSheet(f"QFrame#notice {{ background: {_mix(theme.PANEL, c, 0.14).name()}; border: 1px solid {c}; "
                            f"border-radius: 8px; }} QFrame#notice QLabel {{ color: {theme.TEXT}; "
                            "background: transparent; border: none; }")
-        self.lbl_icon.setPixmap(pixmap("warning", c, 18))
+        self.lbl_icon.setPixmap(pixmap("save" if level == "ok" else "warning", c, 18))
         self.btn_close.setIcon(icon("close"))

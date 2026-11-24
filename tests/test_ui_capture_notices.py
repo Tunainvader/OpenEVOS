@@ -73,6 +73,26 @@ def test_a_refusal_shows_under_the_image_and_goes(win):
     assert wait_for(app, lambda: not cap.notice.isVisible(), 3.0)  # a passing notice goes by itself
 
 
+def test_quick_save_from_the_capture_page_says_it_saved(win, tmp_path):
+    """Operator 2026-11-24: "no confirmation for the saved image". Quick Save (hot button, Ctrl+Shift+S, gamepad
+    Start) runs from the Capture page; its result only reached the Save page's label and the log, so the operator
+    pressed it twice and got two files."""
+    app, w, s = win
+    cap = w.pages["capture"]
+    q = s.settings.camera_settings(s.settings.active_camera).quick_save
+    q.folder = str(tmp_path / "caps")
+    w.pages["save"].quick_save()
+    assert cap.notice.level == "warn" and cap.notice.text == "Quick Save: nothing captured yet"
+    cap.notice.dismiss()
+    cap.capture_current()
+    assert wait_for(app, lambda: s.capture.buffers.all() and not w.model.tasks.busy, 10.0)
+    w.pages["save"].quick_save()
+    assert list((tmp_path / "caps").glob("Image_0001.*"))
+    assert cap.notice.isVisible() and cap.notice.level == "ok"
+    assert cap.notice.text == f"Saved Image_0001.tif in {tmp_path / 'caps'}"
+    assert cap.notice.accessibleName() == f"Done: Saved Image_0001.tif in {tmp_path / 'caps'}"
+
+
 def test_stop_and_a_drive_fault_stay_until_they_are_cleared(win, monkeypatch):
     app, w, s = win
     cap = w.pages["capture"]
