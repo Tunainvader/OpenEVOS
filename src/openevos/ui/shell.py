@@ -907,6 +907,8 @@ class MainWindow(QMainWindow):
         cap.request_page.connect(self._page_request)
         for key, page in build_other_pages(self.model, cap).items():
             self._add(key, page)
+            if hasattr(page, "request_page"):  # e.g. Time-lapse opens one of its Z-stacks on the Z-stack page
+                page.request_page.connect(self._page_request)
         from openevos.ui.pages.diagnostics import DiagnosticsPage
 
         self._add("diagnostics", DiagnosticsPage(self.model))  # Inspector scans (ported from the legacy UI)

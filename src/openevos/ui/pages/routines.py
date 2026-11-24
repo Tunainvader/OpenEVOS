@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -526,6 +527,7 @@ class ScanPage(_RoutineBase):
 
 class TimelapsePage(_RoutineBase):
     kind = "timelapse"
+    request_page = Signal(str)  # "zstack": show a routine Z-stack on the Z-stack page
 
     def __init__(self, model, parent=None):
         super().__init__(model, parent)
@@ -626,6 +628,16 @@ class TimelapsePage(_RoutineBase):
         self.btn_ome.setToolTip("Run a time-lapse first")
         self.btn_ome.clicked.connect(self._export_ome)
         g.layout().insertWidget(g.layout().count() - 2, self.btn_ome)
+        self.stack_pick = QComboBox()
+        self.stack_pick.setToolTip("Z-stacks this time-lapse took (time point · beacon · channel)")
+        self.btn_open_stack = QPushButton("Open in Z-stack page")
+        self.btn_open_stack.setIcon(icon("zstack"))
+        self.btn_open_stack.setToolTip("Browse the stack with its slice map and playback (replaces the Z-stack held "
+                                       "in memory; the time-lapse keeps all of its stacks)")
+        self.btn_open_stack.clicked.connect(self._open_stack)
+        self.stack_row = hbox(self.stack_pick, self.btn_open_stack)
+        self.stack_row.setVisible(False)
+        g.layout().insertWidget(g.layout().count() - 2, self.stack_row)
         self.btn_run.clicked.connect(self._run)
         self.btn_pause.toggled.connect(self._pause)
         self.btn_stop.clicked.connect(lambda: self.runner and self.runner.control.stop())
@@ -789,10 +801,35 @@ class TimelapsePage(_RoutineBase):
         self.btn_pause.setChecked(False)
         self.btn_stop.setEnabled(False)
         self.btn_ome.setEnabled(bool(res.frames))
-        self.btn_ome.setToolTip("Write one OME-TIFF (T × C × Y × X) per beacon")
+        self.btn_ome.setToolTip("One OME-TIFF per beacon: T × Z × C × Y × X with the Z-stacks, else T × C × Y × X")
+        n_stacks = sum(len(v) for v in res.stacks.values())
         self.lbl_progress.setText(res.message + (f" · {res.late_timepoints} late" if res.late_timepoints else "")
-                                  + (f" · {len(res.stacks)} Z-stacks" if res.stacks else ""))
+                                  + (f" · {n_stacks} Z-stacks" if n_stacks else ""))
         self.model.add_log("info" if res.completed else "warn", f"time-lapse: {res.message}")
+        self._fill_stacks(res)
+
+    def _fill_stacks(self, res) -> None:
+        self.stack_pick.clear()
+        for (tp, beacon), by_slot in sorted(res.stacks.items(), key=lambda kv: kv[0]):
+            for slot, st in by_slot.items():
+                ch = self.profile.channel(slot)
+                name = ch.display if ch else slot
+                way = "↑" if st.direction > 0 else "↓"
+                part = "" if st.complete else f" · stopped {len(st.images)}/{st.planned}"
+                self.stack_pick.addItem(f"t{tp + 1} · {beacon} · {name} · {len(st.images)} slices {way}{part}",
+                                        ((tp, beacon), slot))
+        self.stack_row.setVisible(self.stack_pick.count() > 0)
+        self.btn_open_stack.setEnabled(self.stack_pick.count() > 0)
+
+    def _open_stack(self) -> None:
+        if not self.result or self.stack_pick.currentData() is None:
+            return
+        key, slot = self.stack_pick.currentData()
+        st = self.result.stacks.get(key, {}).get(slot)
+        if st is None:
+            return
+        self.session.capture.buffers.set_zstack(st)
+        self.request_page.emit("zstack")
 
     def _export_ome(self) -> None:
         from openevos.imaging.ome import timelapse_to_ome

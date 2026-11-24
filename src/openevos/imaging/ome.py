@@ -51,7 +51,30 @@ def timelapse_to_ome(path: Path, result, beacon: str, interval_s: float | None) 
     chans = list(frames[0][1])
     if any(np.asarray(imgs[c].data).ndim != 2 for _tp, imgs in frames for c in chans):
         raise ValueError("OME-TIFF export is for monochrome channels; export colour frames as a movie")
-    arr = np.stack([np.stack([np.asarray(imgs[c].data) for c in chans]) for _tp, imgs in frames])[:, None]  # T Z C Y X
     first = frames[0][1][chans[0]]
-    return write_ome_tiff(path, arr, pixel_um=first.pixel_size_um, t_interval_s=interval_s, channel_names=chans,
+    z = _timelapse_z(result, beacon, [tp for tp, _imgs in frames], chans)
+    if z is not None:  # T Z C Y X from the Z-stack taken at every time point
+        arr, z_step = z
+    else:
+        arr = np.stack([np.stack([np.asarray(imgs[c].data) for c in chans]) for _tp, imgs in frames])[:, None]
+        z_step = None
+    return write_ome_tiff(path, arr, pixel_um=first.pixel_size_um, z_step_um=z_step, t_interval_s=interval_s,
+                          channel_names=chans,
                           description="SIMULATED synthetic frames" if first.synthetic else "OpenEVOS time-lapse")
+
+
+def _timelapse_z(result, beacon: str, tps: list[int], chans: list[str]) -> tuple[np.ndarray, float | None] | None:
+    """The routine's Z-stacks for one beacon as T Z C Y X, or None when there are none or they do not form a full
+    block (a stack Stop cut short, a time point without one): then the export is the plain time-lapse."""
+    stacks = getattr(result, "stacks", None) or {}
+    try:
+        per_tp = [[stacks[(tp, beacon)][c] for c in chans] for tp in tps]
+    except KeyError:
+        return None
+    lens = {len(s.images) for row in per_tp for s in row}
+    if len(lens) != 1 or any(not s.complete for row in per_tp for s in row):
+        return None
+    arr = np.stack([np.stack([np.stack([np.asarray(i.data) for i in s.images]) for s in row], axis=1)
+                    for row in per_tp])  # T Z C Y X
+    z = per_tp[0][0].z_um
+    return arr, (abs(z[1] - z[0]) if len(z) > 1 else None)

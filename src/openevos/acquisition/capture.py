@@ -244,9 +244,11 @@ class CaptureService:
         return self.capture(fluor_slot, CameraRole.MONO), self.capture(trans_slot, CameraRole.MONO)
 
     def zstack(self, slot: str, start_um: float, stop_um: float, step_um: float,
-               role: CameraRole | None = None, progress: Callable[[int, int, str], None] | None = None) -> ZStack:
+               role: CameraRole | None = None, progress: Callable[[int, int, str], None] | None = None, *,
+               store: bool = True) -> ZStack:
         """Slices from `start_um` to `stop_um` (either way up), each a verified Z move then one exposure; focus returns
-        to where it started. Stop (`cancel_zstack`) ends it after the slice in progress and keeps the slices taken."""
+        to where it started. Stop (`cancel_zstack`) ends it after the slice in progress and keeps the slices taken.
+        `store=False` (routines) keeps the stack out of the memory buffer, so the operator's Z-stack stays."""
         role = role or self.settings.active_camera
         zs = plan_zstack(start_um, stop_um, step_um)
         n = len(zs)
@@ -288,7 +290,8 @@ class CaptureService:
         if progress and len(imgs) == n:
             progress(n, n, f"{n} slices")
         stack = ZStack(slot, tuple(zs[:len(imgs)]), tuple(imgs), planned=n, stop_um=stop_um)
-        self.buffers.set_zstack(stack)
+        if store:
+            self.buffers.set_zstack(stack)
         return stack
 
     def cancel_zstack(self) -> None:

@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from openevos.acquisition.capture import CapturedImage
+from openevos.acquisition.capture import CapturedImage, CaptureRejected, ZStack
 from openevos.acquisition.scan_plan import Beacon
 from openevos.acquisition.scan_runner import RunStopped, ScanRunner
 from openevos.instrument.profile import CameraRole, InstrumentProfile
@@ -87,6 +87,11 @@ class TimelapseEstimate:
     warnings: tuple[str, ...]
 
 
+def _n_slices(r: TimelapseRoutine) -> int:
+    """Slices per stack, counted as the stack itself counts them (capture.plan_zstack: never past the range)."""
+    return int(r.zstack_range_um / r.zstack_step_um + 1e-6) + 1
+
+
 def estimate(r: TimelapseRoutine, profile: InstrumentProfile, *, environment_available: bool = False,
              seconds_per_position: float = 1.2) -> TimelapseEstimate:
     w: list[str] = []
@@ -95,7 +100,7 @@ def estimate(r: TimelapseRoutine, profile: InstrumentProfile, *, environment_ava
         if not c or not cam or not cam.supports(c):
             w.append(f"channel {ch} not available on the {r.camera.value} camera")
     tp = 1 if r.capture_one_frame_only else sum(s.timepoints for s in r.scenes)
-    n_z = round(r.zstack_range_um / r.zstack_step_um) + 1 if r.zstack else 1
+    n_z = _n_slices(r) if r.zstack else 1
     per_pos = seconds_per_position + 0.4 * len(r.channels) + (2.5 if r.auto_fine_focus else 0) \
         + (6.0 if r.auto_find_sample else 0)
     cycle = len(r.beacons) * per_pos
@@ -107,7 +112,7 @@ def estimate(r: TimelapseRoutine, profile: InstrumentProfile, *, environment_ava
                 and not environment_available:
             w.append(f"scene {i}: environmental setpoints are recorded only — incubator control unavailable")
     if r.zstack:
-        n_z = round(r.zstack_range_um / r.zstack_step_um) + 1
+        n_z = _n_slices(r)
         cycle += len(r.beacons) * len(r.channels) * n_z * 0.35
         if n_z > 200:
             w.append(f"Z-stack of {n_z} slices exceeds the 200-slice limit")
@@ -163,11 +168,7 @@ class TimelapseRunner:
                                          auto_fine=r.auto_fine_focus, log=[], index=tp, z=z_by_beacon[b.label])
                     z_by_beacon[b.label] = ctl.focus_z()  # track focus drift per beacon
                     if r.zstack:
-                        zc = ctl.focus_z()
-                        half = r.zstack_range_um / 2
-                        res.stacks[(tp, b.label)] = {
-                            slot: self.sr.capture.zstack(slot, zc - half, zc + half, r.zstack_step_um, r.camera)
-                            for slot in r.channels}
+                        self._stacks(r, tp, len(schedule), b.label, progress, res.stacks.setdefault((tp, b.label), {}))
                     res.frames.append((tp, b.label, imgs))
                     batch.append((b.label, imgs))
                 if on_timepoint:
@@ -178,6 +179,35 @@ class TimelapseRunner:
             res.message = f"{exc} at time point {len({f[0] for f in res.frames})}/{len(schedule)}"
         except Exception as exc:  # noqa: BLE001
             res.message = f"failed: {exc}"
+        res.stacks = {k: v for k, v in res.stacks.items() if v}  # a stop before a stack's first slice leaves none
         if progress:
             progress(len(schedule), len(schedule), res.message)
         return res
+
+    def _stacks(self, r: TimelapseRoutine, tp: int, n_tp: int, beacon: str,
+                progress: Callable[[int, int, str], None] | None, out: dict[str, ZStack]) -> None:
+        """One Z-stack per channel centred on the focus just found, put in `out` (the result, not the memory buffer,
+        which holds the operator's own Z-stack) as each finishes. Stop ends a stack after the slice in progress, keeps
+        it, then ends the routine; pause waits until the stack is done (the LED is not left on over a pause)."""
+        capture, ctl = self.sr.capture, self.sr.capture.ctl
+        zc = ctl.focus_z()
+        if zc is None:
+            raise RuntimeError(f"Z-stack at {beacon}: focus position unknown")
+        half = r.zstack_range_um / 2
+        for slot in r.channels:
+            self.control.checkpoint()
+
+            def slice_progress(i: int, n: int, msg: str, slot: str = slot) -> None:
+                if self.control.stopped:
+                    capture.cancel_zstack()
+                if progress and i < n:
+                    progress(tp, n_tp, f"time point {tp + 1}/{n_tp} · {beacon} · Z-stack {slot} {msg}")
+
+            try:
+                out[slot] = capture.zstack(slot, zc - half, zc + half, r.zstack_step_um, r.camera, slice_progress,
+                                           store=False)
+            except CaptureRejected:
+                if self.control.stopped:  # stopped before the first slice
+                    raise RunStopped("stopped by operator") from None
+                raise
+        self.control.checkpoint()  # a stack Stop cut short ends the routine here
