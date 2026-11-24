@@ -2,6 +2,10 @@
 channel, then a downsampled mosaic per channel for review. Pause/stop are honoured between steps
 (never mid-exposure). Optional on-disk output, written per tile as the scan runs: one TIFF per tile+channel,
 tiles.jsonl (append-only), then manifest.json and the mosaics at the end.
+
+With "Z-stack" ticked, every tile also takes one Z-stack per channel centred on the focus found there (after the
+in-focus capture that feeds the mosaic). Each stack is an OME-TIFF on disk as soon as it is taken; Stop ends a stack
+after the slice in progress, keeps (and saves) it, then ends the scan.
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ from pathlib import Path
 import numpy as np
 
 from openevos.acquisition.autofocus import Autofocus
-from openevos.acquisition.capture import CapturedImage, CaptureService
+from openevos.acquisition.capture import CapturedImage, CaptureRejected, CaptureService, ZStack
 from openevos.acquisition.scan_plan import ScanPlan, Tile
 from openevos.instrument.vessels import Vessel
 
@@ -64,6 +68,7 @@ class RunControl:
 class ScanResult:
     plan: ScanPlan
     images: list[tuple[Tile, dict[str, CapturedImage]]] = field(default_factory=list)
+    stacks: dict[int, dict[str, ZStack]] = field(default_factory=dict)  # tile index -> {slot: ZStack}
     mosaics: dict[str, np.ndarray] = field(default_factory=dict)
     mosaic_scale_um_per_px: float | None = None
     focus_log: list[tuple[int, str]] = field(default_factory=list)
@@ -132,6 +137,38 @@ class ScanRunner:
             out[slot] = self.capture.capture(slot, role, store=False)
         return out
 
+    def stacks(self, channels: list[str], role, range_um: float, step_um: float, out: dict[str, ZStack], *,
+               report: Callable[[str, str], None] | None = None,
+               saved: Callable[[str, ZStack], None] | None = None) -> None:
+        """One Z-stack per channel centred on the focus here, put in `out` (a routine result, never the memory buffer,
+        which holds the operator's own Z-stack) as each finishes, and handed to `saved` (the disk writer).
+        `report(slot, "slice i/n · z = …")` follows each slice. Stop ends a stack after the slice in progress, keeps
+        it, then raises RunStopped; pause waits until the stack is done (the LED is not left on over a pause)."""
+        capture = self.capture
+        zc = capture.ctl.focus_z()
+        if zc is None:
+            raise RuntimeError("Z-stack: focus position unknown")
+        half = range_um / 2
+        for slot in channels:
+            self.control.checkpoint()
+
+            def slice_progress(i: int, n: int, msg: str, slot: str = slot) -> None:
+                if self.control.stopped:
+                    capture.cancel_zstack()
+                if report and i < n:
+                    report(slot, msg)
+
+            try:
+                st = capture.zstack(slot, zc - half, zc + half, step_um, role, slice_progress, store=False)
+            except CaptureRejected:
+                if self.control.stopped:  # stopped before the first slice
+                    raise RunStopped("stopped by operator") from None
+                raise
+            out[slot] = st
+            if saved:
+                saved(slot, st)
+        self.control.checkpoint()  # a stack Stop cut short ends the routine here
+
     def run(self, plan: ScanPlan, progress: Progress | None = None) -> ScanResult:
         r = plan.routine
         res = ScanResult(plan)
@@ -148,10 +185,32 @@ class ScanRunner:
                 imgs = self.visit(t.stage_x, t.stage_y, r.channels, r.camera,
                                   find_sample=r.find_sample and i == 0, auto_fine=r.auto_fine,
                                   log=res.focus_log, index=i)
+                stacks: dict[str, ZStack] = {}
+                stopped: RunStopped | None = None
+                if r.zstack:
+                    def report(slot: str, msg: str, i: int = i, t: Tile = t) -> None:
+                        if progress:
+                            progress(i, n, f"tile {i + 1}/{n} ({t.region_id} r{t.row} c{t.col}) · Z-stack {slot} "
+                                           f"{msg}")
+
+                    def saved(slot: str, st: ZStack, t: Tile = t) -> None:
+                        if writer is not None:
+                            writer.stack(t, slot, st)
+
+                    try:
+                        self.stacks(r.channels, r.camera, r.zstack_range_um, r.zstack_step_um, stacks,
+                                    report=report, saved=saved)
+                    except RunStopped as exc:  # keep this tile and the stack Stop cut short, then end the scan
+                        stopped = exc
                 if writer is not None:
                     writer.tile(t, imgs)
                     imgs = {slot: downsampled(img, MEMORY_DOWNSAMPLE) for slot, img in imgs.items()}
+                    stacks = {slot: _downsampled_stack(st, MEMORY_DOWNSAMPLE) for slot, st in stacks.items()}
                 res.images.append((t, imgs))
+                if stacks:
+                    res.stacks[t.index] = stacks
+                if stopped is not None:
+                    raise stopped
             res.completed = True
             res.message = f"{n} tiles captured"
         except RunStopped as exc:
@@ -184,6 +243,12 @@ def downsampled(img: CapturedImage, n: int) -> CapturedImage:
                                extra=(*img.extra, ("in_memory_copy", f"1/{n} per side; full tile on disk")))
 
 
+def _downsampled_stack(st: ZStack, n: int) -> ZStack:
+    import dataclasses
+
+    return dataclasses.replace(st, images=tuple(downsampled(i, n) for i in st.images))
+
+
 class TileWriter:
     """Writes each tile's TIFFs as soon as it is captured and appends one line per tile to tiles.jsonl, so a crash
     leaves every finished tile and a valid partial manifest on disk. `finish()` writes manifest.json and mosaics."""
@@ -195,12 +260,23 @@ class TileWriter:
         self.index = self.out / "tiles.jsonl"
         self.entries: list[dict] = []
         self.synthetic = False
+        self._stacks: dict[str, str] = {}  # this tile's stack files, written before the tile's index line
         (self.out / "routine.json").write_text(res.plan.routine.model_dump_json(indent=2), "utf-8")
+
+    def stack(self, t: Tile, slot: str, st: ZStack) -> None:
+        from openevos.imaging.ome import save_zstack
+
+        stem = f"tile{t.index:04d}_{t.region_id.replace(' ', '')}_{slot}_z"
+        name = stem + ("" if st.complete else f"_stopped-{len(st.images)}-of-{st.planned}") + ".ome.tif"
+        self._stacks[slot] = save_zstack(self.out, st, name=name).name
+        self.synthetic = self.synthetic or any(i.synthetic for i in st.images)
 
     def tile(self, t: Tile, imgs: dict[str, CapturedImage]) -> None:
         import tifffile
 
-        entry = {"tile": json.loads(t.model_dump_json()), "files": {}}
+        entry: dict = {"tile": json.loads(t.model_dump_json()), "files": {}}
+        if self._stacks:
+            entry["stacks"], self._stacks = self._stacks, {}
         for slot, img in imgs.items():
             name = f"tile{t.index:04d}_{t.region_id.replace(' ', '')}_{slot}.tif"
             tifffile.imwrite(self.out / name, np.asarray(img.data), metadata=None,

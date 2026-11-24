@@ -12,10 +12,11 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from openevos.acquisition.capture import CapturedImage, CaptureRejected, ZStack
+from openevos.acquisition.capture import CapturedImage, ZStack, zstack_slices
 from openevos.acquisition.scan_plan import Beacon
 from openevos.acquisition.scan_runner import RunStopped, ScanRunner
 from openevos.instrument.profile import CameraRole, InstrumentProfile
@@ -89,7 +90,7 @@ class TimelapseEstimate:
 
 def _n_slices(r: TimelapseRoutine) -> int:
     """Slices per stack, counted as the stack itself counts them (capture.plan_zstack: never past the range)."""
-    return int(r.zstack_range_um / r.zstack_step_um + 1e-6) + 1
+    return zstack_slices(r.zstack_range_um, r.zstack_step_um)
 
 
 def estimate(r: TimelapseRoutine, profile: InstrumentProfile, *, environment_available: bool = False,
@@ -128,6 +129,7 @@ class TimelapseResult:
     completed: bool = False
     message: str = ""
     late_timepoints: int = 0
+    output_folder: str | None = None  # where the Z-stacks were written (routine output folder / name)
 
 
 class TimelapseRunner:
@@ -150,6 +152,10 @@ class TimelapseRunner:
             t_acc += s.duration_s
         ctl = self.sr.capture.ctl
         z_by_beacon: dict[str, float | None] = {b.label: b.z_um for b in r.beacons}
+        folder: Path | None = None
+        if r.output_folder and r.zstack:  # each stack is on disk as soon as it is taken
+            folder = Path(r.output_folder) / r.name
+            res.output_folder = str(folder)
         try:
             ctl.run(ctl.set_objective(r.objective_slot))
             start = self.monotonic()
@@ -168,7 +174,8 @@ class TimelapseRunner:
                                          auto_fine=r.auto_fine_focus, log=[], index=tp, z=z_by_beacon[b.label])
                     z_by_beacon[b.label] = ctl.focus_z()  # track focus drift per beacon
                     if r.zstack:
-                        self._stacks(r, tp, len(schedule), b.label, progress, res.stacks.setdefault((tp, b.label), {}))
+                        self._stacks(r, tp, len(schedule), b.label, progress, res.stacks.setdefault((tp, b.label), {}),
+                                     folder)
                     res.frames.append((tp, b.label, imgs))
                     batch.append((b.label, imgs))
                 if on_timepoint:
@@ -185,29 +192,23 @@ class TimelapseRunner:
         return res
 
     def _stacks(self, r: TimelapseRoutine, tp: int, n_tp: int, beacon: str,
-                progress: Callable[[int, int, str], None] | None, out: dict[str, ZStack]) -> None:
-        """One Z-stack per channel centred on the focus just found, put in `out` (the result, not the memory buffer,
-        which holds the operator's own Z-stack) as each finishes. Stop ends a stack after the slice in progress, keeps
-        it, then ends the routine; pause waits until the stack is done (the LED is not left on over a pause)."""
-        capture, ctl = self.sr.capture, self.sr.capture.ctl
-        zc = ctl.focus_z()
-        if zc is None:
+                progress: Callable[[int, int, str], None] | None, out: dict[str, ZStack],
+                folder: Path | None) -> None:
+        """One Z-stack per channel centred on the focus just found (ScanRunner.stacks), put in `out` (the result,
+        not the memory buffer) as each finishes and, with an output folder, written there at once. Stop ends a stack
+        after the slice in progress, keeps and saves it, then ends the routine."""
+        from openevos.imaging.ome import save_zstack
+
+        def report(slot: str, msg: str) -> None:
+            if progress:
+                progress(tp, n_tp, f"time point {tp + 1}/{n_tp} · {beacon} · Z-stack {slot} {msg}")
+
+        def saved(slot: str, st: ZStack) -> None:
+            if folder is not None:
+                part = "" if st.complete else f"_stopped-{len(st.images)}-of-{st.planned}"
+                safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in f"{beacon}_{slot}")
+                save_zstack(folder, st, name=f"t{tp + 1:03d}_{safe}_z{part}.ome.tif")
+
+        if self.sr.capture.ctl.focus_z() is None:
             raise RuntimeError(f"Z-stack at {beacon}: focus position unknown")
-        half = r.zstack_range_um / 2
-        for slot in r.channels:
-            self.control.checkpoint()
-
-            def slice_progress(i: int, n: int, msg: str, slot: str = slot) -> None:
-                if self.control.stopped:
-                    capture.cancel_zstack()
-                if progress and i < n:
-                    progress(tp, n_tp, f"time point {tp + 1}/{n_tp} · {beacon} · Z-stack {slot} {msg}")
-
-            try:
-                out[slot] = capture.zstack(slot, zc - half, zc + half, r.zstack_step_um, r.camera, slice_progress,
-                                           store=False)
-            except CaptureRejected:
-                if self.control.stopped:  # stopped before the first slice
-                    raise RunStopped("stopped by operator") from None
-                raise
-        self.control.checkpoint()  # a stack Stop cut short ends the routine here
+        self.sr.stacks(r.channels, r.camera, r.zstack_range_um, r.zstack_step_um, out, report=report, saved=saved)

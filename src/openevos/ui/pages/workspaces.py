@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -150,10 +151,32 @@ class ZStackPage(QWidget):
         lay.addWidget(self.bar)
         lay.addWidget(label("Every slice is a verified Z move followed by an exposure (no exposure while Z moves). "
                             "Focus returns to where it started.", "muted", wrap=True))
-        self.btn_ome = QPushButton("Export OME-TIFF…")
-        self.btn_ome.setToolTip("Z × Y × X with physical pixel size and Z step (opens in Fiji, napari, QuPath)")
+        lay.addWidget(label("Save", "section"))
+        self.btn_ome = QPushButton("Save Z-stack…")
+        self.btn_ome.setIcon(icon("save"))
+        self.btn_ome.setToolTip("OME-TIFF: Z × Y × X with pixel size, Z step and every slice height (opens in Fiji, "
+                                "napari, QuPath)")
         self.btn_ome.clicked.connect(self._export_ome)
         lay.addWidget(self.btn_ome)
+        zs_set = self.session.settings.zstack
+        self.autosave = QCheckBox("Save every Z-stack automatically")
+        self.autosave.setToolTip("Each finished stack (a stopped one too) is written as OME-TIFF to the folder below")
+        self.autosave.setChecked(zs_set.autosave)
+        lay.addWidget(self.autosave)
+        self.save_folder = QLineEdit(zs_set.folder)
+        self.save_folder.setPlaceholderText(str(self._default_folder()))
+        self.save_folder.setAccessibleName("Z-stack save folder")
+        b_folder = QPushButton()
+        b_folder.setIcon(icon("folder"))
+        b_folder.setToolTip("Browse…")
+        b_folder.setFixedWidth(34)
+        b_folder.clicked.connect(self._browse_folder)
+        lay.addWidget(hbox(self.save_folder, b_folder))
+        self.lbl_saved = label("", "muted", wrap=True)
+        lay.addWidget(self.lbl_saved)
+        self.autosave.toggled.connect(self._save_options)
+        self.save_folder.editingFinished.connect(self._save_options)
+        self.save_folder.textChanged.connect(self._save_options)
         lay.addStretch(1)
         root.addWidget(f)
 
@@ -375,6 +398,8 @@ class ZStackPage(QWidget):
         self.bar.setFormat(f"{len(stack.images)}/{planned} slices" + ("" if stack.complete else " · stopped"))
         self._update_buttons()
         self._show()
+        if self.autosave.isChecked():
+            self._save_async(stack)
 
     def _task_failed(self, name: str, msg: str) -> None:
         if name != self.TASK:
@@ -476,16 +501,65 @@ class ZStackPage(QWidget):
 
     # ------------------------------------------------------------------ export
     def _export_ome(self) -> None:
-        from openevos.imaging.ome import zstack_to_ome
+        from openevos.imaging.ome import save_zstack, zstack_file_name
 
         zs = self.session.capture.buffers.zstack
         if zs is None:
-            self.model.add_log("warn", "no Z-stack to export")
+            self.model.add_log("warn", "no Z-stack to save")
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Export OME-TIFF", "zstack.ome.tif", "OME-TIFF (*.ome.tif)")
-        if path:
-            zstack_to_ome(Path(path), zs, zs.channel, zs.images[0].synthetic)
-            self.model.add_log("info", f"Z-stack exported to {path}")
+        start = self._folder() / zstack_file_name(zs)
+        path, _ = QFileDialog.getSaveFileName(self, "Save Z-stack", str(start), "OME-TIFF (*.ome.tif);;TIFF (*.tif)")
+        if not path:
+            return
+        p = Path(path)
+        name = p.name if p.name.lower().endswith((".ome.tif", ".tif")) else p.name + ".ome.tif"
+        try:
+            out = save_zstack(p.parent, zs, name=name)
+        except (OSError, ValueError) as exc:
+            self.model.add_log("error", f"Z-stack not saved: {exc}")
+            return
+        self.lbl_saved.setText(f"Saved {out}")
+        self.model.add_log("info", f"Z-stack saved to {out}")
+
+    # ------------------------------------------------------------------ automatic save
+    @staticmethod
+    def _default_folder() -> Path:
+        from openevos.ui.pages.save import default_capture_folder
+
+        return default_capture_folder() / "Z-stacks"
+
+    def _folder(self) -> Path:
+        return Path(self.save_folder.text().strip() or self._default_folder())
+
+    def _browse_folder(self) -> None:
+        d = QFileDialog.getExistingDirectory(self, "Save Z-stacks to", str(self._folder()))
+        if d:
+            self.save_folder.setText(d)
+
+    def _save_options(self, *_a) -> None:
+        zs_set = self.session.settings.zstack
+        zs_set.autosave = self.autosave.isChecked()
+        zs_set.folder = self.save_folder.text().strip()
+
+    def _save_async(self, stack) -> None:
+        """Write the stack off the GUI thread (a 200-slice stack is hundreds of MB), then report on the GUI thread."""
+        from openevos.imaging.ome import save_zstack
+
+        folder, disp = self._folder(), self.model.dispatcher
+        self.lbl_saved.setText(f"Saving {len(stack.images)} slices to {folder}…")
+
+        def work() -> None:
+            try:
+                out = save_zstack(folder, stack)
+            except (OSError, ValueError) as exc:
+                msg = str(exc)
+                disp(lambda: (self.lbl_saved.setText(f"Not saved: {msg}"),
+                              self.model.add_log("error", f"Z-stack not saved: {msg}")))
+                return
+            disp(lambda: (self.lbl_saved.setText(f"Saved {out}"),
+                          self.model.add_log("info", f"Z-stack saved to {out}")))
+
+        threading.Thread(target=work, name="zstack-save", daemon=True).start()
 
     # ------------------------------------------------------------------ visibility
     def showEvent(self, e):

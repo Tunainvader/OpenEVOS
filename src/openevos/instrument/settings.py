@@ -229,6 +229,15 @@ class SystemBasicSettings(BaseModel):
         return v
 
 
+class ZStackSaveSettings(BaseModel):
+    """Z-stack page: save every finished stack (a stopped one too) as OME-TIFF without asking."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    autosave: bool = False
+    folder: str = ""  # empty => <user documents>/OpenEVOS/Captures/Z-stacks
+
+
 class AppSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -236,6 +245,7 @@ class AppSettings(BaseModel):
     mono: MonoSettings = Field(default_factory=MonoSettings)
     color: ColorSettings = Field(default_factory=ColorSettings)
     basic: SystemBasicSettings = Field(default_factory=SystemBasicSettings)
+    zstack: ZStackSaveSettings = Field(default_factory=ZStackSaveSettings)
     last_vessel_id: str = "plate-96"
     active_camera: CameraRole = CameraRole.MONO
 

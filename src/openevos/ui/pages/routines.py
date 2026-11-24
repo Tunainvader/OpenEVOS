@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from openevos.acquisition.capture import zstack_slices
 from openevos.acquisition.scan_plan import (
     AreaMethod,
     Beacon,
@@ -238,6 +239,7 @@ class _RoutineBase(QWidget):
 
 class ScanPage(_RoutineBase):
     kind = "scan"
+    request_page = Signal(str)  # "zstack": show a tile's Z-stack on the Z-stack page
 
     def __init__(self, model, parent=None):
         super().__init__(model, parent)
@@ -280,6 +282,11 @@ class ScanPage(_RoutineBase):
         self.fine.setChecked(True)
         form.addRow("3  Focus", self.find)
         form.addRow("", self.fine)
+        self.zstack = QCheckBox("Z-stack at every field")
+        self.zstack.setToolTip("After the in-focus capture, a Z-stack per channel centred on that focus")
+        self.z_range = QDoubleSpinBox(minimum=0.5, maximum=500, value=10, suffix=" µm range")
+        self.z_step = QDoubleSpinBox(minimum=0.1, maximum=100, value=2, decimals=1, suffix=" µm step")
+        form.addRow("", hbox(self.zstack, self.z_range, self.z_step))
         self.coverage = QComboBox()
         for c in Coverage:
             self.coverage.addItem(c.label, c)
@@ -329,14 +336,25 @@ class ScanPage(_RoutineBase):
         self.btn_export.clicked.connect(self._export_mosaic)
         gl.addWidget(hbox(label("Result", "section"), self.mosaic_ch, None, label("Quality", "rowlabel"),
                           self.quality, self.btn_export))
+        self.stack_pick = QComboBox()
+        self.stack_pick.setToolTip("Z-stacks this scan took (field · well · channel)")
+        self.btn_open_stack = QPushButton("Open in Z-stack page")
+        self.btn_open_stack.setIcon(icon("zstack"))
+        self.btn_open_stack.setToolTip("Browse the stack with its slice map and playback (replaces the Z-stack held "
+                                       "in memory; the scan keeps all of its stacks)")
+        self.btn_open_stack.clicked.connect(self._open_stack)
+        self.stack_row = hbox(label("Z-stacks", "section"), self.stack_pick, self.btn_open_stack)
+        self.stack_row.setVisible(False)
+        gl.addWidget(self.stack_row)
         gl.addWidget(self.mosaic, 1)
         root.addWidget(g2, 1)
 
         for w in (self.coverage, self.objective, self.mosaic_ch):
             w.currentIndexChanged.connect(self.replan)
-        for w in (self.pct, self.nrand, self.rows, self.cols, self.overlap, self.rx, self.ry, self.rw, self.rh):
+        for w in (self.pct, self.nrand, self.rows, self.cols, self.overlap, self.rx, self.ry, self.rw, self.rh,
+                  self.z_range, self.z_step):
             w.valueChanged.connect(self.replan)
-        for w in (self.find, self.fine, self.m_rect, self.rect_on):
+        for w in (self.find, self.fine, self.m_rect, self.rect_on, self.zstack):
             w.toggled.connect(self.replan)
         self.map.region_clicked.connect(lambda _r: self.replan())
         self.b1.clicked.connect(lambda: self._beacon(0))
@@ -376,6 +394,7 @@ class ScanPage(_RoutineBase):
             if self.rect_on.isChecked() else None,
             beacons=[b for b in self.beacons if b] if not self.m_rect.isChecked() else [],
             find_sample=self.find.isChecked(), auto_fine=self.fine.isChecked(),
+            zstack=self.zstack.isChecked(), zstack_range_um=self.z_range.value(), zstack_step_um=self.z_step.value(),
             coverage=Coverage(self.coverage.currentData()), percentage=self.pct.value(), random_images=self.nrand.value(),  # noqa: E501
             grid_rows=self.rows.value(), grid_cols=self.cols.value(), overlap_percent=self.overlap.value(),
             output_folder=self.folder.text())
@@ -393,6 +412,9 @@ class ScanPage(_RoutineBase):
         self.coverage.setCurrentIndex(self.coverage.findData(r.coverage))
         self.find.setChecked(r.find_sample)
         self.fine.setChecked(r.auto_fine)
+        self.zstack.setChecked(r.zstack)
+        self.z_range.setValue(r.zstack_range_um)
+        self.z_step.setValue(r.zstack_step_um)
         self.folder.setText(r.output_folder)
         self.replan()
 
@@ -429,12 +451,17 @@ class ScanPage(_RoutineBase):
             self.map.update()
             return
         p = self.plan
+        self.z_range.setEnabled(r.zstack)
+        self.z_step.setEnabled(r.zstack)
         self.map.fov_mm = p.fov_mm
         self.map.tiles_mm = [(t.x_mm, t.y_mm) for t in p.tiles]
         self.map.beacons_mm = [(b.x_mm, b.y_mm, b.label) for b in r.beacons]
         self.map.update()
-        self.lbl_plan.setText(f"{len(p.tiles)} fields × {len(r.channels)} channel(s) · FOV {p.fov_mm[0] * 1000:.0f}×"
-                              f"{p.fov_mm[1] * 1000:.0f} µm · est. {_fmt_time(p.est_seconds)} · {_fmt_bytes(p.est_bytes)}")  # noqa: E501
+        zs = (f" · Z-stack {zstack_slices(r.zstack_range_um, r.zstack_step_um)} slices of {r.zstack_step_um:g} µm"
+              if r.zstack else "")
+        self.lbl_plan.setText(f"{len(p.tiles)} fields × {len(r.channels)} channel(s){zs} · FOV "
+                              f"{p.fov_mm[0] * 1000:.0f}×{p.fov_mm[1] * 1000:.0f} µm · est. "
+                              f"{_fmt_time(p.est_seconds)} · {_fmt_bytes(p.est_bytes)}")
         show_warnings(self.lbl_warn, p.warnings)
         why = ("the plan has no fields" if not p.tiles else
                f"{p.out_of_limits} field(s) are outside the stage limits" if p.out_of_limits else
@@ -479,7 +506,32 @@ class ScanPage(_RoutineBase):
             self.mosaic_ch.addItem(ch.display if ch else slot, slot)
         self.mosaic_ch.blockSignals(False)
         self.btn_export.setEnabled(bool(res.mosaics))
+        self._fill_stacks(res)
         self._show_mosaic()
+
+    def _fill_stacks(self, res) -> None:
+        self.stack_pick.clear()
+        tiles = {t.index: t for t, _imgs in res.images}
+        for idx, by_slot in sorted(res.stacks.items()):
+            t = tiles.get(idx)
+            where = f"field {idx + 1} · {t.region_id} r{t.row} c{t.col}" if t else f"field {idx + 1}"
+            for slot, st in by_slot.items():
+                ch = self.profile.channel(slot)
+                part = "" if st.complete else f" · stopped {len(st.images)}/{st.planned}"
+                self.stack_pick.addItem(f"{where} · {ch.display if ch else slot} · {len(st.images)} slices{part}",
+                                        (idx, slot))
+        self.stack_row.setVisible(self.stack_pick.count() > 0)
+        self.btn_open_stack.setEnabled(self.stack_pick.count() > 0)
+
+    def _open_stack(self) -> None:
+        if not self.result or self.stack_pick.currentData() is None:
+            return
+        idx, slot = self.stack_pick.currentData()
+        st = self.result.stacks.get(idx, {}).get(slot)
+        if st is None:
+            return
+        self.session.capture.buffers.set_zstack(st)
+        self.request_page.emit("zstack")
 
     def _export_mosaic(self) -> None:
         from openevos.acquisition.scan_runner import build_mosaic
@@ -590,6 +642,20 @@ class TimelapsePage(_RoutineBase):
         out.addWidget(self.sep, 1, 1, 1, 2)
         out.setColumnStretch(3, 1)
         lay.addLayout(out)
+        from openevos.ui.pages.save import default_capture_folder
+
+        self.z_folder = QLineEdit(str(default_capture_folder() / "Time-lapse"))
+        self.z_folder.setPlaceholderText("(keep Z-stacks in memory only)")
+        self.z_folder.setToolTip("With Z-stack ticked, every stack is written here (folder/routine name) as soon "
+                                 "as it is taken; empty keeps them in memory only")
+        zb = QPushButton()
+        zb.setIcon(icon("folder"))
+        zb.setToolTip("Browse…")
+        zb.setFixedWidth(34)
+        zb.clicked.connect(lambda: self.z_folder.setText(
+            QFileDialog.getExistingDirectory(self, "Save time-lapse Z-stacks to") or self.z_folder.text()))
+        self.z_folder_row = hbox(label("   Save Z-stacks to", "muted"), self.z_folder, zb)
+        lay.addWidget(self.z_folder_row)
         self._library(lay)
         lay.addStretch(1)
         root.addWidget(f)
@@ -719,13 +785,18 @@ class TimelapsePage(_RoutineBase):
             zstack_range_um=self.z_range.value(), zstack_step_um=self.z_step.value(), beacons=self.beacons,
             scenes=self._scenes(), capture_one_frame_only=self.one_frame.isChecked(),
             video_per_beacon=self.video.isChecked(), watermark=self.water.isChecked(),
-            save_channels_separately=self.sep.isChecked())
+            save_channels_separately=self.sep.isChecked(), output_folder=self.z_folder.text().strip())
 
     def load(self, d: dict) -> None:
         r = TimelapseRoutine.model_validate(d)
         if r.vessel_id != self.session.vessel.vessel_id:
             self.session.select_vessel(r.vessel_id)
         self.name.setText(r.name)
+        self.zstack.setChecked(r.zstack)
+        self.z_range.setValue(r.zstack_range_um)
+        self.z_step.setValue(r.zstack_step_um)
+        if r.output_folder:
+            self.z_folder.setText(r.output_folder)
         self.beacons = list(r.beacons)
         self.scenes.setRowCount(0)
         for s in r.scenes:
@@ -803,8 +874,9 @@ class TimelapsePage(_RoutineBase):
         self.btn_ome.setEnabled(bool(res.frames))
         self.btn_ome.setToolTip("One OME-TIFF per beacon: T × Z × C × Y × X with the Z-stacks, else T × C × Y × X")
         n_stacks = sum(len(v) for v in res.stacks.values())
+        saved = f" saved to {res.output_folder}" if n_stacks and res.output_folder else ""
         self.lbl_progress.setText(res.message + (f" · {res.late_timepoints} late" if res.late_timepoints else "")
-                                  + (f" · {n_stacks} Z-stacks" if n_stacks else ""))
+                                  + (f" · {n_stacks} Z-stacks{saved}" if n_stacks else ""))
         self.model.add_log("info" if res.completed else "warn", f"time-lapse: {res.message}")
         self._fill_stacks(res)
 

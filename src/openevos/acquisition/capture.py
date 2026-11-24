@@ -82,13 +82,18 @@ class CapturedImage:
 MAX_ZSTACK_SLICES = 200
 
 
+def zstack_slices(range_um: float, step_um: float) -> int:
+    """How many slices a stack over `range_um` in steps of `step_um` takes (never past the range)."""
+    return int(abs(range_um) / step_um + 1e-6) + 1 if step_um > 0 else 0
+
+
 def plan_zstack(start_um: float, stop_um: float, step_um: float) -> list[float]:
     """Slice heights from `start_um` towards `stop_um` in steps of `step_um`, in acquisition order. Upward when stop is
     above start, downward when below. The last slice never passes `stop_um` (a range that is not a whole number of steps
     ends short of stop rather than beyond it, where the focus limit may be)."""
     if step_um <= 0:
         raise CaptureRejected("Z step must be positive")
-    n = int(abs(stop_um - start_um) / step_um + 1e-6) + 1
+    n = zstack_slices(stop_um - start_um, step_um)
     if n > MAX_ZSTACK_SLICES:
         raise CaptureRejected(f"{n} slices requested; limit is {MAX_ZSTACK_SLICES}")
     sign = 1 if stop_um >= start_um else -1
