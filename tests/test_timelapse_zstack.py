@@ -55,7 +55,7 @@ def test_stop_during_a_timelapse_stack_ends_the_stack_and_the_routine(sim):
     z_seen: list[float] = []
 
     def progress(_i, _n, msg):
-        if "slice 5/" in msg and not runner.control.stopped:
+        if "Slice 5 of" in msg and not runner.control.stopped:
             z_seen.append(sim.controller.focus_z())
             runner.control.stop()
 
@@ -107,9 +107,9 @@ def test_timelapse_page_opens_a_stack_on_the_zstack_page():
         end = time.monotonic() + 2
         while time.monotonic() < end and not w.pages["zstack"].isVisible():
             app.processEvents()
-        assert s.capture.buffers.zstack is res.stacks[key][slot]
+        assert s.capture.buffers.zstack is res.stacks[key][slot]  # the one picked shows first
+        assert set(s.capture.buffers.zstack_set.channels) == set(res.stacks[key])  # with the position's others
         assert w.pages["zstack"].isVisible()
-        assert w.pages["zstack"].map.taken == 3
     finally:
         w.close()
         s.shutdown()

@@ -18,7 +18,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from openevos.instrument.profile import CameraRole
 
@@ -229,13 +229,38 @@ class SystemBasicSettings(BaseModel):
         return v
 
 
-class ZStackSaveSettings(BaseModel):
-    """Z-stack page: save every finished stack (a stopped one too) as OME-TIFF without asking."""
+class ZStackSettings(BaseModel):
+    """The Z-stack page's set-up, shared with the Capture page's Z-Stack hot button (ADR-0064). Absolute top and bottom
+    are not saved: they belong to one sample and one session."""
 
     model_config = ConfigDict(extra="forbid")
 
-    autosave: bool = False
-    folder: str = ""  # empty => <user documents>/OpenEVOS/Captures/Z-stacks
+    @model_validator(mode="before")
+    @classmethod
+    def _from_save_only_settings(cls, data):
+        """Settings saved by the Z-stack page before ADR-0064's merge held only `autosave` and `folder`."""
+        if isinstance(data, dict) and ("autosave" in data or "folder" in data):
+            data = dict(data)
+            data.setdefault("auto_save", data.pop("autosave", False))
+            data.setdefault("save_folder", data.pop("folder", ""))
+            data.pop("autosave", None)
+            data.pop("folder", None)
+        return data
+
+    mode: str = Field(default="centre", pattern=r"^(centre|range)$")  # centre on the focus, or set top and bottom
+    below_um: float = Field(default=10.0, ge=0, le=2000)
+    above_um: float = Field(default=10.0, ge=0, le=2000)
+    step_um: float = Field(default=2.0, ge=0.1, le=500)
+    keep: str = Field(default="interval", pattern=r"^(interval|slices)$")  # what a range change keeps (ZEN Keep)
+    channels: list[str] = Field(default_factory=list)  # empty: the channel the Capture page uses
+    order: str = Field(default="channel_first", pattern=r"^(channel_first|z_first)$")
+    light_between_slices: bool = False
+    settle_ms: float = Field(default=0.0, ge=0, le=2000)
+    approach_um: float = Field(default=2.0, ge=0, le=50)
+    auto_save: bool = False
+    save_folder: str = ""  # empty: Documents/OpenEVOS/Z-stacks
+    projections: list[str] = Field(default_factory=lambda: ["max"])  # saved with each stack
+    view: str = "slice"
 
 
 class AppSettings(BaseModel):
@@ -245,7 +270,7 @@ class AppSettings(BaseModel):
     mono: MonoSettings = Field(default_factory=MonoSettings)
     color: ColorSettings = Field(default_factory=ColorSettings)
     basic: SystemBasicSettings = Field(default_factory=SystemBasicSettings)
-    zstack: ZStackSaveSettings = Field(default_factory=ZStackSaveSettings)
+    zstack: ZStackSettings = Field(default_factory=ZStackSettings)
     last_vessel_id: str = "plate-96"
     active_camera: CameraRole = CameraRole.MONO
 

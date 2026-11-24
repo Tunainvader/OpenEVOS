@@ -357,6 +357,7 @@ def _install_interlocks(session: Session) -> None:
     if p.focus_device:
         session.core.safety.add_interlock(FocusSafeHeight(focus_id=p.focus_device, limit_for=safe_height))
         session.autofocus.z_cap = lambda: (lim[1] if (lim := safe_height()) else None)
+        session.capture.safe_height_for = safe_height  # Z-stacks check it before the first move (ADR-0064)
 
 
 def real_mono_camera_present() -> bool:

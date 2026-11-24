@@ -81,7 +81,7 @@ def test_stop_during_a_scan_stack_keeps_and_saves_the_slices_taken(sim, tmp_path
     runner = ScanRunner(sim.capture, sim.autofocus, sim.vessel)
 
     def progress(_i, _n, msg):
-        if "slice 4/" in msg and not runner.control.stopped:
+        if "Slice 4 of" in msg and not runner.control.stopped:
             runner.control.stop()
 
     res = runner.run(plan_scan(_routine(sim, cols=3, rng=60, step=1, folder=str(tmp_path)), sim.vessel,

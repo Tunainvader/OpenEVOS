@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 
 from openevos.acquisition.autofocus import Autofocus
-from openevos.acquisition.capture import CapturedImage, CaptureRejected, CaptureService, ZStack
+from openevos.acquisition.capture import CapturedImage, CaptureService, ZStack
 from openevos.acquisition.scan_plan import ScanPlan, Tile
 from openevos.instrument.vessels import Vessel
 
@@ -138,36 +138,37 @@ class ScanRunner:
         return out
 
     def stacks(self, channels: list[str], role, range_um: float, step_um: float, out: dict[str, ZStack], *,
-               report: Callable[[str, str], None] | None = None,
+               report: Callable[[str], None] | None = None,
                saved: Callable[[str, ZStack], None] | None = None) -> None:
-        """One Z-stack per channel centred on the focus here, put in `out` (a routine result, never the memory buffer,
-        which holds the operator's own Z-stack) as each finishes, and handed to `saved` (the disk writer).
-        `report(slot, "slice i/n · z = …")` follows each slice. Stop ends a stack after the slice in progress, keeps
-        it, then raises RunStopped; pause waits until the stack is done (the LED is not left on over a pause)."""
+        """Every channel's Z-stack centred on the focus here, in one run of the Z-stack engine (ADR-0064) sharing this
+        routine's RunControl, so Stop and Pause reach it between moves and snaps. The stacks go in `out` (a routine
+        result, never the memory buffer, which holds the operator's own Z-stack) and to `saved` (the disk writer),
+        a stopped run's slices too; then a Stop raises RunStopped and a failure raises RuntimeError.
+        `report(text)` follows each image ("Slice 3 of 6, DAPI, z …")."""
+        from openevos.acquisition.zstack import ZStackPlan
+
         capture = self.capture
         zc = capture.ctl.focus_z()
         if zc is None:
             raise RuntimeError("Z-stack: focus position unknown")
+        self.control.checkpoint()
         half = range_um / 2
-        for slot in channels:
-            self.control.checkpoint()
+        plan = ZStackPlan(channels=tuple(channels), role=role, bottom_um=zc - half, top_um=zc + half, step_um=step_um,
+                          centre_um=zc, store=False)
 
-            def slice_progress(i: int, n: int, msg: str, slot: str = slot) -> None:
-                if self.control.stopped:
-                    capture.cancel_zstack()
-                if report and i < n:
-                    report(slot, msg)
+        def progress(done: int, total: int, text: str) -> None:
+            if report and done < total:
+                report(text)
 
-            try:
-                st = capture.zstack(slot, zc - half, zc + half, step_um, role, slice_progress, store=False)
-            except CaptureRejected:
-                if self.control.stopped:  # stopped before the first slice
-                    raise RunStopped("stopped by operator") from None
-                raise
-            out[slot] = st
+        zs = capture.run_zstack(plan, progress, control=self.control)
+        for st in zs.stacks:
+            out[st.channel] = st
             if saved:
-                saved(slot, st)
-        self.control.checkpoint()  # a stack Stop cut short ends the routine here
+                saved(st.channel, st)
+        if zs.status == "stopped":
+            raise RunStopped("stopped by operator")
+        if zs.status == "failed":
+            raise RuntimeError(f"Z-stack: {zs.message}")
 
     def run(self, plan: ScanPlan, progress: Progress | None = None) -> ScanResult:
         r = plan.routine
@@ -188,10 +189,9 @@ class ScanRunner:
                 stacks: dict[str, ZStack] = {}
                 stopped: RunStopped | None = None
                 if r.zstack:
-                    def report(slot: str, msg: str, i: int = i, t: Tile = t) -> None:
+                    def report(msg: str, i: int = i, t: Tile = t) -> None:
                         if progress:
-                            progress(i, n, f"tile {i + 1}/{n} ({t.region_id} r{t.row} c{t.col}) · Z-stack {slot} "
-                                           f"{msg}")
+                            progress(i, n, f"tile {i + 1}/{n} ({t.region_id} r{t.row} c{t.col}) · Z-stack: {msg}")
 
                     def saved(slot: str, st: ZStack, t: Tile = t) -> None:
                         if writer is not None:

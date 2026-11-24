@@ -45,11 +45,11 @@ def win():
 def test_zstack_channels_follow_the_active_camera(win):
     app, w, _s = win
     zs = next(p for p in w.pages.values() if type(p).__name__ == "ZStackPage")
-    mono = {zs.channel.itemData(i) for i in range(zs.channel.count())}
+    mono = set(zs.channel_slots())
     assert any(slot.startswith("cube") for slot in mono)
     w.pages["capture"].switch_camera(CameraRole.COLOR)
     pump(app, 0.3)
-    colour = {zs.channel.itemData(i) for i in range(zs.channel.count())}
+    colour = set(zs.channel_slots())
     assert colour and not any(slot.startswith("cube") for slot in colour)
     w.pages["capture"].switch_camera(CameraRole.MONO)
     pump(app, 0.3)

@@ -202,6 +202,10 @@ QCheckBox::indicator:checked, QRadioButton::indicator:checked {{ background: {t.
 QCheckBox::indicator:focus, QRadioButton::indicator:focus {{ border: 2px solid {t.focus}; }}
 QCheckBox:disabled, QRadioButton:disabled {{ color: {t.t3}; }}
 QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{ background: {t.s1}; border: 1px solid {t.bd}; }}
+QListView::indicator, QTreeView::indicator, QTableView::indicator {{ width: 15px; height: 15px; {inset}
+    background: {t.s3}; border-radius: 5px; }}
+QListView::indicator:checked, QTreeView::indicator:checked, QTableView::indicator:checked {{ background: {t.acc};
+    border: 1px solid {t.acc}; }}
 QTabWidget::pane {{ {raised} border-radius: {r['control']}px; top: -1px; background: {t.s1}; }}
 QTabBar::tab {{ background: transparent; border: none; border-bottom: 2px solid transparent; padding: 7px 12px;
     color: {t.t2}; font-size: 13px; }}

@@ -156,42 +156,43 @@ class LightCameraDialog(QDialog):
 
 
 class ZStackDialog(QDialog):
-    def __init__(self, z_now: float, parent=None):
+    """The Capture page's Z-Stack hot button: a stack centred on the current focus, with the Z-stack page's saved
+    range and step (one set of values for both, ADR-0064). The Z-stack page has the full set-up."""
+
+    def __init__(self, z_now: float, zs_settings, estimate=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Z-Stack")
+        self.setWindowTitle("Z-stack")
+        self._zs, self._estimate = zs_settings, estimate
         form = QFormLayout(self)
-        self.below = QDoubleSpinBox(minimum=0, maximum=2000, value=10, suffix=" µm below")
-        self.above = QDoubleSpinBox(minimum=0, maximum=2000, value=10, suffix=" µm above")
-        self.step = QDoubleSpinBox(minimum=0.1, maximum=500, value=2, decimals=2, suffix=" µm")
-        self.z_now = z_now
-        form.addRow(label(f"Centred on the current focus z = {z_now:,.1f} µm. Start, stop and playback are on the "
-                          "Z-stack page.", "muted", wrap=True))
-        form.addRow("Range below", self.below)
-        form.addRow("Range above", self.above)
+        self.below = QDoubleSpinBox(minimum=0, maximum=2000, value=zs_settings.below_um, decimals=2, suffix=" µm")
+        self.above = QDoubleSpinBox(minimum=0, maximum=2000, value=zs_settings.above_um, decimals=2, suffix=" µm")
+        self.step = QDoubleSpinBox(minimum=0.1, maximum=500, value=zs_settings.step_um, decimals=2, suffix=" µm")
+        self.below.setToolTip("Range below the focus (away from the sample)")
+        self.above.setToolTip("Range above the focus (toward the sample)")
+        form.addRow(label(f"Centred on the current focus, {z_now:,.2f} µm", "muted"))
+        form.addRow("Below focus", self.below)
+        form.addRow("Above focus", self.above)
         form.addRow("Step", self.step)
-        self.lbl_plan = label("", "mono", wrap=True)
-        form.addRow(self.lbl_plan)
+        self.lbl_estimate = label("", "muted", wrap=True)
+        form.addRow(self.lbl_estimate)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept)
+        bb.button(QDialogButtonBox.StandardButton.Ok).setText("Acquire")
+        bb.accepted.connect(self._accept)
         bb.rejected.connect(self.reject)
         self.ok = bb.button(QDialogButtonBox.StandardButton.Ok)
         form.addRow(bb)
         for w in (self.below, self.above, self.step):
-            w.valueChanged.connect(self._plan)
-        self._plan()
+            w.valueChanged.connect(self._update)
+        self._update()
 
-    def _plan(self, *_a) -> None:
-        """Range, slice count and direction before anything moves (a stack the service would refuse cannot start)."""
-        from openevos.acquisition.capture import CaptureRejected, plan_zstack
+    def _update(self) -> None:
+        if self._estimate:
+            self.lbl_estimate.setText(self._estimate(self.below.value(), self.above.value(), self.step.value()))
 
-        lo, hi = self.z_now - self.below.value(), self.z_now + self.above.value()
-        try:
-            n = len(plan_zstack(lo, hi, self.step.value()))
-            self.lbl_plan.setText(f"Start {lo:,.1f} → stop {hi:,.1f} µm (upward)\n{hi - lo:,.1f} µm range · {n} slices")
-            self.ok.setEnabled(True)
-        except CaptureRejected as exc:
-            self.lbl_plan.setText(f"Cannot start: {exc}")
-            self.ok.setEnabled(False)
+    def _accept(self) -> None:
+        self._zs.below_um, self._zs.above_um = self.below.value(), self.above.value()
+        self._zs.step_um = self.step.value()
+        self.accept()
 
 
 class TransfectionDialog(QDialog):

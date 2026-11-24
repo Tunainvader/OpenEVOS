@@ -14,7 +14,7 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from openevos.acquisition.capture import MAX_ZSTACK_SLICES, zstack_slices
+from openevos.acquisition.capture import MAX_ZSTACK_SLICES, zstack_slices_centred
 from openevos.instrument.profile import CameraRole, InstrumentProfile
 from openevos.instrument.vessels import Region, Vessel, VesselStageMap, well_label_sort_key
 
@@ -217,7 +217,7 @@ def plan_scan(r: ScanRoutine, vessel: Vessel, profile: InstrumentProfile, stage_
         warnings.append("vessel geometry is nominal (not measured on this unit)")
     n_z = 0
     if r.zstack:
-        n_z = zstack_slices(r.zstack_range_um, r.zstack_step_um)
+        n_z = zstack_slices_centred(r.zstack_range_um, r.zstack_step_um)
         if n_z > MAX_ZSTACK_SLICES:
             raise ValueError(f"Z-stack of {n_z} slices per tile exceeds the {MAX_ZSTACK_SLICES}-slice limit")
     cam = profile.camera(r.camera)

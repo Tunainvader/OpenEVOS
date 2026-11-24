@@ -19,7 +19,7 @@ from datetime import datetime
 
 import numpy as np
 
-from openevos.acquisition.controller import AcquisitionError, CommandError, InstrumentController
+from openevos.acquisition.controller import AcquisitionError, InstrumentController
 from openevos.core.frame_transport import Frame
 from openevos.core.models import utcnow
 from openevos.instrument.profile import CameraRole, ChannelKind, InstrumentProfile
@@ -87,6 +87,12 @@ def zstack_slices(range_um: float, step_um: float) -> int:
     return int(abs(range_um) / step_um + 1e-6) + 1 if step_um > 0 else 0
 
 
+def zstack_slices_centred(range_um: float, step_um: float) -> int:
+    """Slices in a stack centred on the focus over `range_um` (the routines' stacks): whole steps out from the centre
+    on each side, so the focus plane is a slice (acquisition.zstack.plan_positions, centre mode)."""
+    return 2 * int(abs(range_um) / 2 / step_um + 1e-6) + 1 if step_um > 0 else 0
+
+
 def plan_zstack(start_um: float, stop_um: float, step_um: float) -> list[float]:
     """Slice heights from `start_um` towards `stop_um` in steps of `step_um`, in acquisition order. Upward when stop is
     above start, downward when below. The last slice never passes `stop_um` (a range that is not a whole number of steps
@@ -103,15 +109,11 @@ def plan_zstack(start_um: float, stop_um: float, step_um: float) -> list[float]:
 @dataclass(frozen=True)
 class ZStack:
     channel: str
-    z_um: tuple[float, ...]  # acquisition order: start first
+    z_um: tuple[float, ...]  # planned positions of the slices kept (each image also records its observed Z)
     images: tuple[CapturedImage, ...]
+    complete: bool = True  # False: stopped or failed part-way (ADR-0064)
     planned: int = 0  # slices planned (0 = as many as were taken)
-    stop_um: float | None = None  # the requested stop height (the last slice may end short of it)
-
-    @property
-    def complete(self) -> bool:
-        """False when Stop ended the stack early (the slices taken are kept)."""
-        return not self.planned or len(self.images) >= self.planned
+    stop_um: float | None = None  # the planned last slice (the engine always goes bottom to top)
 
     @property
     def direction(self) -> int:
@@ -127,6 +129,7 @@ class ImageBuffers:
         self._lock = threading.Lock()
         self._b: dict[str, CapturedImage] = {}
         self.zstack: ZStack | None = None
+        self.zstack_set = None  # acquisition.zstack.ZStackSet: every channel of the last Z-stack run (ADR-0064)
         self.listeners: list[Callable[[], None]] = []
 
     def put(self, img: CapturedImage) -> None:
@@ -146,6 +149,7 @@ class ImageBuffers:
         with self._lock:
             self._b.clear()
             self.zstack = None
+            self.zstack_set = None
         self._notify()
 
     def remove(self, slot: str) -> None:
@@ -157,6 +161,14 @@ class ImageBuffers:
     def set_zstack(self, z: ZStack) -> None:
         with self._lock:
             self.zstack = z
+            self.zstack_set = None
+        self._notify()
+
+    def set_zstack_set(self, zs) -> None:
+        """A whole Z-stack run; `zstack` stays its first channel for older readers (Movies, exports)."""
+        with self._lock:
+            self.zstack_set = zs
+            self.zstack = zs.stacks[0] if zs.stacks else None
         self._notify()
 
     def _notify(self) -> None:
@@ -175,10 +187,31 @@ class CaptureService:
         #: Capture-tab POWER toggle (live view); starts dark (a real LED never lights at launch); captures always light
         #: the sample
         self.light_power = False
-        #: set by Stop (SessionModel.stop_all) to end a running Z-stack after the slice in progress
-        self._zstack_cancel = threading.Event()
-        #: (planned slice heights, requested stop) of the Z-stack running now, None when none is (for the slice map)
-        self.zstack_running: tuple[tuple[float, ...], float] | None = None
+        #: (objective name, safe height in µm) for the objective in the light path, or None (set by the session, the
+        #: same source as the FocusSafeHeight interlock): Z-stacks check it before moving (ADR-0064)
+        self.safe_height_for: Callable[[], tuple[str, float] | None] = lambda: None
+        #: the RunControl of the Z-stack in progress, for Stop (None when no stack runs)
+        self.zstack_control = None
+
+    def pause_zstack(self, on: bool = True) -> bool:
+        """Pause (or resume) the running Z-stack at the next slice boundary; the light is off while paused. True if
+        one was running."""
+        c = self.zstack_control
+        if c is None or c.stopped:
+            return False
+        if on:
+            c.pause()
+        else:
+            c.resume()
+        return True
+
+    def stop_zstack(self) -> bool:
+        """Stop the running Z-stack after the current move or snap; its slices are kept. True if one was running."""
+        c = self.zstack_control
+        if c is None:
+            return False
+        c.stop()
+        return True
 
     # ------------------------------------------------------------------ checks
     def check_capture(self, role: CameraRole, slot: str) -> None:
@@ -220,8 +253,9 @@ class CaptureService:
         if store:
             self.buffers.put(img)
         self.last_capture_z = img.z_um
-        if not self.light_power and prev.channel is not None:  # restore a dark live view
-            self.ctl.run(self.ctl.set_light(slot, prev.intensity_percent, False))
+        if not self.light_power:  # restore a dark live view (also when no light had been set yet this session)
+            pct = prev.intensity_percent if prev.channel is not None else self.settings.channel(role, slot).led_percent
+            self.ctl.run(self.ctl.set_light(slot, pct, False))
         return img
 
     def capture_all(self, role: CameraRole | None = None,
@@ -250,58 +284,30 @@ class CaptureService:
 
     def zstack(self, slot: str, start_um: float, stop_um: float, step_um: float,
                role: CameraRole | None = None, progress: Callable[[int, int, str], None] | None = None, *,
-               store: bool = True) -> ZStack:
-        """Slices from `start_um` to `stop_um` (either way up), each a verified Z move then one exposure; focus returns
-        to where it started. Stop (`cancel_zstack`) ends it after the slice in progress and keeps the slices taken.
-        `store=False` (routines) keeps the stack out of the memory buffer, so the operator's Z-stack stays."""
-        role = role or self.settings.active_camera
-        zs = plan_zstack(start_um, stop_um, step_um)
-        n = len(zs)
-        lim = self.ctl.axis_limits(self.profile.focus_device, "z")
-        if lim and (min(zs) < lim[0] or max(zs) > lim[1]):
-            raise CaptureRejected(f"Z range {min(zs):.1f}-{max(zs):.1f} µm is outside the focus limits "
-                                  f"{lim[0]:.0f}-{lim[1]:.0f} µm")
-        self.check_capture(role, slot)
-        self._zstack_cancel.clear()
-        z_home = self.ctl.focus_z()
-        prev = self.ctl.light
-        self.prepare_channel(role, slot)
-        imgs: list[CapturedImage] = []
-        self.zstack_running = (tuple(zs), stop_um)
-        try:
-            for i, z in enumerate(zs):
-                if progress:
-                    progress(i, n, f"slice {i + 1}/{n} · z = {z:.1f} µm")
-                if self._zstack_cancel.is_set():
-                    break
-                try:
-                    self.ctl.run(self.ctl.move_focus(z))
-                except CommandError:
-                    if self._zstack_cancel.is_set():  # Stop cancelled this move: keep the slices taken
-                        break
-                    raise
-                imgs.append(self._to_captured(self.ctl.acquire(role, 1)[0], slot, role))
-        finally:
-            self._zstack_cancel.clear()
-            self.zstack_running = None
-            try:
-                if z_home is not None:
-                    self.ctl.run(self.ctl.move_focus(z_home))
-            finally:
-                if not self.light_power and prev.channel is not None:  # restore a dark live view (as capture does)
-                    self.ctl.run(self.ctl.set_light(slot, prev.intensity_percent, False))
-        if not imgs:
-            raise CaptureRejected("Z-stack stopped before the first slice")
-        if progress and len(imgs) == n:
-            progress(n, n, f"{n} slices")
-        stack = ZStack(slot, tuple(zs[:len(imgs)]), tuple(imgs), planned=n, stop_um=stop_um)
-        if store:
-            self.buffers.set_zstack(stack)
-        return stack
+               store: bool = True, confirmed_above_safe: bool = False) -> ZStack:
+        """One channel from start to stop (either order; acquired bottom to top) through the Z-stack engine
+        (ADR-0064). Raises when nothing could be taken; a Stop returns the slices taken (`complete=False`)."""
+        from openevos.acquisition.zstack import ZStackPlan, ZStackRunner
 
-    def cancel_zstack(self) -> None:
-        """Stop a running Z-stack after the slice in progress (focus still returns; the slices taken are kept)."""
-        self._zstack_cancel.set()
+        plan = ZStackPlan(channels=(slot,), role=role or self.settings.active_camera, bottom_um=min(start_um, stop_um),
+                          top_um=max(start_um, stop_um), step_um=step_um, confirmed_above_safe=confirmed_above_safe,
+                          store=store)
+        res = ZStackRunner(self).run(plan, progress)
+        if res.status == "failed":
+            raise CaptureRejected(res.message)
+        st = res.stack(slot)
+        if st is None:
+            raise CaptureRejected("stopped before the first slice" if res.status == "stopped" else res.message)
+        return st
+
+    def run_zstack(self, plan, progress: Callable[[int, int, str], None] | None = None, *, control=None,
+                   on_image=None):
+        """Run a ZStackPlan (several channels, centre or range mode); returns the ZStackSet, partial when stopped.
+        `control`: a RunControl to share (a time-lapse's), so its Stop also stops the stack. `on_image(slot, index,
+        done, image)` after each image (the Z-stack page shows slices as they arrive)."""
+        from openevos.acquisition.zstack import ZStackRunner
+
+        return ZStackRunner(self, control=control).run(plan, progress, on_image=on_image)
 
     def snap_to_last(self):
         if self.last_capture_z is None:

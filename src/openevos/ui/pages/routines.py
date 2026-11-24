@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from openevos.acquisition.capture import zstack_slices
+from openevos.acquisition.capture import zstack_slices_centred
 from openevos.acquisition.scan_plan import (
     AreaMethod,
     Beacon,
@@ -457,7 +457,8 @@ class ScanPage(_RoutineBase):
         self.map.tiles_mm = [(t.x_mm, t.y_mm) for t in p.tiles]
         self.map.beacons_mm = [(b.x_mm, b.y_mm, b.label) for b in r.beacons]
         self.map.update()
-        zs = (f" · Z-stack {zstack_slices(r.zstack_range_um, r.zstack_step_um)} slices of {r.zstack_step_um:g} µm"
+        n_z = zstack_slices_centred(r.zstack_range_um, r.zstack_step_um)
+        zs = (f" · Z-stack {n_z} slices of {r.zstack_step_um:g} µm"
               if r.zstack else "")
         self.lbl_plan.setText(f"{len(p.tiles)} fields × {len(r.channels)} channel(s){zs} · FOV "
                               f"{p.fov_mm[0] * 1000:.0f}×{p.fov_mm[1] * 1000:.0f} µm · est. "
@@ -526,11 +527,16 @@ class ScanPage(_RoutineBase):
     def _open_stack(self) -> None:
         if not self.result or self.stack_pick.currentData() is None:
             return
+        from openevos.acquisition.zstack import zstack_set_of
+
         idx, slot = self.stack_pick.currentData()
-        st = self.result.stacks.get(idx, {}).get(slot)
-        if st is None:
+        by_slot = self.result.stacks.get(idx, {})
+        if slot not in by_slot:
             return
-        self.session.capture.buffers.set_zstack(st)
+        # every channel of the field, the one picked first (the Z-stack page shows the set's first channel)
+        order = {slot: by_slot[slot], **{k: v for k, v in by_slot.items() if k != slot}}
+        self.session.capture.buffers.set_zstack_set(zstack_set_of(order, self.result.plan.routine.camera,
+                                                                  f"Scan field {idx + 1}"))
         self.request_page.emit("zstack")
 
     def _export_mosaic(self) -> None:
@@ -873,8 +879,8 @@ class TimelapsePage(_RoutineBase):
         self.btn_stop.setEnabled(False)
         self.btn_ome.setEnabled(bool(res.frames))
         self.btn_ome.setToolTip("One OME-TIFF per beacon: T × Z × C × Y × X with the Z-stacks, else T × C × Y × X")
-        n_stacks = sum(len(v) for v in res.stacks.values())
-        saved = f" saved to {res.output_folder}" if n_stacks and res.output_folder else ""
+        n_stacks = len(res.stacks) + len(res.stack_folders)
+        saved = f" saved to {res.output_folder}" if res.stack_folders else ""
         self.lbl_progress.setText(res.message + (f" · {res.late_timepoints} late" if res.late_timepoints else "")
                                   + (f" · {n_stacks} Z-stacks{saved}" if n_stacks else ""))
         self.model.add_log("info" if res.completed else "warn", f"time-lapse: {res.message}")
@@ -886,21 +892,37 @@ class TimelapsePage(_RoutineBase):
             for slot, st in by_slot.items():
                 ch = self.profile.channel(slot)
                 name = ch.display if ch else slot
-                way = "↑" if st.direction > 0 else "↓"
                 part = "" if st.complete else f" · stopped {len(st.images)}/{st.planned}"
-                self.stack_pick.addItem(f"t{tp + 1} · {beacon} · {name} · {len(st.images)} slices {way}{part}",
+                self.stack_pick.addItem(f"t{tp + 1} · {beacon} · {name} · {len(st.images)} slices{part}",
                                         ((tp, beacon), slot))
+        for (tp, beacon), folder in sorted(res.stack_folders.items(), key=lambda kv: kv[0]):
+            self.stack_pick.addItem(f"t{tp + 1} · {beacon} · saved in {Path(folder).name}", ("folder", folder))
         self.stack_row.setVisible(self.stack_pick.count() > 0)
         self.btn_open_stack.setEnabled(self.stack_pick.count() > 0)
 
     def _open_stack(self) -> None:
         if not self.result or self.stack_pick.currentData() is None:
             return
+        from openevos.acquisition.zstack import zstack_set_of
+
         key, slot = self.stack_pick.currentData()
-        st = self.result.stacks.get(key, {}).get(slot)
-        if st is None:
+        if key == "folder":  # written to disk during the run and dropped from memory: read it back
+            from openevos.imaging.zstack_io import load_zstack_set
+
+            try:
+                zs = load_zstack_set(Path(slot))
+            except (OSError, ValueError, KeyError) as exc:
+                self.model.add_log("warn", f"Z-stack {slot}: {exc}")
+                return
+            self.session.capture.buffers.set_zstack_set(zs)
+            self.request_page.emit("zstack")
             return
-        self.session.capture.buffers.set_zstack(st)
+        by_slot = self.result.stacks.get(key, {})
+        if slot not in by_slot:
+            return
+        order = {slot: by_slot[slot], **{k: v for k, v in by_slot.items() if k != slot}}
+        self.session.capture.buffers.set_zstack_set(zstack_set_of(order, self.result.routine.camera,
+                                                                  f"time point {key[0] + 1}, {key[1]}"))
         self.request_page.emit("zstack")
 
     def _export_ome(self) -> None:

@@ -244,27 +244,27 @@ def test_zstack_plan_runs_start_to_stop_and_never_overshoots():
         plan_zstack(0, 1000, 1)
 
 
-def test_zstack_downward_goes_from_start_to_stop(sim):
+def test_zstack_given_top_first_still_goes_bottom_to_top(sim):  # ADR-0064: every slice approached from below
     _goto_well(sim)
     z0 = sim.controller.focus_z()
     st = sim.capture.zstack("cube1", z0 + 4, z0 - 4, 2)
-    assert st.z_um == pytest.approx((z0 + 4, z0 + 2, z0, z0 - 2, z0 - 4))
-    assert st.complete and st.direction == -1
+    assert st.z_um == pytest.approx((z0 - 4, z0 - 2, z0, z0 + 2, z0 + 4))
+    assert st.complete and st.direction == 1 and st.planned == 5
     assert sim.controller.focus_z() == pytest.approx(z0)
 
 
-def test_zstack_stop_keeps_the_slices_taken_and_returns_focus(sim):
+def test_zstack_stop_keeps_the_slices_taken_and_moves_no_more(sim):  # ADR-0064: a Stop never causes a move
     _goto_well(sim)
     z0 = sim.controller.focus_z()
 
     def progress(i, _n, _msg):
         if i == 3:
-            sim.capture.cancel_zstack()  # Stop pressed while slice 4 is about to start
+            sim.capture.stop_zstack()  # Stop pressed as slice 4 is snapped: that snap finishes, nothing after it
 
     st = sim.capture.zstack("cube1", z0 - 10, z0 + 10, 2, progress=progress)
-    assert not st.complete and len(st.images) == 3 and st.planned == 11
+    assert not st.complete and len(st.images) == 4 and st.planned == 11
     assert sim.capture.buffers.zstack is st
-    assert sim.controller.focus_z() == pytest.approx(z0)
+    assert sim.controller.focus_z() == pytest.approx(st.z_um[-1], abs=0.5)  # left at the last slice taken
     st2 = sim.capture.zstack("cube1", z0 - 2, z0 + 2, 2)  # a stop does not carry over into the next stack
     assert st2.complete and len(st2.images) == 3
 
