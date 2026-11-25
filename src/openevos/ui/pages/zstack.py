@@ -43,6 +43,7 @@ from PySide6.QtGui import (
     QShortcut,
 )
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -80,6 +81,8 @@ from openevos.imaging.zviews import OrthoLayout, merge_rgb, ortho_composite, sha
 from openevos.ui import theme
 from openevos.ui import tokens as tk
 from openevos.ui.common import hbox, label, panel, render_frame
+from openevos.ui.icons import icon
+from openevos.ui.widgets.focus_pad import ZFocusPanel
 from openevos.ui.widgets.image_view import ImageView
 from openevos.ui.widgets.segmented import SegmentedControl
 
@@ -1031,6 +1034,122 @@ class Filmstrip(QListWidget):
         self._quiet = False
 
 
+# ====================================================================================== floating Z focus
+class _EdgeTab(QAbstractButton):
+    """A tab on the page's right edge that opens and closes the floating Z focus panel (text reads bottom to top)."""
+
+    W = 26
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(parent)
+        self.setText(text)
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName("Z focus panel")
+        self.setToolTip("Z focus: move the focus here and set the stack's top and bottom")
+
+    def sizeHint(self) -> QSize:
+        return QSize(self.W, self.fontMetrics().horizontalAdvance(self.text()) + 40)
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        on = self.isChecked()
+        bg = QColor(theme.ACCENT if on else theme.PANEL_2)
+        if self.underMouse() and not on:
+            bg = QColor(theme.PANEL)
+        path = QPainterPath()
+        path.addRoundedRect(r, 7, 7)
+        p.fillPath(path, bg)
+        p.setPen(QPen(QColor(theme.ACCENT if (on or self.hasFocus()) else theme.BORDER_STRONG), 1.2))
+        p.drawPath(path)
+        p.setPen(QColor(theme.ACCENT_ON or theme.PANEL) if on else QColor(theme.TEXT))
+        f = QFont(self.font())
+        f.setWeight(QFont.Weight.DemiBold)
+        p.setFont(f)
+        p.translate(r.center())
+        p.rotate(-90)
+        p.drawText(QRectF(-r.height() / 2, -r.width() / 2, r.height(), r.width()), Qt.AlignmentFlag.AlignCenter,
+                   self.text())
+
+
+class FocusFloat(QFrame):
+    """The Capture page's Z focus control (readout, scale, pad, Coarse/Fine, autofocus) floating on the Z-stack page's
+    right side, with Set top here / Set bottom here for a First and last stack. Steps go through the Capture page's
+    own path (safe height asks, range refusals, held-move limits)."""
+
+    closed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("zfloat")
+        self.setAutoFillBackground(True)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(14, 10, 14, 14)
+        lay.setSpacing(8)
+        head = QHBoxLayout()
+        head.setSpacing(6)
+        title = QLabel("Z focus")
+        title.setObjectName("section")
+        title.setFont(theme.section_font(title.font()))
+        head.addWidget(title)
+        head.addStretch(1)
+        self.btn_close = QToolButton()
+        self.btn_close.setIcon(icon("close", theme.TEXT_2))
+        self.btn_close.setIconSize(QSize(16, 16))
+        self.btn_close.setAccessibleName("Close the Z focus panel")
+        self.btn_close.setToolTip("Close (Esc)")
+        self.btn_close.setAutoRaise(True)
+        self.btn_close.clicked.connect(self._close)
+        head.addWidget(self.btn_close)
+        lay.addLayout(head)
+        self.panel = ZFocusPanel()
+        self.panel.setMinimumHeight(round(380 * min(theme.TEXT_SCALE, 1.3)))
+        lay.addWidget(self.panel, 1)
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setObjectName("sep")
+        lay.addWidget(sep)
+        self.lbl_ends = QLabel("")
+        self.lbl_ends.setObjectName("caption")
+        self.lbl_ends.setWordWrap(True)
+        lay.addWidget(self.lbl_ends)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.btn_top = QPushButton("Set top here")
+        self.btn_bottom = QPushButton("Set bottom here")
+        self.btn_top.setToolTip("The stack's top slice at the focus now (switches the plan to First and last)")
+        self.btn_bottom.setToolTip("The stack's bottom slice at the focus now (switches the plan to First and last)")
+        for b in (self.btn_top, self.btn_bottom):
+            b.setMinimumHeight(36)
+            b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            row.addWidget(b, 1)
+        lay.addLayout(row)
+        self.restyle()
+
+    def restyle(self) -> None:
+        self.setStyleSheet(f"QFrame#zfloat {{ background: {theme.PANEL}; border: 1px solid {theme.BORDER_STRONG}; "
+                           "border-radius: 12px; }")
+        self.btn_close.setIcon(icon("close", theme.TEXT_2))
+
+    def _close(self, _checked: bool = False) -> None:
+        self.hide()
+        self.closed.emit()
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key.Key_Escape:
+            self._close()
+            return
+        super().keyPressEvent(e)
+
+    def set_ends(self, top: float | None, bottom: float | None) -> None:
+        t = f"{top:,.2f} µm" if top is not None else "not set"
+        b = f"{bottom:,.2f} µm" if bottom is not None else "not set"
+        self.lbl_ends.setText(f"Top {t} · Bottom {b}")
+
+
 # ====================================================================================== page
 class ZStackPage(QWidget):
     VIEWS: ClassVar[list[str]] = ["live", "slice", *METHODS]
@@ -1055,7 +1174,7 @@ class ZStackPage(QWidget):
         self._loaded = False  # the widgets hold the saved settings (nothing is saved back before that)
         self._keep_n: int | None = None  # Keep slices: the number asked for
         root = QHBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
+        root.setContentsMargins(12, 12, 12 + _EdgeTab.W + 6, 12)  # the right gutter holds the Z focus tab
         root.setSpacing(12)
         root.addWidget(self._build_setup())
         viewer = _NoHeightForWidth()
@@ -1066,6 +1185,7 @@ class ZStackPage(QWidget):
         vl.addWidget(self._build_footer())
         root.addWidget(viewer, 1)
         self._style_readouts()
+        self._build_focus_float()
 
         self._play = QTimer(self)
         self._play.setInterval(125)
@@ -1550,6 +1670,80 @@ class ZStackPage(QWidget):
             self.slice.setStyleSheet("")
             self.slice.setToolTip("Slice (← → or Page Up / Page Down when focused)")
 
+    # ------------------------------------------------------------------ floating Z focus (right side)
+    def _build_focus_float(self) -> None:
+        self.btn_focus_tab = _EdgeTab("Z focus", self)
+        self.focus_float = FocusFloat(self)
+        self.focus_float.hide()
+        self.btn_focus_tab.toggled.connect(self._toggle_focus_float)
+        self.focus_float.closed.connect(lambda: self.btn_focus_tab.setChecked(False))
+        f = self.focus_float
+        f.btn_top.clicked.connect(lambda _=False: self._set_end_here("top"))
+        f.btn_bottom.clicked.connect(lambda _=False: self._set_end_here("bottom"))
+        self._float_timer = QTimer(self)  # the readout and pad follow the drive while the panel is open
+        self._float_timer.setInterval(100)
+        self._float_timer.timeout.connect(self._refresh_float)
+        cap = self.cap
+        if cap is None or not hasattr(cap, "_focus_step"):
+            self.btn_focus_tab.hide()
+            return
+        f.panel.step_requested.connect(cap._focus_step)
+        f.panel.hold_released.connect(cap._focus_hold_end)
+        f.panel.btn_find.clicked.connect(lambda _=False: cap._autofocus(True))
+        f.panel.btn_fine.clicked.connect(lambda _=False: cap._autofocus(False))
+        f.panel.btn_snap.clicked.connect(lambda _=False: cap._snap())
+        self._place_float()
+
+    def _place_float(self) -> None:
+        if not hasattr(self, "btn_focus_tab"):
+            return
+        tab = self.btn_focus_tab
+        th = tab.sizeHint().height()
+        tab.setGeometry(self.width() - tab.W - 4, max(12, (self.height() - th) // 2), tab.W, th)
+        f = self.focus_float
+        fw = max(f.sizeHint().width(), round(320 * min(theme.TEXT_SCALE, 1.4)))
+        fh = min(max(f.sizeHint().height(), f.minimumSizeHint().height()), self.height() - 24)
+        f.setGeometry(self.width() - tab.W - 10 - fw, 12, fw, fh)
+        tab.raise_()
+
+    def _toggle_focus_float(self, on: bool) -> None:
+        f = self.focus_float
+        if on:
+            self._place_float()
+            f.show()
+            f.raise_()
+            self.btn_focus_tab.raise_()
+            self._refresh_float()
+            self._float_timer.start()
+            f.panel.pad.setFocus()
+        else:
+            f.hide()
+            self._float_timer.stop()
+
+    def _refresh_float(self) -> None:
+        f = self.focus_float
+        if not f.isVisible() or self.cap is None:
+            return
+        cap, ctl = self.cap, self.session.controller
+        z = ctl.focus_z()
+        state, status, direction = cap._focus_state(z)
+        lim = ctl.axis_limits(self.session.profile.focus_device, "z")
+        f.panel.set_state(state, status, direction)
+        f.panel.set_values(z, lim[1] if lim else None, getattr(self.session.vessel, "focus_nominal_um", None),
+                           self.session.capture.last_capture_z)
+        name, safe = cap._focus_limit()
+        f.panel.set_limit(safe, name, z)
+        f.set_ends(self.top_um, self.bottom_um)
+        for b in (f.btn_top, f.btn_bottom):
+            b.setEnabled(z is not None and not self.model.tasks.busy)
+
+    def _set_end_here(self, which: str) -> None:
+        if self.mode.current() != "range":
+            self.mode.set_current("range")
+            self._mode_changed("range")
+        self._set_end(which)
+        self._refresh_float()
+
     def _make_step(self, d: int):
         def step(_checked: bool = False) -> None:
             if self.slice.isEnabled() and self.slice.maximum() > 0:
@@ -1559,6 +1753,7 @@ class ZStackPage(QWidget):
     def retint(self) -> None:
         """Colours painted in code follow a theme change."""
         self.chips._restyle()
+        self.focus_float.restyle()
         self._style_readouts()
         self._update_setup()
         self.update()
@@ -2062,6 +2257,8 @@ class ZStackPage(QWidget):
         self.lbl_left.setVisible(running)
         self.lbl_after.setVisible(running)
         self._setup_panel.setEnabled(not running)
+        if hasattr(self, "focus_float"):
+            self.focus_float.setEnabled(not running)  # the stack owns Z while it runs
         self.view_mode.live.set_option_enabled("live", not running, "Live view is paused while the stack runs"
                                                if running else VIEW_TIPS["live"])
         if running:
@@ -2633,10 +2830,14 @@ class ZStackPage(QWidget):
         self._fill_channels()
         self._refresh()
 
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._place_float()
+
     def hideEvent(self, e):
         super().hideEvent(e)
         self._focus_timer.stop()
         self.btn_play.setChecked(False)
 
 
-__all__ = ["MAX_SLICES", "ChannelChips", "ChannelOrder", "ViewPicker", "ZStackPage"]
+__all__ = ["MAX_SLICES", "ChannelChips", "ChannelOrder", "FocusFloat", "ViewPicker", "ZStackPage"]

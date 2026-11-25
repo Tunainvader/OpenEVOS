@@ -884,3 +884,52 @@ def test_page_seek_bar_stays_plain_when_stopped(app, window):
     wait_idle(app, window)
     assert window.session.capture.buffers.zstack_set.status == "stopped"
     assert not pg.zview.all_done() and not pg.slice.property("complete")
+
+
+def test_page_floating_focus_sets_top_and_bottom(app, window):
+    pg = window.pages["zstack"]
+    ctl = window.session.controller
+    assert not pg.focus_float.isVisible() and pg.btn_focus_tab.isVisible()
+    tab = pg.btn_focus_tab.geometry()
+    assert tab.right() >= pg.width() - 40  # docked on the right edge
+    pg.btn_focus_tab.click()
+    pump(app, 0.3)
+    f = pg.focus_float
+    assert f.isVisible() and f.geometry().right() <= pg.width() and f.geometry().left() > pg.width() // 2
+    assert f.panel.readout.isVisible() and f.panel.pad.isVisible()  # the Capture page's Z focus control
+    z0 = ctl.focus_z()
+    f.panel.step_requested.emit(5.0, False)
+    assert wait_for(app, lambda: abs(ctl.focus_z() - (z0 + 5)) < 0.05)
+    f.btn_top.click()
+    pump(app, 0.2)
+    assert pg.mode.current() == "range" and pg.top_um == pytest.approx(z0 + 5, abs=0.05)
+    f.panel.step_requested.emit(-8.0, False)
+    assert wait_for(app, lambda: abs(ctl.focus_z() - (z0 - 3)) < 0.05)
+    f.btn_bottom.click()
+    pump(app, 0.2)
+    assert pg.bottom_um == pytest.approx(z0 - 3, abs=0.05)
+    assert pg.zview.positions[0] == pytest.approx(z0 - 3, abs=0.05)
+    assert pg.zview.positions[-1] == pytest.approx(z0 + 5, abs=0.05)
+    assert "3" in f.lbl_ends.text() and pg.btn.isEnabled()
+    pump(app, 0.6)
+    assert f.panel.z == pytest.approx(ctl.focus_z(), abs=0.05)  # the readout follows the drive
+    pg.btn_focus_tab.click()
+    pump(app, 0.1)
+    assert not f.isVisible()
+
+
+def test_page_floating_focus_is_held_while_a_stack_runs(app, window):
+    pg = window.pages["zstack"]
+    pg.mode.buttons["centre"].click()
+    pg.below.setValue(10)
+    pg.above.setValue(10)
+    pg.step.setValue(0.5)
+    pg.btn_focus_tab.click()
+    pump(app, 0.2)
+    assert pg.focus_float.isEnabled()
+    assert pg.acquire()
+    pump(app, 0.4)
+    assert not pg.focus_float.isEnabled()
+    pg._acquire_or_stop()
+    wait_idle(app, window)
+    assert pg.focus_float.isEnabled()
