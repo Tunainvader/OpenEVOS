@@ -263,6 +263,16 @@ class ZStackSettings(BaseModel):
     view: str = "slice"
 
 
+class MultiDSettings(BaseModel):
+    """The Multi-D page (ADR-0065): where experiments go and the last plan, as plan JSON (positions and absolute focus
+    belong to one sample, so the page asks before reusing them)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    save_folder: str = ""  # empty: Documents/OpenEVOS/Experiments
+    last_plan: dict = Field(default_factory=dict)
+
+
 class AppSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -271,6 +281,7 @@ class AppSettings(BaseModel):
     color: ColorSettings = Field(default_factory=ColorSettings)
     basic: SystemBasicSettings = Field(default_factory=SystemBasicSettings)
     zstack: ZStackSettings = Field(default_factory=ZStackSettings)
+    multid: MultiDSettings = Field(default_factory=MultiDSettings)
     last_vessel_id: str = "plate-96"
     active_camera: CameraRole = CameraRole.MONO
 

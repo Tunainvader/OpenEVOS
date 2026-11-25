@@ -13,6 +13,7 @@ def build_other_pages(model, capture_page) -> dict:
         ServicePage,
         SettingsPage,
     )
+    from openevos.ui.pages.multid import MultiDPage
     from openevos.ui.pages.routines import ScanPage, TimelapsePage
     from openevos.ui.pages.workspaces import MoviesPage, ReviewPage, ZStackPage
 
@@ -21,6 +22,7 @@ def build_other_pages(model, capture_page) -> dict:
         "scan": ScanPage(model),
         "timelapse": tl,
         "zstack": ZStackPage(model, capture_page),
+        "multid": MultiDPage(model),
         "movies": MoviesPage(model, tl),
         "review": ReviewPage(model),
         "analysis": AnalysisPage(model),

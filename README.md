@@ -180,6 +180,7 @@ All 56 architecture decision records in [`docs/decisions`](docs/decisions), newe
 - [ADR-0059](docs/decisions/ADR-0059-track-and-correct-cross-axis-knock.md): Track and correct a small cross-axis knock instead of locking (amends ADR-0040)
 - [ADR-0062](docs/decisions/ADR-0062-mcp-relay.md): Relay for the read-only MCP link (reach from another PC)
 - [ADR-0064](docs/decisions/ADR-0064-zstack-engine-and-page.md): Z-stack engine and page: pre-flight, Stop, light restore, projections, saving
+- [ADR-0065](docs/decisions/ADR-0065-multi-d-acquisition.md): Multi-D acquisition (Z × C × T × P): plan, scheduler, experiment folder, page; physical positions gated
 
 ## AI assistant link (MCP, read-only)
 

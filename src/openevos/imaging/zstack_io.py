@@ -75,6 +75,16 @@ def _ome(path: Path, arr: np.ndarray, axes: str, *, pixel_um, step_um, z_um, cha
 
 def save_zstack_set(root: Path, zset, *, name: str = "zstack", projections: tuple[str, ...] = ("max",)) -> Path:
     """Write one run; returns its folder. Partial runs are saved as they are and marked in zstack.json."""
+    if not zset.stacks:
+        raise ValueError("nothing to save: the run kept no slices")
+    out = _claim_folder(Path(root), name, zset.started_at)
+    write_zstack_folder(out, zset, projections=projections)
+    return out
+
+
+def write_zstack_folder(out: Path, zset, *, projections: tuple[str, ...] = ("max",), extra: dict | None = None) -> Path:
+    """Write one run into an existing, empty folder `out` (Multi-D writes each volume into a temporary folder and
+    renames it when complete, ADR-0065). `extra` is merged into zstack.json."""
     import hashlib
     import uuid
 
@@ -89,7 +99,6 @@ def save_zstack_set(root: Path, zset, *, name: str = "zstack", projections: tupl
 
     if not zset.stacks:
         raise ValueError("nothing to save: the run kept no slices")
-    out = _claim_folder(Path(root), name, zset.started_at)
     synthetic = zset.synthetic
     tag = "SIMULATED synthetic frames · " if synthetic else ""
     files: list[str] = []
@@ -153,6 +162,8 @@ def save_zstack_set(root: Path, zset, *, name: str = "zstack", projections: tupl
                       "z_planned_um": list(s.z_um), "slices": [i.metadata() for i in s.images]} for s in zset.stacks],
         "files": files,
     }
+    if extra:
+        record.update(extra)
     _atomic(out / "zstack.json", lambda t: t.write_text(json.dumps(record, indent=1, default=str), "utf-8"))
     return out
 

@@ -49,7 +49,8 @@ from openevos.ui.widgets.status import Badge, HealthSummary, StatusPill
 
 NAV = [
     ("Acquire", [("capture", "Capture", "capture"), ("scan", "Scan", "scan"), ("timelapse", "Time-lapse", "timelapse"),
-                 ("zstack", "Z-stack", "zstack"), ("movies", "Movies", "movies")]),
+                 ("zstack", "Z-stack", "zstack"), ("multid", "Multi-D", "multid"),
+                 ("movies", "Movies", "movies")]),
     ("Inspect", [("save", "Save", "save"), ("review", "Review", "review")]),
     ("Analyze", [("analysis", "Analysis", "analysis")]),
     ("Instrument", [("environment", "Environment", "environment"), ("calibration", "Calibration", "calibration")]),
