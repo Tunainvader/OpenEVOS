@@ -181,6 +181,7 @@ All 56 architecture decision records in [`docs/decisions`](docs/decisions), newe
 - [ADR-0062](docs/decisions/ADR-0062-mcp-relay.md): Relay for the read-only MCP link (reach from another PC)
 - [ADR-0064](docs/decisions/ADR-0064-zstack-engine-and-page.md): Z-stack engine and page: pre-flight, Stop, light restore, projections, saving
 - [ADR-0065](docs/decisions/ADR-0065-multi-d-acquisition.md): Multi-D acquisition (Z × C × T × P): plan, scheduler, experiment folder, page; physical positions gated
+- [ADR-0068](docs/decisions/ADR-0068-instrument-health-phase0.md): Instrument Health, Phase 0: telemetry inventory, health model, SQLite journal, read-only Health page
 
 ## AI assistant link (MCP, read-only)
 

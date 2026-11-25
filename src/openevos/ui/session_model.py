@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -19,6 +20,9 @@ from openevos.core.event_bus import (
 )
 from openevos.core.models import CommandStatus
 from openevos.ui.qt_bridge import QtDispatcher, TaskRunner
+
+if TYPE_CHECKING:
+    from openevos.health.service import HealthService
 
 
 class SessionModel(QObject):
@@ -63,6 +67,18 @@ class SessionModel(QObject):
         self.frames_shown = 0
         self._stoppers: list = []
         self.idle_checks: list = []
+        #: the read-only Health service (ADR-0068); the app starts it with a journal, else health_service() makes one
+        self.health: HealthService | None = None
+        self._own_health = False
+
+    def health_service(self) -> HealthService:
+        """The Health service for the Health page: the one the app started, or a memory-only one owned here."""
+        if self.health is None:
+            from openevos.health.service import HealthService
+
+            self.health = HealthService(self.session).start()
+            self._own_health = True
+        return self.health
 
     # ------------------------------------------------------------------ events
     def add_log(self, level: str, text: str) -> None:
@@ -160,3 +176,5 @@ class SessionModel(QObject):
         self._frame_timer.stop()
         for s in self._subs:
             s.unsubscribe()
+        if self._own_health and self.health is not None:  # one the app started is stopped by the app, last
+            self.health.stop()

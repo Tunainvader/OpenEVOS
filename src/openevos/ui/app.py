@@ -236,6 +236,12 @@ def _main(argv: list[str] | None, held: list) -> int:
                                              allow_clients=tuple(args.mcp_allow), relay=args.mcp_relay,
                                              relay_listener=relay_log if args.mcp_relay else None)
     model = SessionModel(session)
+    from openevos.health.service import HealthService, start_health
+
+    health: HealthService | None = None
+    if not args.screenshot_dir:  # read-only Health recorder (ADR-0068); its journal next to the other logs
+        health = start_health(session, settings_path.with_name("Logs") if settings_path is not None else None)
+        model.health = health
     relay_log.attach(model)
     if mcp_note:
         model.add_log("warn", mcp_note)
@@ -265,6 +271,8 @@ def _main(argv: list[str] | None, held: list) -> int:
             mcp_link[0].stop()
             mcp_link[1].close()
         session.shutdown()
+        if health is not None:
+            health.stop()  # after shutdown, like the telemetry log: the disconnects are journaled too
         if telemetry_log is not None:
             telemetry_log.close()  # after shutdown: the devices disconnecting is on record too
         if fault_log is not None:

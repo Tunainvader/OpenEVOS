@@ -5,6 +5,7 @@ from __future__ import annotations
 
 def build_other_pages(model, capture_page) -> dict:
     from openevos.ui.pages.analysis import AnalysisPage
+    from openevos.ui.pages.health import HealthPage
     from openevos.ui.pages.instrument import (
         CalibrationPage,
         EnvironmentPage,
@@ -26,6 +27,7 @@ def build_other_pages(model, capture_page) -> dict:
         "movies": MoviesPage(model, tl),
         "review": ReviewPage(model),
         "analysis": AnalysisPage(model),
+        "health": HealthPage(model),  # read-only (ADR-0068)
         "hardware": HardwarePage(model),
         "environment": EnvironmentPage(model),
         "calibration": CalibrationPage(model, capture_page),

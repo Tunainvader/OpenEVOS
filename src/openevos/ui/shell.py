@@ -53,7 +53,8 @@ NAV = [
                  ("movies", "Movies", "movies")]),
     ("Inspect", [("save", "Save", "save"), ("review", "Review", "review")]),
     ("Analyze", [("analysis", "Analysis", "analysis")]),
-    ("Instrument", [("environment", "Environment", "environment"), ("calibration", "Calibration", "calibration")]),
+    ("Instrument", [("health", "Health", "health"), ("environment", "Environment", "environment"),
+                    ("calibration", "Calibration", "calibration")]),
     ("Manage", [("settings", "Settings", "settings"), ("service_area", "Service", "service")]),
 ]
 #: engineering pages, one "Service" area with tabs (UI audit 2026-11-17: 15 rail entries were too many);
