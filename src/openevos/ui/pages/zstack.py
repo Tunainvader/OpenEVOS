@@ -155,7 +155,8 @@ class ZRangeView(QWidget):
     left, the slices as stacked planes over the objective (inverted stand: up = toward the sample), the focus as a
     diamond on the centre line, the vessel's focus nominal tagged, the safe height as an amber dashed line (the region
     above hatched red when the stack crosses it) and the travel limits as solid lines. Go to buttons on the right move
-    the focus to the top, centre or bottom slice. While a stack runs, the slices taken fill in."""
+    the focus to the top, centre or bottom slice. While a stack runs, the slices taken fill in and each turns green
+    once every channel has it; a finished stack stays green until the plan changes."""
 
     go = Signal(str)  # "top" | "centre" | "bottom"
 
@@ -174,6 +175,8 @@ class ZRangeView(QWidget):
         self.nominal: float | None = None  # the vessel's focus nominal (drawn when in view)
         self.objective: str = ""  # e.g. "10× / NA 0.25", written on the objective
         self.run_index: int | None = None
+        self.complete: int | None = None  # running: slices with every channel taken (green)
+        self.finished: int | None = None  # after a run: slices completed (green) until the plan changes
         self.btn_top = QPushButton("Top")
         self.btn_centre = QPushButton("Centre")
         self.btn_bottom = QPushButton("Bottom")
@@ -198,15 +201,42 @@ class ZRangeView(QWidget):
 
     # ---------------------------------------------------------------- state
     def set_state(self, positions, focus, safe, limits, current=None) -> None:
+        new = list(positions)
+        if len(new) != len(self.positions) or any(abs(a - b) > 0.25 for a, b in zip(new, self.positions,
+                                                                                     strict=False)):
+            self.finished = None  # a different plan: the finished stack's green no longer applies
         self.positions, self.focus, self.safe, self.limits, self.current = list(positions), focus, safe, limits, current
         self.setAccessibleDescription(self.describe())
         self.setToolTip(self.describe())
         self._place_buttons()
         self.update()
 
-    def set_run(self, taken: int | None, index: int | None = None) -> None:
-        self.taken, self.run_index = taken, index
+    def set_run(self, taken: int | None, index: int | None = None, complete: int | None = None) -> None:
+        self.taken, self.run_index, self.complete = taken, index, complete
+        if taken is not None:
+            self.finished = None
         self.update()
+
+    def set_finished(self, n: int | None) -> None:
+        """After a run: the first n slices are complete (all of them when the stack finished)."""
+        self.finished = n
+        self.update()
+
+    def slice_state(self, i: int) -> str:
+        """planned (no run) | done (every channel taken) | taken (some channels) | current | pending."""
+        if self.taken is not None:
+            if self.complete is not None and i < self.complete:
+                return "done"
+            if i == self.run_index:
+                return "current"
+            return "pending" if i >= self.taken else "taken"
+        if self.finished is not None:
+            return "done" if i < self.finished else "pending"
+        return "planned"
+
+    def all_done(self) -> bool:
+        return bool(self.positions) and self.taken is None and self.finished is not None \
+            and self.finished >= len(self.positions)
 
     def crossed(self) -> int:
         """Slices above the safe height."""
@@ -398,11 +428,14 @@ class ZRangeView(QWidget):
             if i % step and i != self.run_index:
                 continue
             y = self._y(z, rng)
-            if self.safe and z > self.safe[1] + 0.5:
+            state = self.slice_state(i)
+            if state == "done":
+                edge = QColor(theme.OK)
+            elif self.safe and z > self.safe[1] + 0.5:
                 edge = QColor(theme.FAULT)
-            elif self.taken is not None and i == self.run_index:
+            elif state == "current":
                 edge = QColor(theme.WARN)
-            elif self.taken is not None and i >= self.taken:
+            elif state == "pending":
                 edge = pending
             else:
                 edge = QColor(theme.ACCENT)
@@ -1499,6 +1532,24 @@ class ZStackPage(QWidget):
         gl.addWidget(self.curve)
         return g
 
+    def _sync_seek(self) -> None:
+        """The seek bar turns green once the whole stack drawn on the left is green (a completed run)."""
+        on = self.zview.all_done()
+        if bool(self.slice.property("complete")) == on:
+            return
+        self.slice.setProperty("complete", on)
+        if on:
+            ok = theme.OK
+            self.slice.setStyleSheet(
+                f"QSlider::groove:horizontal {{ background: {ok}; border: 1px solid {ok}; border-radius: 3px; }}"
+                f"QSlider::sub-page:horizontal {{ background: {ok}; border-radius: 3px; }}"
+                f"QSlider::add-page:horizontal {{ background: {ok}; border-radius: 3px; }}")
+            self.slice.setToolTip("Stack complete: every slice taken (green). "
+                                  "Slice (← → or Page Up / Page Down when focused)")
+        else:
+            self.slice.setStyleSheet("")
+            self.slice.setToolTip("Slice (← → or Page Up / Page Down when focused)")
+
     def _make_step(self, d: int):
         def step(_checked: bool = False) -> None:
             if self.slice.isEnabled() and self.slice.maximum() > 0:
@@ -1770,6 +1821,7 @@ class ZStackPage(QWidget):
             self._last_preflight = pf
             positions = list(pf.positions)
             self.zview.set_state(positions, z, self._safe(), self._limits())
+            self._sync_seek()
             for key, text in pf.figures(len(plan.channels)).items():
                 self.fig[key].setText(text if positions else "—")
             errors += [_cap(e) for e in pf.errors]
@@ -1797,6 +1849,7 @@ class ZStackPage(QWidget):
             if self.zs_settings.mode == "centre" and z is not None:
                 positions = plan_positions(z - self.below.value(), z + self.above.value(), self.step.value(), z)
             self.zview.set_state(positions, z, self._safe(), self._limits())
+            self._sync_seek()
             for v in self.fig.values():
                 v.setText("—")
             errors.append(_cap(str(exc)))
@@ -1978,6 +2031,8 @@ class ZStackPage(QWidget):
                      "order": plan.order, "total": pf.images,
                      "live": self.session.controller.is_live(plan.role)}
         self._run_curve = []
+        self.zview.set_run(0, 0, 0)
+        self._sync_seek()
         self._run_started = time.monotonic()
         self._paused, self._paused_since, self._paused_total = False, None, 0.0
         self.progress.setRange(0, max(1, pf.images))
@@ -2055,7 +2110,12 @@ class ZStackPage(QWidget):
             return  # a stack started elsewhere (the Capture page's hot button)
         run = self._run
         k, idx, taken = self._run_slice_index(i)
-        self.zview.set_run(taken, idx)
+        nch = max(1, len(run.get("channels", [])))
+        if run.get("order") is ChannelOrder.Z_FIRST:
+            complete = i // nch
+        else:
+            complete = idx if k == nch - 1 else 0
+        self.zview.set_run(taken, idx, complete)
         after = []
         chans = run.get("channels", [])
         if run.get("order") is not ChannelOrder.Z_FIRST and k + 1 < len(chans):
@@ -2135,6 +2195,9 @@ class ZStackPage(QWidget):
         self.lbl_progress.setText(text)
         self.model.add_log("info" if zs.complete else "warn", f"Z-stack {zs.status}: {zs.message}")
         self.zview.set_run(None)
+        self.zview.set_finished(len(zs.planned_z_um) if zs.status == "completed" else
+                                min((len(st.images) for st in zs.stacks), default=0))
+        self._finished_set = zs
         self._run = None
         self._proj_cache.clear()
         self._curve_cache.clear()
@@ -2147,6 +2210,7 @@ class ZStackPage(QWidget):
 
     def _error(self, msg: str) -> None:
         self.zview.set_run(None)
+        self._sync_seek()
         self._run = None
         self.lbl_progress.setText(f"Not run: {msg}")
 
@@ -2177,6 +2241,9 @@ class ZStackPage(QWidget):
             self.view_channel.setCurrentIndex(max(i, 0))
         self.view_channel.setVisible(self.view_channel.count() > 1)
         self.view_channel.blockSignals(False)
+        if self._run is None and zs is not getattr(self, "_finished_set", None):
+            self.zview.set_finished(None)  # another stack shown (Scan, a saved folder): not this run's
+        self._sync_seek()
         st = self._lead(zs)
         if self._run is None:
             self.slice.setRange(0, max(0, len(st.images) - 1) if st else 0)

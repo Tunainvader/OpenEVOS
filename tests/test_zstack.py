@@ -820,3 +820,67 @@ def test_page_notes_undersampling(app, window):  # core capability 2
     pg.step.setValue(round(opt, 2))
     pump(app, 0.1)
     assert "coarser than Nyquist" not in pg.lbl_note.text()
+
+
+def test_zview_slices_turn_green_as_they_complete(app):
+    from openevos.ui.pages.zstack import ZRangeView
+
+    v = ZRangeView()
+    v.set_state([0.0, 1.0, 2.0, 3.0], 1.5, None, None)
+    assert [v.slice_state(i) for i in range(4)] == ["planned"] * 4
+    v.set_run(2, 2, complete=1)  # slice 0 has every channel, slice 1 one so far, slice 2 being taken
+    assert [v.slice_state(i) for i in range(4)] == ["done", "taken", "current", "pending"]
+    v.set_run(None)
+    v.set_finished(4)  # the whole stack: every plate green
+    assert [v.slice_state(i) for i in range(4)] == ["done"] * 4 and v.all_done()
+    v.set_state([0.0, 1.0, 2.0, 3.0], 1.5, None, None)  # same plan redrawn: stays green
+    assert v.all_done()
+    v.set_state([0.0, 2.0, 4.0], 2.0, None, None)  # a new plan: back to planned
+    assert not v.all_done() and v.slice_state(0) == "planned"
+    v.set_finished(2)  # stopped after two slices: only those are green
+    assert [v.slice_state(i) for i in range(3)] == ["done", "done", "pending"] and not v.all_done()
+
+
+def test_page_stack_and_seek_bar_turn_green_on_completion(app, window):
+    pg = window.pages["zstack"]
+    pg.mode.buttons["centre"].click()
+    pg.below.setValue(4)
+    pg.above.setValue(4)
+    pg.step.setValue(1)
+    greens = []
+    orig = pg._on_progress
+
+    def spy(name, i, n, msg):
+        orig(name, i, n, msg)
+        greens.append(sum(pg.zview.slice_state(k) == "done" for k in range(len(pg.zview.positions))))
+
+    pg._on_progress = spy
+    window.model.tasks.progress.disconnect(orig)
+    window.model.tasks.progress.connect(spy)
+    assert not pg.slice.property("complete")
+    assert pg.acquire()
+    pump(app, 0.2)
+    assert not pg.slice.property("complete")  # not green while running
+    wait_idle(app, window)
+    zs = window.session.capture.buffers.zstack_set
+    assert zs.complete
+    assert greens == sorted(greens) and greens[-1] < len(pg.zview.positions)  # filled in one by one
+    assert pg.zview.all_done() and pg.slice.property("complete")  # the whole stack, then the seek bar
+    assert "green" in pg.slice.toolTip().lower() or "complete" in pg.slice.toolTip().lower()
+    pg.below.setValue(6)  # a new plan: back to the plain colours
+    pump(app, 0.1)
+    assert not pg.zview.all_done() and not pg.slice.property("complete")
+
+
+def test_page_seek_bar_stays_plain_when_stopped(app, window):
+    pg = window.pages["zstack"]
+    pg.mode.buttons["centre"].click()
+    pg.below.setValue(10)
+    pg.above.setValue(10)
+    pg.step.setValue(0.5)
+    assert pg.acquire()
+    pump(app, 0.4)
+    pg._acquire_or_stop()
+    wait_idle(app, window)
+    assert window.session.capture.buffers.zstack_set.status == "stopped"
+    assert not pg.zview.all_done() and not pg.slice.property("complete")
