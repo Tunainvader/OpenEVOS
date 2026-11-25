@@ -351,6 +351,13 @@ class HealthPage(QWidget):
                                             "reads (Microscope › Release stage lock, ADR-0057), or re-home it"
                                             if r.releasable else "not releasable from the app: Microscope › Re-home "
                                             "stage (ADR-0058) or the recovery below"))
+            if r.auto_recovery:
+                p.append("<br>Automatic recovery (ADR-0067, an automatic action the operator chose; recorded as a "
+                         f"departure from the Health kit): {_esc(r.auto_recovery)}")
+            if r.recovery_attempts and r.recovery_attempts != "none":
+                p.append(f"<br>Automatic attempts this session: {_esc(r.recovery_attempts)}")
+            if r.last_recovery and r.last_recovery != "none recorded":
+                p.append(f"<br>Last automatic recovery: {_esc(r.last_recovery)}")
             if r.recovery and r.recovery not in r.refusal:
                 p.append(f"<br>Recovery: {_esc(r.recovery)}")
             if r.evidence:

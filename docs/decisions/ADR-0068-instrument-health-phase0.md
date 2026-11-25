@@ -28,10 +28,9 @@ The repository differs from the kit in three ways:
 - There is no `CapabilityValidator`. `SafetyManager.validate` (`safety/command_validator.py`) is the only authority on
   commands.
 - There was no SQLite and no Health page before this change.
-- The kit's "Never automate homing" conflicts with ADR-0067 (automatic X/Y drive-trip recovery). ADR-0067 is now on
-  `main` but not on this branch, so its `stage-recovery-*.json` records are **not** an event source here. The
-  operator chose to keep that recovery automatic (2026-11-26). Once the two branches meet, Health should journal those
-  records as automatic actions, not as rule breaches.
+- The kit's "Never automate homing" conflicts with ADR-0067 (automatic X/Y drive-trip recovery). The operator chose
+  to keep that recovery automatic (2026-11-26), and ADR-0067 records it as a departure from the kit. This branch is
+  based on ADR-0067, so Health shows that recovery as an automatic action, never as a rule breach (§5).
 
 ## Decision
 
@@ -140,6 +139,26 @@ change only, so age is shown for them but they never go stale.
   and lock release are different things, and Health does none of them. Releasing or re-homing stays on Microscope ›
   Release stage lock or Re-home stage.
 
+### 5. ADR-0067 automatic recovery as an event source
+
+Health reads only what the stage service exposes, and changes nothing about the recovery:
+
+- **Will it run?** For the current lock, the "Why is operation restricted?" panel shows whether the recovery is
+  switched off (Settings › Interface), allowed (the app then starts it by itself), or not attempted, with the
+  service's own reason from `TelemetryService.auto_recovery_blocker()`. Examples: "already had its automatic attempt
+  this session", "this trip is never retried automatically (ran_back …)".
+- **Steps.** Each "automatic recovery: …" note the stage service writes to the StageMonitor's log is journaled as
+  `stage_recovery.step`. Notes are read by position, not by time: the monitor's clock ticks at about 16 ms, so many
+  notes share a timestamp. While a recovery runs, the X/Y card shows WATCH ("automatic recovery running").
+- **Records.** Each new or rewritten `stage-recovery-*.json` in the stage evidence folder (real drives only) is
+  journaled as `stage_recovery.record`: stage, ok, message, trip class, lock and path. Records from before Health
+  started only set the "last automatic recovery" line; they are not journaled again.
+- **Labelling.** Every such event says "Automatic action (ADR-0067)", carries `automatic: true` and is info or
+  warning, never error or critical: a recovery that ran is the operator's chosen behaviour, not a breach. An
+  escalated recovery leaves the stage locked, and the `auto_recovery_failed` latch maps to FAULT like any other
+  drive-fault latch.
+- **X/Y card metrics:** attempts this session per axis (`auto_recovery_attempts`) and the last recovery record.
+
 ## Consequences
 
 - An operator can see why X/Y is refused and that stationary imaging is still permitted, in the monitor's and the
@@ -156,5 +175,4 @@ change only, so age is shown for them but they never go stale.
 - Qualified, versioned baselines and deterministic rules (Phase 1). Capability-scoped protection through the
   SafetyManager (Phase 2). Analytics and an assistant (Phases 3–4).
 - Physical qualification on the AMAFD1000: signal units, rates and timestamps on the real drives; the page against a
-  real lock. This needs the operator's approval and is not part of this change.
-- ADR-0067 stage-recovery records as an event source, once that work is on the same branch.
+  real lock and a real recovery record. This needs the operator's approval and is not part of this change.

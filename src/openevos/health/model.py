@@ -193,6 +193,11 @@ class Restriction:
     last_router_refusal: str = ""
     last_router_refusal_at: datetime | None = None
     safety_reasons: tuple[str, ...] = ()
+    #: ADR-0067: whether the automatic recovery will run for this lock, and why not (an automatic action the operator
+    #: chose on 2026-11-26, recorded as a departure from the kit; shown as such, never as a rule breach)
+    auto_recovery: str = ""
+    recovery_attempts: str = ""
+    last_recovery: str = ""
 
 
 @dataclass(frozen=True)

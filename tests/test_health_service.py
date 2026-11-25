@@ -234,3 +234,69 @@ def test_monitoring_never_blocks_a_publisher(session, tmp_path):
     rows = j.query()
     assert any(r["kind"] == "journal.overflow" for r in rows)
     assert len([r for r in rows if r["kind"] != "journal.overflow"]) + j.dropped == j.offered
+
+
+# ====================================================================================================== ADR-0067
+def test_automatic_recovery_is_journaled_as_an_automatic_action(tmp_path, monkeypatch):
+    """ADR-0067's recovery (the operator chose to keep it automatic, 2026-11-26): Health shows whether it will run,
+    journals its steps and its stage-recovery record as automatic actions, and counts the attempt. Emulated drives."""
+    from types import SimpleNamespace
+
+    from test_stage_auto_recovery import STUCK, _recover, _setup, _trip
+
+    from openevos.core.application import build_core
+    from openevos.instrument.profile import load_profile
+
+    monkeypatch.setattr(hs, "RECORD_SCAN_S", 0.0)
+    chain, svc = _setup(60000, 40000, tmp_path)
+    core = build_core(ThreadClock())
+    for b in svc.backends:
+        core.devices.register(b, b.capabilities())
+    session = SimpleNamespace(core=core, profile=load_profile().model_copy(update={"stage_device": "motor.stage"}),
+                              settings=AppSettings(), telemetry=[svc])
+    h = HealthService(session).start(sampler=False)
+    try:
+        h.sample()
+        _trip(svc, chain, "X", STUCK, 160000, 40000)
+        rep = h.sample()
+        assert rep.subsystem("xy_stage").state is HealthState.FAULT
+        (r,) = rep.restrictions
+        assert r.rule == "overcurrent_trip" and r.auto_recovery.startswith("allowed for this lock")
+        job = _recover(svc)
+        assert job.ok, job.message
+        rep = h.sample()
+        assert rep.subsystem("xy_stage").state not in (HealthState.FAULT, HealthState.RESTRICTED)
+        evs = h.recent_events(300)
+        steps = [e for e in evs if e.kind == "stage_recovery.step"]
+        records = [e for e in evs if e.kind == "stage_recovery.record"]
+        assert steps and records and all(e.data["automatic"] and e.data["adr"] == "ADR-0067" for e in steps + records)
+        assert all(e.message.startswith("Automatic action (ADR-0067)") for e in steps + records)
+        assert all(e.severity not in ("error", "critical") for e in steps + records)  # never shown as a breach
+        assert records[0].data["stage"] == "recovered" and records[0].data["path"].endswith("-recovered.json")
+        metrics = {m.name: m.value for m in rep.subsystem("xy_stage").metrics}
+        assert metrics["Automatic recoveries this session (ADR-0067)"].startswith("X:")
+        assert metrics["Last automatic recovery (ADR-0067)"].startswith("recovered (overcurrent_trip on X")
+        _trip(svc, chain, "X", STUCK, 120000, 40000)  # a second trip of X this session: a hard lock
+        (r,) = h.sample().restrictions
+        assert r.auto_recovery.startswith("not attempted:") and "already had its automatic attempt" in r.auto_recovery
+    finally:
+        h.stop()
+        svc.stop()
+
+
+def test_recovery_notes_are_read_by_position_not_by_time(session):
+    """The monitor's clock is coarse: notes share timestamps, and the note log rotates at its maxlen."""
+    from collections import deque
+    from types import SimpleNamespace
+
+    h = HealthService(session)
+    mon = SimpleNamespace(commands=deque(maxlen=4))
+    mon.commands.extend([(0.016, "LATCH overcurrent_trip on X"), (0.016, "automatic recovery: claimed")])
+    h._recovery_steps("m", mon, Provenance.DEMO)
+    mon.commands.extend([(0.016, "automatic recovery: fresh drive reads"), (0.016, "move X ended: done"),
+                         (0.016, "automatic recovery: re-homed; lock cleared")])  # rotates the first note out
+    h._recovery_steps("m", mon, Provenance.DEMO)
+    h._recovery_steps("m", mon, Provenance.DEMO)  # nothing new: nothing emitted twice
+    steps = [e.data["step"] for e in h.recent_events() if e.kind == "stage_recovery.step"][::-1]
+    assert steps == ["claimed", "fresh drive reads", "re-homed; lock cleared"]
+    assert h._last_step["m"] == "re-homed; lock cleared"

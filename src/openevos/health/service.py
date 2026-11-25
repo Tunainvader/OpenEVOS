@@ -17,6 +17,7 @@ are kept (assess.STATE_CHECKS); target checks (limits, confirmation, interlocks)
 
 from __future__ import annotations
 
+import json
 import shutil
 import sys
 import threading
@@ -71,6 +72,10 @@ MAX_PENDING_COMMANDS = 4096
 #: words in a backend's reason that mean its link failed or came back (counted as link errors)
 LINK_ERROR_WORDS = ("telemetry failed", "telemetry unavailable", "dropped off usb", "not on usb", "stream failed",
                     "link error", "reconnected", "reopened after")
+#: ADR-0067: the stage service's notes for its automatic recovery, and the steps that end one
+RECOVERY_NOTE = "automatic recovery: "
+RECOVERY_END_STEPS = ("recovered", "escalated", "handed back", "objective not raised back")
+RECORD_SCAN_S = 5.0
 MOTOR_EXTRA = {"xy_stage": "motor.stage", "focus": "motor.focus", "objective_turret": "motor.objective_turret"}
 CARRIAGES = ("motor.cube_carriage", "motor.phase_wheel")
 
@@ -152,6 +157,13 @@ class HealthService:
         self._subs: list[Subscription[Any]] = []
         self._prev_states: dict[str, HealthState] | None = None
         self._prev_monitor: dict[str, dict[str, Any]] = {}
+        #: ADR-0067 automatic recovery, per monitor label: how many notes were read and the last one, the last step,
+        #: the recovery records seen (path -> mtime), the latest record, when the folder was last scanned
+        self._note_pos: dict[str, tuple[int, Any]] = {}
+        self._last_step: dict[str, str] = {}
+        self._records: dict[str, dict[str, float]] = {}
+        self._last_record: dict[str, dict[str, Any]] = {}
+        self._records_t: dict[str, float] = {}
         self._disk: tuple[float, dict[str, DiskView]] | None = None
         self._device_sub: dict[str, str] = {}
         self._link_of: dict[str, str] = {}
@@ -442,10 +454,11 @@ class HealthService:
             mon = getattr(svc, "monitor", None)
             if mon is not None:
                 label = f"X/Y drift monitor, {getattr(svc, 'port_label', '') or 'motor port'}"
+                sim = bool(getattr(svc, "emulated", False))
                 mv = MonitorView(label, mon.state(), mon.refusal(),
                                  owns_stage=any(b.device_id in stage_ids for b in getattr(svc, "backends", [])),
-                                 carried_over=bool(getattr(mon, "carried_over", False)),
-                                 simulated=bool(getattr(svc, "emulated", False)))
+                                 carried_over=bool(getattr(mon, "carried_over", False)), simulated=sim,
+                                 recovery=self._recovery(label, svc, mon, sim))
                 monitors.append(mv)
                 self._monitor_transitions(mv, mon)
         refusals, missing = self._probes(snaps)
@@ -473,6 +486,94 @@ class HealthService:
                           probe_missing=missing, last_reason=last_reason, last_refusal=last_refusal,
                           link_errors=link_errors, counters=counters, disks=dict(self._disk[1]), host=host,
                           host_measured_at=now)
+
+    # ------------------------------------------------------------------ ADR-0067 automatic recovery (read only)
+    def _recovery(self, label: str, svc: Any, mon: Any, sim: bool) -> dict[str, Any]:
+        """What the stage service exposes about its automatic recovery: the public attempts and blocker, the monitor's
+        "automatic recovery: ..." notes, and the stage-recovery-*.json records. Journaled as automatic actions (the
+        operator's choice, 2026-11-26), never as rule breaches. Empty for a service without ADR-0067."""
+        if not hasattr(svc, "auto_recovery_blocker"):
+            return {}
+        prov = Provenance.DEMO if sim else Provenance.MEASURED
+        self._recovery_steps(label, mon, prov)
+        self._recovery_records(label, mon, prov)
+        enabled = bool(getattr(getattr(self.session.settings, "basic", None), "stage_auto_recovery", False))
+        blocker = svc.auto_recovery_blocker() if mon.latched else ""
+        if not enabled:
+            status = "switched off (Settings › Interface)"
+        elif not mon.latched:
+            status = "on; nothing to recover"
+        elif blocker:
+            status = f"not attempted: {blocker}"
+        else:
+            status = ("allowed for this lock: the app starts it by itself (light off, objective down, re-home X then "
+                      "Y, a slow test of the tripped axis, return)")
+        step = self._last_step.get(label, "")
+        return {"enabled": enabled, "status": status, "attempts": dict(getattr(svc, "auto_recovery_attempts", {})),
+                "last": self._last_record.get(label), "last_step": step,
+                "in_progress": bool(step) and not step.startswith(RECOVERY_END_STEPS)}
+
+    def _recovery_steps(self, label: str, mon: Any, prov: Provenance) -> None:
+        try:
+            notes = list(getattr(mon, "commands", ()))
+        except RuntimeError:  # appended to while copying: next sample
+            return
+        # by position, not by time: the monitor's clock is coarse (~16 ms on Windows), so many notes share a time
+        count, last = self._note_pos.get(label, (0, None))
+        maxlen = getattr(getattr(mon, "commands", None), "maxlen", None)
+        if maxlen is not None and len(notes) >= maxlen:  # full: old notes rotate out; find where we stopped
+            start = next((i + 1 for i in range(len(notes) - 1, -1, -1) if notes[i] == last), 0)
+        else:
+            start = min(count, len(notes))
+        self._note_pos[label] = (len(notes), notes[-1] if notes else None)
+        for entry in notes[start:]:
+            text = entry[1] if isinstance(entry, tuple) and len(entry) == 2 else None
+            if not isinstance(text, str) or not text.startswith(RECOVERY_NOTE):
+                continue
+            step = text[len(RECOVERY_NOTE):]
+            self._last_step[label] = step
+            sev = "warning" if step.startswith(("escalated", "light off not confirmed", "objective not raised")) \
+                else "info"
+            self._emit("stage_recovery.step", "xy_stage", sev, f"Automatic action (ADR-0067): {step}",
+                       provenance=prov, source="StageMonitor notes (automatic recovery)",
+                       data={"automatic": True, "adr": "ADR-0067", "step": step, "monitor": label})
+
+    def _recovery_records(self, label: str, mon: Any, prov: Provenance) -> None:
+        folder = getattr(mon, "evidence_dir", None)
+        t = time.monotonic()
+        if folder is None or t - self._records_t.get(label, -1e9) < RECORD_SCAN_S:
+            return
+        self._records_t[label] = t
+        first = label not in self._records
+        known = self._records.setdefault(label, {})
+        try:
+            files = sorted(Path(folder).glob("stage-recovery-*.json"), key=lambda p: p.stat().st_mtime)
+        except OSError:
+            return
+        for p in files:
+            try:
+                mtime = p.stat().st_mtime
+                if known.get(str(p)) == mtime:
+                    continue
+                known[str(p)] = mtime
+                rec = json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(rec, dict):
+                continue
+            summary = {k: rec.get(k) for k in ("utc", "stage", "ok", "message", "trip_class", "who")}
+            summary.update(lock=rec.get("lock") or {}, path=str(p), steps=len(rec.get("steps") or []))
+            self._last_record[label] = summary
+            if first:  # records from before this Health service started: shown as the last one, not re-journaled
+                continue
+            raw_lock = rec.get("lock")
+            lock: dict[str, Any] = raw_lock if isinstance(raw_lock, dict) else {}
+            sev = "info" if rec.get("ok") or rec.get("stage") != "escalated" else "warning"
+            self._emit("stage_recovery.record", "xy_stage", sev,
+                       f"Automatic action (ADR-0067): recovery of {lock.get('axis', '?')} after {lock.get('rule', '?')}"
+                       f" {summary['stage']}" + (f": {summary['message']}" if summary.get("message") else ""),
+                       provenance=prov, source=f"stage-recovery record {p.name}",
+                       data={"automatic": True, "adr": "ADR-0067", **summary})
 
     # ------------------------------------------------------------------ SafetyManager probes (validated, never sent)
     def _probes(self, snaps: dict[str, DeviceSnapshot]) -> tuple[dict[str, tuple[str, ...]], dict[str, str]]:

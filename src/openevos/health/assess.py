@@ -79,6 +79,9 @@ class MonitorView:
     owns_stage: bool = True  # the monitor watches the stage the app drives
     carried_over: bool = False
     simulated: bool = False
+    #: ADR-0067 automatic recovery as the service exposes it: enabled, status (why it will / will not run for the
+    #: current lock), attempts (axis -> when, rule), last (the latest stage-recovery record), last_step, in_progress
+    recovery: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -191,7 +194,28 @@ def monitor_findings(m: MonitorView) -> list[Finding]:
         return [Finding(F, f"X/Y moves locked by a drive-fault latch since {since} UTC{carried}: {rule} on {axis}: "
                            f"{st.get('message', '')}", prov, src)]
     warn = [Finding(W, f"drift monitor: {w}", prov, src) for w in st.get("warnings") or ()]
+    rec = m.recovery
+    if rec.get("in_progress"):
+        warn.append(Finding(W, f"automatic recovery running (ADR-0067, an automatic action): {rec.get('last_step')}",
+                            prov, "StageMonitor notes"))
     return warn or [Finding(H, "drift monitor watching, no lock", prov, src)]
+
+
+def recovery_text(rec: dict[str, Any]) -> tuple[str, str]:
+    """(attempts this session, the last recovery record) for display; ('', '') before ADR-0067."""
+    if not rec:
+        return "", ""
+    att = rec.get("attempts") or {}
+    attempts = "; ".join(f"{ax}: {v}" for ax, v in sorted(att.items())) if att else "none"
+    last = rec.get("last") or {}
+    if last:
+        when = str(last.get("utc", ""))[:19].replace("T", " ")
+        lock = last.get("lock") or {}
+        text = (f"{last.get('stage', '?')} ({lock.get('rule', '')} on {lock.get('axis', '')}, {when} UTC)"
+                + (f": {last['message']}" if last.get("message") else ""))
+    else:
+        text = "none recorded"
+    return attempts, text
 
 
 def _fmt(v: Any) -> Any:
@@ -214,6 +238,10 @@ def device_metrics(subsystem: str, dids: tuple[str, ...], snaps: dict[str, Devic
             if monitor is None:
                 continue
             v: Any = monitor.state.get(key)
+            if key in ("recovery_attempts", "last_recovery"):
+                if not monitor.recovery:
+                    continue
+                v = recovery_text(monitor.recovery)[0 if key == "recovery_attempts" else 1]
             if key == "reapproaches":
                 v = sum(len(x) for x in (v or {}).values()) if isinstance(v, dict) else v
             if key == "warnings":
@@ -545,7 +573,9 @@ def _restrictions(view: HealthView, caps: list[CapabilityStatus], subs: dict[str
         last = next((view.last_refusal[d] for d in stage_ids if d in view.last_refusal), None)
         rule = str(st.get("rule", ""))
         kind = "drift or landing lock" if rule in DRIFT_RULES else "drive-fault latch"
+        attempts, last_rec = recovery_text(m.recovery)
         out.append(Restriction(
+            auto_recovery=str(m.recovery.get("status", "")), recovery_attempts=attempts, last_recovery=last_rec,
             source=f"StageMonitor ({m.label})", capabilities=affected,
             summary=f"X/Y moves are refused: {kind} {rule} on {st.get('axis', '')}",
             rule=rule, axis=str(st.get("axis", "")), since_utc=str(st.get("since_utc", "")), refusal=m.refusal,
