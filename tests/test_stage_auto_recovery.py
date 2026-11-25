@@ -1,7 +1,8 @@
 """ADR-0067: bounded automatic recovery after an X/Y drive trip (operator 2026-11-25: "on such fault detection it will
 automatically start repairing itself without user intervention"). On the drive emulator and the simulator only:
 the trip classes (from the recorded trips), the service's ladder (re-home, slow test legs, return), its limits (one
-attempt per axis per session, a trip during the ladder is a hard lock, never a homing from mid-travel), the app side
+attempt per axis per session, a trip during the ladder is a hard lock, a switched-off axis homed from where it
+stands and recorded), the app side
 (light off, objective down and back), the approach leg's staging landing, and the Multi-D and Scan runners."""
 
 from __future__ import annotations
@@ -162,21 +163,33 @@ def test_a_trip_that_leaves_the_axis_powered_is_recovered_tested_and_returned(tm
         svc.stop()
 
 
-def test_an_axis_switched_off_far_from_home_is_never_homed_from_there(tmp_path):
-    # as every move trip on record: the drive switched the axis off 6-85 mm from home
-    chain, svc = _setup(60000, 40000, tmp_path)
+def test_an_axis_switched_off_far_from_home_is_homed_from_where_it_stands(tmp_path):
+    # as every move trip on record: the drive switched the axis off 6-85 mm from home. Operator 2026-11-25 ("Allow
+    # it"): the recovery homes it from there, as the operator's Re-home and every power-up homing do
+    x0, y0 = 60000, 40000
+    chain, svc = _setup(x0, y0, tmp_path)
     try:
-        _trip(svc, chain, "X", dict(STUCK, off=True), 160000, 40000)
+        _trip(svc, chain, "X", dict(STUCK, off=True), 160000, y0)
         assert not chain.values[("X", "SRL")] & 0x8000
+        assert svc.auto_recovery_blocker() == ""
         n = len(chain.writes)
         job = _recover(svc)
-        assert not job.ok and job.stage == "escalated"
-        assert "switched off by its drive 26.5 mm from home" in job.message and "has had its automatic attempt" \
-            in job.message
-        assert _home_writes(chain, n) == [] and not [x for x in chain.writes[n:] if x not in tp.ALLOWED_REQUESTS]
-        assert svc.monitor.latched and svc.monitor.latch.rule == "overcurrent_trip"
-        assert svc.auto_recovery_blocker()  # used: the operator must act
-        assert list(tmp_path.glob("stage-recovery-*-escalated.json"))
+        assert job.ok and job.stage == "recovered", job.message
+        assert not svc.monitor.latched and chain.values[("X", "SRL")] & 0x8000  # the home request's AXISON
+        w = chain.writes[n:]
+        hx, hy = w.index(tp.XY_HOME_FRAMES["X"]), w.index(tp.XY_HOME_FRAMES["Y"])
+        # X had no approach leg (it cannot move switched off): its home request went out from 26.5 mm; Y, powered,
+        # made its approach first
+        assert tp.move_target("X", tm.REHOME_APPROACH_TO_COUNTS) not in w[:hx]
+        assert w.index(tp.move_target("Y", tm.REHOME_APPROACH_TO_COUNTS)) < hx < hy
+        assert job.record["homed_from_travel"] == {"X": "26.5 mm from home"}
+        assert all(g["ok"] for g in job.record["test"]["legs"])
+        assert chain.values[("X", "APOS")] == x0 and chain.values[("Y", "APOS")] == y0
+        rec = json.loads(next(tmp_path.glob("stage-recovery-*-recovered.json")).read_text(encoding="utf-8"))
+        step = next(s for s in rec["steps"] if s["step"] == "switched off by its drive: homed from where it stands")
+        assert step["X"] == "26.5 mm from home" and "Y" not in step
+        assert any("homed from where it stands" in c for _t, c in svc.monitor.commands)
+        assert svc.auto_recovery_attempts.keys() == {"X"}  # used: a second trip of X needs the operator
     finally:
         svc.stop()
 

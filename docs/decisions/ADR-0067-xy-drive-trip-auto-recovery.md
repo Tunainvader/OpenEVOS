@@ -1,6 +1,7 @@
 # ADR-0067: Bounded automatic recovery after an X/Y drive trip (amends ADR-0040, ADR-0058, ADR-0065)
 
 - **Status:** Proposed (2026-11-25). Implemented and tested on the drive emulator only. **Not run on the instrument.**
+  Amended the same day by the operator's choice: a switched-off axis is homed from where it stands (see below).
 - **Asked for by:** the operator, 2026-11-25, after a Multi-D run (8 wells, 2 channels, 141 planes) ended "partial"
   after three wells and 846 images: "who locks the stage, hardware firmware or software why cant we make our scope
   smart, and on such fault detection it will automatically start repairing itself without user intervention".
@@ -62,7 +63,8 @@ its start. **APOS against CPOS at the latch cannot tell these apart; the closest
   7.0 mm, #7 Y at 6.0 mm, #8 X at 85.0 mm. A switched-off axis cannot make the approach leg, and the only reviewed
   way to switch it on is its home request (`HOMETOHARDSTOP` does `AXISON` itself), which would then home it from
   mid-travel into the stop. Under the standing rule against that, **none of the eight trips would have been
-  recovered automatically**: three are homing trips, one ran back, four are switched off far from home.
+  recovered automatically**: three are homing trips, one ran back, four are switched off far from home. With the
+  operator's choice below, those four (#1, #3, #5, #7) are attempted.
 - Y also reads switched off with no fault flag after a lock and a stop (11-19 13:35, 11-25 09:27, 11-25 15:17, and
   #5 itself). Why is not known.
 
@@ -84,8 +86,9 @@ All of these, checked again on the service thread before anything is written:
      found it): **eligible**;
    - `ran_back` (more than 100 counts, `WRONG_WAY_COUNTS`, back from its closest approach) and `homing`
      (`ISTATUSFLAGS` bit 3): **hard lock at once**.
-5. **No axis is switched off further than 3,000 counts (1.3 mm) from home** (`REHOME_APPROACH_FROM_COUNTS`). Such an
-   axis could only be homed from mid-travel: hard lock with a message that says so.
+
+Whether the tripped axis is still powered does not decide it: a switched-off axis is homed from where it stands
+(step 4, the operator's choice below).
 
 ### The ladder
 Every step is written to the monitor's command log and to `stage-recovery-<time>-<outcome>.json` in the stage
@@ -96,10 +99,12 @@ evidence folder (lock, class, the app's steps, fresh reads, each axis' homing tr
 2. **Objective lowered to Z 0**, the turret-safe height, through the router (the focus device's checks apply). If Z
    does not reach 0 nothing goes to X or Y: hard lock.
 3. **Fresh drive reads** on the service thread: X, Y (`REHOME_PRE_READS`), Z, P/F/O states, turret sensor. The
-   ADR-0058 refusals apply (not idle, `MER` ≠ 0, `SRH` fault bit, Z not at 0, P/F/O busy, turret between positions),
-   plus rule 5 above.
+   ADR-0058 refusals apply (not idle, `MER` ≠ 0, `SRH` fault bit, Z not at 0, P/F/O busy, turret between positions).
 4. **One software re-home of X then Y** (ADR-0058: approach leg to 1,000 counts for a powered axis further out than
-   3,000, `ESTATE` 19, verify, park a stand-off). The lock clears only on the existing `rehome_done` rule.
+   3,000, `ESTATE` 19, verify, park a stand-off). An axis its drive switched off cannot make the approach leg; its
+   home request switches it on (`HOMETOHARDSTOP` does `AXISON`) and it homes from where it stands. That is recorded
+   as its own step and as `homed_from_travel` (axis → mm from home) in the evidence file. The lock clears only on the
+   existing `rehome_done` rule.
 5. **Test move** of the tripped axis alone, at the slow preset (1.0 mm/s): three verified legs of 1.0 mm outwards from
    where it homed, each with every leg check (drive flags, still axis, landing). The drive's earlier speed is written
    back afterwards. Any trip here latches again; the axis' attempt is used, so it is a hard lock.
@@ -124,22 +129,29 @@ before homing sets its position afresh. **An approach leg now accepts a landing 
 (`LANDING_RETRY_MAX_COUNTS`) after the settle window; it is recorded as `accepted (approach)` in the landing log.
 Every other leg keeps the 5-count band. This applies to the operator's Re-home too.
 
+### Operator's choice (2026-11-25): a switched-off axis homes from where it stands
+Asked whether the recovery may home a switched-off axis from where it stands, the operator answered "Allow it". This
+is what the operator's Re-home does today (ADR-0058 amendment, unchanged here) and what every power cycle does
+(power-up homing starts wherever the stage stands, both axes at once). It is the only way the ladder can recover #1,
+#3, #5 and #7. It sets aside, for this one homing per axis per session, the standing rule against homing from
+mid-travel. The known cost: from mid-travel the homing reaches about 5.6 mm/s before it hits the stop, against about
+2.6 mm/s from near home ("a screech", 2026-11-19), and Y passes its tight spot about 1.9 mm from home on the way. One
+attempt per axis per session still holds, so it happens at most once per axis before the operator is needed.
+
 ## Not chosen
-- **Homing a switched-off axis from where it stands.** This is what the operator's Re-home does today (ADR-0058
-  amendment, unchanged here) and what every power cycle does (power-up homing starts wherever the stage stands, both
-  axes at once). It is the only way the ladder could have recovered #1, #3, #5 and #7. It conflicts with the standing
-  rule against homing from mid-travel, so the ladder escalates instead. **Open decision for the operator.**
 - **Switching the axis back on in place** (the drive's `AXISON`), then the approach leg, then homing. No reviewed
   frame exists; it needs the research and a motor gate on the instrument first.
 - **Retrying the move without a re-home.** The drive has switched the axis off; the phase may be wrong.
 - **Changing the drive's protection** (current limits, oscillation detection). No drive parameter is written.
 
 ## Consequences
-- On today's evidence the ladder escalates every recorded trip. What it adds now: the light goes off and the objective
-  comes down without the operator, every trip is classified and recorded, and the run keeps its data. It recovers by
-  itself only a trip that leaves the axes powered, or switched off within 1.3 mm of home.
+- Of the eight recorded trips, the ladder would attempt four (#1, #3, #5, #7), each homing the switched-off axis from
+  6–76 mm, and hard-lock the other four at once (the three homing trips and #8, which ran back). Whether those four
+  would have passed is not known: after the one comparable software recovery (#7) the next move locked 70 s later, and
+  after #3 the power-up homing of the same axis tripped. In every case the light goes off and the objective comes
+  down without the operator, the trip is classified and recorded, and the run keeps its data.
 - A recovery takes about the length of a Re-home (X ~16 s, Y ~10 s homing, plus approach and return legs) and three
   short slow legs (~5 s).
 - The second trip of an axis in a session always needs the operator. So does any lock outside `DRIVE_FAULT_RULES`.
-- Not yet seen on the unit: the ladder end to end, the slow test legs after a homing, and whether a re-home after a
-  `ran_back`-free over-current gives a clean next move. The first runs on the instrument need the operator's approval.
+- Not yet seen on the unit: the ladder end to end, a homing from mid-travel started by the ladder, the slow test legs
+  after a homing, and whether a re-home after a `ran_back`-free over-current gives a clean next move. The first runs on the instrument need the operator's approval.

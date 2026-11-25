@@ -341,8 +341,8 @@ class _RehomeJob:
 @dataclass
 class _RecoveryJob(_RehomeJob):
     """ADR-0067: the automatic recovery after a drive trip of `axis`. Claimed by the app side (which turns the light
-    off and lowers Z, recording its steps), then run on the service thread: the ADR-0058 re-home with the automatic
-    refusals, a slow test move of the tripped axis, the return. `stage` ends "recovered" or "escalated"."""
+    off and lowers Z, recording its steps), then run on the service thread: the ADR-0058 re-home, a slow test move of
+    the tripped axis, the return. `stage` ends "recovered" or "escalated"."""
     axis: str = ""
     rule: str = ""
     latch_utc: str = ""
@@ -1198,8 +1198,8 @@ class TelemetryService:
         """The re-home up to the lock clearing (ADR-0058 steps 1-5): fresh reads and refusals, remember X/Y, the
         approach, X then Y home requests, the monitor's clear rule (with a stand-off parked), a fresh poll. True: both
         homed and the lock cleared (`job.homed`); False: `job.stage`/`job.message` say why, the lock stays. `auto`
-        (ADR-0067) also refuses an axis its drive switched off away from home: it could only be homed from
-        mid-travel."""
+        (ADR-0067's recovery) records an axis its drive switched off away from home as a step: it is homed from where
+        it stands, as the operator's Re-home and every power-up homing do (operator's choice, 2026-11-25)."""
         job.stage = "checking X, Y and Z"
         why = self.monitor.rehome_blocker()
         if why:
@@ -1227,17 +1227,17 @@ class TelemetryService:
             # corner, where an objective struck the stage on 2026-11-17 (Gate 19 run 1)
             problems.append(f"the turret is not on an objective (sensor {turret}): an objective may stand part-way up "
                             "and the stage homes to its 0, 0 corner; seat the turret on an objective first")
-        if auto:
-            for ax, v in pre.items():
-                if not v["SRL"] & sm.SRL_AXIS_ON and abs(v["APOS"]) > REHOME_APPROACH_FROM_COUNTS:
-                    # ADR-0067: a switched-off axis cannot make the approach leg, and its home request is the only
-                    # reviewed way to switch it on: that would home it from mid-travel into the stop
-                    problems.append(f"{ax} was switched off by its drive {um_from_counts(ax, v['APOS']) / 1000:.1f} mm "
-                                    "from home; it can be switched on only by homing it from there, into its stop, "
-                                    "which is never done automatically")
         if problems:
             job.stage, job.message = "refused", "re-home refused, nothing sent: " + "; ".join(problems)
             return False
+        if auto and isinstance(job, _RecoveryJob):
+            # ADR-0067: a switched-off axis cannot make the approach leg, and its home request is the only reviewed
+            # way to switch it on (HOMETOHARDSTOP does AXISON): it homes from where it stands, into its stop
+            far = {ax: f"{um_from_counts(ax, v['APOS']) / 1000:.1f} mm from home" for ax, v in pre.items()
+                   if not v["SRL"] & sm.SRL_AXIS_ON and abs(v["APOS"]) > REHOME_APPROACH_FROM_COUNTS}
+            if far:
+                job.record["homed_from_travel"] = far
+                self.recovery_step(job, "switched off by its drive: homed from where it stands", **far)
         job.remembered = {ax: pre[ax]["APOS"] for ax in tp.MOTION_AXES}
         self.monitor.note("software re-home: remembered X {X}, Y {Y} (counts)".format(**job.remembered))
         why = self._rehome_approach(link, job, pre)
@@ -1432,8 +1432,8 @@ class TelemetryService:
     # ------------------------------------------------------------------ automatic recovery (ADR-0067)
     def _run_recovery(self, link: DriveLink, job: _RecoveryJob) -> None:
         """The ladder's drive part (the light is off and Z at 0 already, done by the app): the same lock still holds,
-        the ADR-0058 re-home with the automatic refusals (`_rehome_home(auto=True)`), a slow test move of the tripped
-        axis, the return. Any failure escalates (`_recovery_escalate`); nothing is retried."""
+        the ADR-0058 re-home (`_rehome_home(auto=True)`: a switched-off axis homes from where it stands, recorded), a
+        slow test move of the tripped axis, the return. Any failure escalates (`_recovery_escalate`); no retries."""
         latch = self.monitor.latch
         if latch is None or latch.at_utc != job.latch_utc:
             job.stage, job.message = "escalated", ("the lock changed before the automatic recovery started; nothing "
