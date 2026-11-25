@@ -6,6 +6,10 @@ tiles.jsonl (append-only), then manifest.json and the mosaics at the end.
 With "Z-stack" ticked, every tile also takes one Z-stack per channel centred on the focus found there (after the
 in-focus capture that feeds the mosaic). Each stack is an OME-TIFF on disk as soon as it is taken; Stop ends a stack
 after the slice in progress, keeps (and saves) it, then ends the scan.
+
+A stage drive trip on the way to a tile (ADR-0067): with the automatic stage recovery allowed, the scan pauses in it,
+then retries that tile's move once; a failed retry skips the tile if the stage is unlocked, else ends the scan with
+every finished tile kept.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ import numpy as np
 
 from openevos.acquisition.autofocus import Autofocus
 from openevos.acquisition.capture import CapturedImage, CaptureService, ZStack
+from openevos.acquisition.controller import CommandError
 from openevos.acquisition.scan_plan import ScanPlan, Tile
 from openevos.instrument.vessels import Vessel
 
@@ -28,6 +33,10 @@ Progress = Callable[[int, int, str], None]
 
 class RunStopped(RuntimeError):
     pass
+
+
+class SkipTile(RuntimeError):
+    """ADR-0067: after an automatic stage recovery the retried move failed with the stage unlocked: skip this tile."""
 
 
 class RunControl:
@@ -72,6 +81,8 @@ class ScanResult:
     mosaics: dict[str, np.ndarray] = field(default_factory=dict)
     mosaic_scale_um_per_px: float | None = None
     focus_log: list[tuple[int, str]] = field(default_factory=list)
+    #: ADR-0067: (tile index, what happened) for each automatic stage recovery and each tile skipped after one
+    stage_events: list[tuple[int, str]] = field(default_factory=list)
     completed: bool = False
     message: str = ""
     output_folder: str | None = None
@@ -112,16 +123,45 @@ def build_mosaic(images: list[tuple[Tile, dict[str, CapturedImage]]], slot: str,
 
 class ScanRunner:
     def __init__(self, capture: CaptureService, autofocus: Autofocus, vessel: Vessel, *,
-                 auto_fine_range_percent: float = 100.0):
+                 auto_fine_range_percent: float = 100.0, recovery=None):
         self.capture, self.af, self.vessel = capture, autofocus, vessel
         self.auto_fine_range_percent = auto_fine_range_percent
         self.control = RunControl()
+        #: ADR-0067: a StageAutoRecovery (acquisition/stage_recovery.py), or None: a failed move ends the scan
+        self.recovery = recovery
+        self.stage_events: list[tuple[int, str]] = []
+
+    def _move(self, x: float, y: float, index: int) -> None:
+        """The tile's stage move; after a failure, the automatic stage recovery and one retry (ADR-0067)."""
+        ctl = self.capture.ctl
+        try:
+            ctl.run(ctl.move_stage(x, y))
+            return
+        except CommandError as exc:
+            rec = self.recovery
+            if rec is None or rec.blocker():
+                raise
+            first = exc
+        out = rec.run(f"scan tile {index + 1}")
+        self.stage_events.append((index, f"automatic stage recovery: {out.message}"))
+        if not out.recovered:
+            raise RuntimeError(f"tile {index + 1}: the stage drive tripped and the automatic recovery did not "
+                               f"succeed: {out.message}") from first
+        self.control.checkpoint()
+        try:
+            ctl.run(ctl.move_stage(x, y))  # the one retry
+        except CommandError as again:
+            if rec.stage_locked():
+                raise RuntimeError(f"tile {index + 1}: the move failed again after the automatic recovery and the "
+                                   f"stage is locked: {again}") from again
+            raise SkipTile(f"tile {index + 1}: the move failed again after the automatic recovery ({again}); tile "
+                           "skipped") from again
 
     def visit(self, x: float, y: float, channels: list[str], role, *, find_sample: bool, auto_fine: bool,
               log: list[tuple[int, str]], index: int, z: float | None = None) -> dict[str, CapturedImage]:
         ctl = self.capture.ctl
         self.control.checkpoint()
-        ctl.run(ctl.move_stage(x, y))
+        self._move(x, y, index)
         if z is not None:
             ctl.run(ctl.move_focus(z))
         if find_sample:
@@ -173,6 +213,7 @@ class ScanRunner:
     def run(self, plan: ScanPlan, progress: Progress | None = None) -> ScanResult:
         r = plan.routine
         res = ScanResult(plan)
+        self.stage_events = res.stage_events  # ADR-0067: the recoveries and skipped tiles of this scan
         n = len(plan.tiles)
         # with an output folder, every tile goes to disk as soon as it is captured (append-only tiles.jsonl), and
         # memory keeps a 1/MEMORY_DOWNSAMPLE copy for the mosaic: a crash keeps every finished tile, and memory no
@@ -183,9 +224,13 @@ class ScanRunner:
             for i, t in enumerate(plan.tiles):
                 if progress:
                     progress(i, n, f"tile {i + 1}/{n} ({t.region_id} r{t.row} c{t.col})")
-                imgs = self.visit(t.stage_x, t.stage_y, r.channels, r.camera,
-                                  find_sample=r.find_sample and i == 0, auto_fine=r.auto_fine,
-                                  log=res.focus_log, index=i)
+                try:
+                    imgs = self.visit(t.stage_x, t.stage_y, r.channels, r.camera,
+                                      find_sample=r.find_sample and i == 0, auto_fine=r.auto_fine,
+                                      log=res.focus_log, index=i)
+                except SkipTile as skip:  # ADR-0067: recovered, but this tile's retried move failed
+                    res.stage_events.append((i, str(skip)))
+                    continue
                 stacks: dict[str, ZStack] = {}
                 stopped: RunStopped | None = None
                 if r.zstack:
@@ -211,8 +256,9 @@ class ScanRunner:
                     res.stacks[t.index] = stacks
                 if stopped is not None:
                     raise stopped
-            res.completed = True
-            res.message = f"{n} tiles captured"
+            res.completed = len(res.images) == n  # a tile skipped after a stage recovery (ADR-0067) is not complete
+            res.message = f"{len(res.images)} tiles captured" + (f", {n - len(res.images)} skipped after a stage "
+                                                                  "recovery" if len(res.images) < n else "")
         except RunStopped as exc:
             res.message = f"{exc} after {len(res.images)}/{n} tiles"
         except Exception as exc:  # noqa: BLE001 — reported to the operator, never swallowed silently
@@ -295,6 +341,6 @@ class TileWriter:
             tifffile.imwrite(self.out / f"mosaic_{slot}.tif", m)
         manifest = {"routine": json.loads(res.plan.routine.model_dump_json()), "completed": res.completed,
                     "message": res.message, "synthetic": self.synthetic, "warnings": list(res.plan.warnings),
-                    "tiles": self.entries}
+                    "stage_events": [{"tile": i, "event": e} for i, e in res.stage_events], "tiles": self.entries}
         (self.out / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str), "utf-8")
         return self.out

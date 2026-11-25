@@ -213,6 +213,10 @@ class SystemBasicSettings(BaseModel):
     stage_speed: str = "medium"
     #: View › Developer tools: simulator fault injection and gate-evidence tables on the Hardware tab (UI audit)
     developer_mode: bool = False
+    #: Settings › Interface (ADR-0067, operator 2026-11-25: "on such fault detection it will automatically start
+    #: repairing itself"): after an X/Y drive trip, light off, objective down, one software re-home, a slow test of the
+    #: tripped axis, then back; once per axis per session. Off = a drive trip locks the stage until the operator acts
+    stage_auto_recovery: bool = True
 
     @field_validator("theme")
     @classmethod

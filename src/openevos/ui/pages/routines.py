@@ -479,9 +479,12 @@ class ScanPage(_RoutineBase):
         self.replan()
         if not self.plan:
             return
+        from openevos.acquisition.stage_recovery import StageAutoRecovery
+
         s = self.session
         self.runner = ScanRunner(s.capture, s.autofocus, s.vessel,
-                                 auto_fine_range_percent=s.settings.basic.auto_fine_range_percent)
+                                 auto_fine_range_percent=s.settings.basic.auto_fine_range_percent,
+                                 recovery=StageAutoRecovery(s, log=self.model.add_log))  # ADR-0067
         plan, runner = self.plan, self.runner
         s.controller.stop_live(s.settings.active_camera)
         self.btn_pause.setEnabled(True)

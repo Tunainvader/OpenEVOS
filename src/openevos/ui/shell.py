@@ -867,6 +867,36 @@ class MainWindow(QMainWindow):
         self.f_pos.setText((f"XY {xy[0] / 1000:+.3f}, {xy[1] / 1000:+.3f} mm" if xy else "XY —")
                            + (f"   Z {z:.1f} µm" if z is not None else "") + (f"   {obj.short}" if obj else ""))
         self._refresh_commands()
+        self._maybe_auto_recover()
+
+    # ================================================================== automatic stage recovery (ADR-0067)
+    def _maybe_auto_recover(self) -> None:
+        """A drive trip outside a run (a manual move, or found at rest): start the automatic stage recovery as a task
+        when it is allowed and nothing else runs. A Multi-D or Scan run handles its own trip."""
+        if self.model.tasks.busy:
+            return
+        rec = getattr(self, "_auto_recovery", None)
+        if rec is None:
+            from openevos.acquisition.stage_recovery import StageAutoRecovery
+
+            rec = self._auto_recovery = StageAutoRecovery(self.session, log=self.model.add_log)
+        if rec.blocker():
+            return
+        self.model.tasks.submit("Stage recovery", lambda: rec.run("a manual stage move or at rest"),
+                                on_done=self._auto_recovery_done)
+
+    def _auto_recovery_done(self, out) -> None:
+        from PySide6.QtWidgets import QMessageBox
+
+        if out is None or not getattr(out, "attempted", False):
+            return
+        if out.recovered:
+            QMessageBox.information(self, "Stage recovered", out.message)
+        else:
+            QMessageBox.warning(self, "Stage locked", out.message)
+        dlg = getattr(self, "_precheck_dlg", None)
+        if dlg is not None and dlg.isVisible():
+            dlg.refresh()
 
     def _on_device(self, did: str, snap) -> None:
         pill = self.pills.get(did)

@@ -1517,7 +1517,10 @@ class MultiDPage(QWidget):
             confirmed = True
         self.md.last_plan = plan.to_dict()
         writer = ExperimentWriter(self.save_root(), reserve_mb=STORAGE_RESERVE_MB)
-        runner = MultiDimRunner(self.session, writer)
+        from openevos.acquisition.stage_recovery import StageAutoRecovery
+
+        # ADR-0067: a drive trip on the way to a position pauses the run in the automatic stage recovery
+        runner = MultiDimRunner(self.session, writer, recovery=StageAutoRecovery(self.session, log=self.model.add_log))
         self._runner, self._run_plan, self._run_summary = runner, plan, summ
         self._run_started = time.monotonic()
         self.m_log.clear()

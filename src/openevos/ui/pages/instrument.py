@@ -948,6 +948,16 @@ class SettingsPage(QWidget):
                                     "B light, X snap to last, Y fine/coarse, Back stop")
         self.chk_gamepad.toggled.connect(lambda v: setattr(b, "gamepad_enabled", v))
         form.addRow("", self.chk_gamepad)
+        self.chk_stage_recovery = QCheckBox("Recover the stage automatically after a drive trip")
+        self.chk_stage_recovery.setChecked(b.stage_auto_recovery)
+        self.chk_stage_recovery.setToolTip(
+            "On: when an X or Y drive switches its motor off (over-current, oscillation, power stage off), the light "
+            "goes off, the objective is lowered, the stage re-homes, the tripped axis gets a slow test move, and the "
+            "stage goes back; a Multi-D or Scan run then retries that position once. Once per axis per session; a trip "
+            "that ran back against its command, or happened while homing, is never retried. Off: the stage stays "
+            "locked until you power-cycle or re-home it (ADR-0067)")
+        self.chk_stage_recovery.toggled.connect(lambda v: setattr(b, "stage_auto_recovery", v))
+        form.addRow("", self.chk_stage_recovery)
         self.btn_safe_heights = QPushButton("Objective safe heights…")
         self.btn_safe_heights.setToolTip("Per objective: the Z where it nears the vessel. Above it the focus readout "
                                          "turns amber and a held focus move stops. Go to, set here or clear each one")

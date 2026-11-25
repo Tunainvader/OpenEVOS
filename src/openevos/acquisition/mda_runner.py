@@ -17,6 +17,10 @@ States: ready → running ⇄ paused → completed | partial | failed.
   pauses; a missed target is skipped (``skip_missed``) or run once late (``run_late_once``). Never a catch-up burst.
 * **Positions.** A position with coordinates is reached with a verified stage move; its anchor is the global or
   per-position focus reference. No autofocus is run: the kit gates it until it is qualified.
+* **A stage drive trip** (ADR-0067). When a position move fails and the automatic stage recovery may run, the run
+  pauses in it (light off, objective down, re-home, test, back), then retries that position's move once. If the retry
+  fails with the stage unlocked the position is skipped and the run goes on; with the stage locked, or when no
+  recovery could run, the run ends "partial" with everything written so far, as before.
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ from datetime import UTC, datetime
 from enum import Enum
 
 from openevos.acquisition.capture import CaptureRejected
+from openevos.acquisition.controller import CommandError
 from openevos.acquisition.mda import (
     MDAPreflight,
     MultiDimPlan,
@@ -82,9 +87,14 @@ ProgressFn = Callable[[MDAProgress], None]
 ImageFn = Callable[[VolumeJob, str, int, int, object], None]  # job, slot, z index, images done in run, image
 
 
+class SkipPosition(RuntimeError):
+    """ADR-0067: after an automatic stage recovery the retried move failed with the stage unlocked: skip this
+    position and go on."""
+
+
 class MultiDimRunner:
     def __init__(self, session, writer: ExperimentWriter, *, control: RunControl | None = None,
-                 monotonic: Callable[[], float] = time.monotonic, grace_s: float = 1.0):
+                 monotonic: Callable[[], float] = time.monotonic, grace_s: float = 1.0, recovery=None):
         self.s = session
         self.cap = session.capture
         self.ctl = session.controller
@@ -92,8 +102,11 @@ class MultiDimRunner:
         self.control = control or RunControl()
         self.monotonic = monotonic
         self.grace_s = grace_s
+        #: ADR-0067: a StageAutoRecovery (acquisition/stage_recovery.py), or None: a failed move ends the run
+        self.recovery = recovery
         self.state = MDAState.READY
         self._paused_total = 0.0
+        self._confirmed_above_safe = False
 
     # ------------------------------------------------------------------ public controls (any thread)
     def pause(self) -> None:
@@ -117,6 +130,7 @@ class MultiDimRunner:
             raise CaptureRejected("moving between positions on the instrument needs the operator's confirmation first")
         t0 = self.monotonic()
         started = datetime.now(UTC)
+        self._confirmed_above_safe = confirmed_above_safe
         self.writer.begin(plan, summary, started_at=started)
         for what, q in (("positions_on_instrument", pre.confirm_positions), ("above_safe_height", pre.confirm)):
             if q:
@@ -142,6 +156,7 @@ class MultiDimRunner:
         current_t = -1
         tp_rec: dict = {}
         prev_start: float | None = None
+        skipped = 0  # positions skipped after an automatic stage recovery (ADR-0067)
         try:
             for job in jobs:
                 if job.t_index != current_t:  # a new timepoint: schedule it
@@ -161,7 +176,15 @@ class MultiDimRunner:
                 self._checkpoint(emit)
                 emit(t_index=job.t_index, p_index=job.p_index, position_label=job.position.label,
                      message=f"Timepoint {job.t_index + 1} of {plan.n_t}, {job.position.label}")
-                self._go_to(job)
+                try:
+                    self._go_to(job, emit)
+                except SkipPosition as skip:  # ADR-0067: recovered, but this position's retried move failed
+                    self.writer.record("position_skipped", position_id=job.position.position_id,
+                                       t_index=job.t_index, reason=str(skip))
+                    skipped += 1
+                    done += plan.n_c * summary.n_z  # handled (skipped), not written
+                    emit(message=str(skip))
+                    continue
                 zplan = job.zstack_plan(plan, confirmed_above_safe=confirmed_above_safe)
                 base = done
 
@@ -189,6 +212,9 @@ class MultiDimRunner:
                 self.writer.timepoint(tp_rec)
             message = f"{self.writer.manifest['images_written']} images in {plan.n_t} timepoint" \
                       f"{'s' if plan.n_t != 1 else ''} at {plan.n_p} position{'s' if plan.n_p != 1 else ''}"
+            if skipped:
+                status = MDAState.PARTIAL
+                message += f"; {skipped} position volume{'s' if skipped != 1 else ''} skipped after a stage recovery"
         except RunStopped as exc:
             status, message = MDAState.PARTIAL, f"stopped by the operator: {exc}"
         except StorageFull as exc:
@@ -224,7 +250,7 @@ class MultiDimRunner:
                 raise RuntimeError("focus read-back lost while paused: not resuming")
         self.control.checkpoint()
 
-    def _go_to(self, job: VolumeJob) -> None:
+    def _go_to(self, job: VolumeJob, emit=None) -> None:
         pos = job.position
         if not pos.moves:
             return
@@ -232,8 +258,45 @@ class MultiDimRunner:
         here = self.ctl.stage_xy()
         if here is not None and abs(here[0] - pos.x) < 0.5 and abs(here[1] - pos.y) < 0.5:
             return
-        self.ctl.run(self.ctl.move_stage(pos.x, pos.y))
+        try:
+            self.ctl.run(self.ctl.move_stage(pos.x, pos.y))
+        except CommandError as exc:
+            self._recover_and_retry(job, exc, emit)
+            return
         self.writer.record("move", position_id=pos.position_id, x=pos.x, y=pos.y, observed=self.ctl.stage_xy())
+
+    def _recover_and_retry(self, job: VolumeJob, exc: CommandError, emit) -> None:
+        """ADR-0067: the move to a position failed. With the automatic stage recovery allowed: pause in it, then retry
+        the move once; a failed retry skips the position if the stage is unlocked (SkipPosition), else ends the run.
+        Without it: the original error ends the run, as before."""
+        pos = job.position
+        rec = self.recovery
+        why = rec.blocker() if rec is not None else "no automatic stage recovery in this run"
+        if why:
+            raise exc
+        where = f"{pos.label}, timepoint {job.t_index + 1}"
+        self.writer.record("state", state="paused", reason="automatic stage recovery (ADR-0067)", error=str(exc))
+        if emit:
+            emit(message=f"Stage drive tripped on the way to {pos.label}: recovering automatically (light off, "
+                         "objective down, re-home, test); the run is paused")
+        out = rec.run(f"Multi-D {where}", confirmed_z=self._confirmed_above_safe)
+        self.writer.record("stage_recovery", position_id=pos.position_id, t_index=job.t_index,
+                           recovered=out.recovered, message=out.message, record=out.record)
+        if not out.recovered:
+            raise RuntimeError(f"{where}: the stage drive tripped and the automatic recovery did not succeed: "
+                               f"{out.message}") from exc
+        self.writer.record("state", state="running")
+        self.control.checkpoint()  # a Stop pressed during the recovery ends the run here
+        try:
+            self.ctl.run(self.ctl.move_stage(pos.x, pos.y))  # the one retry
+        except CommandError as again:
+            if rec.stage_locked():
+                raise RuntimeError(f"{where}: the move failed again after the automatic recovery and the stage is "
+                                   f"locked: {again}") from again
+            raise SkipPosition(f"{where}: the move failed again after the automatic recovery ({again}); position "
+                               "skipped") from again
+        self.writer.record("move", position_id=pos.position_id, x=pos.x, y=pos.y, observed=self.ctl.stage_xy(),
+                           after_recovery=True)
 
     def _wait_until(self, target: float, emit, msg: str, shift_on_pause: bool) -> float:
         """Sleep to `target` (monotonic), interruptibly; returns the (possibly shifted) target."""

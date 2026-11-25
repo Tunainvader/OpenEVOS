@@ -18,6 +18,8 @@ the controlled stop on X and Y, ahead of anything else. Focus and the turrets st
 The X/Y drift monitor (`stage_monitor`, ADR-0040) watches X and Y encoders at ~20 Hz and the drive's own flags; once
 it latches, every X/Y move is refused until X and Y are seen to re-home. Until the source of Y's drift is found, X
 and Y never move together: a target that changes both runs as two legs, X then Y (Y-axis plan v3 ground rule).
+A drive-fault latch may get one automatic recovery per axis per session (ADR-0067: `claim_auto_recovery`, the app side
+is `acquisition/stage_recovery.py`).
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, TypedDict
 
 from openevos.backends.technosoft import power_up_record, watchdog
@@ -283,6 +286,11 @@ class _Leg:
     now: dict = field(default_factory=dict)
     #: on a re-approach leg (ADR-0061): the miss it follows up (no second re-approach; named in a lock)
     reapproach_of: dict | None = None
+    #: ADR-0067: per moving axis, the encoder value closest to its target so far (a drive trip's class)
+    closest: dict[str, int] = field(default_factory=dict)
+    #: ADR-0067 (amends ADR-0058): an approach leg before homing; a landing within LANDING_RETRY_MAX_COUNTS is
+    #: accepted after the settle window, since the homing that follows sets the position afresh
+    staging: bool = False
 
 
 @dataclass
@@ -328,6 +336,27 @@ class _RehomeJob:
     parked: dict[str, int] = field(default_factory=dict)  # axes that homed short of 0 -> where they were parked
     returned_um: tuple[float, float] | None = None
     record: dict = field(default_factory=dict)
+
+
+@dataclass
+class _RecoveryJob(_RehomeJob):
+    """ADR-0067: the automatic recovery after a drive trip of `axis`. Claimed by the app side (which turns the light
+    off and lowers Z, recording its steps), then run on the service thread: the ADR-0058 re-home with the automatic
+    refusals, a slow test move of the tripped axis, the return. `stage` ends "recovered" or "escalated"."""
+    axis: str = ""
+    rule: str = ""
+    latch_utc: str = ""
+    trip_class: str = ""
+    path: Path | None = None  # its evidence file, rewritten when the app adds its last steps
+
+
+#: ADR-0067: the recovery's test move of the tripped axis: this many verified legs of this length, outwards from where
+#: it homed, at this speed preset (ADR-0032 frames); the drive's earlier speed is written back afterwards
+RECOVERY_TEST_LEGS = 3
+RECOVERY_TEST_LEG_MM = 1.0
+RECOVERY_TEST_PRESET = "slow"
+#: the latch an escalated (or failed after its clear) recovery leaves: never released or recovered automatically
+RECOVERY_FAILED_RULE = "auto_recovery_failed"
 
 
 def _set_extra_writes(link: DriveLink, frames: frozenset[bytes]) -> None:
@@ -588,9 +617,13 @@ class TelemetryService:
         self.emulated = False
         self._limits_attempted = False  # once per homing; reset when X or Y re-initialises
         self.limits_reloads: list[dict] = []
-        self._rehome: _RehomeJob | None = None  # the latest software re-home (ADR-0058)
+        self._rehome: _RehomeJob | None = None  # the latest software re-home (ADR-0058) or recovery (ADR-0067)
         self.rehome_start_s = REHOME_START_S
         self.rehome_timeout_s = REHOME_AXIS_TIMEOUT_S
+        #: ADR-0067: axis -> when and why it had its one automatic recovery attempt this session
+        self.auto_recovery_attempts: dict[str, str] = {}
+        #: ADR-0067: latches (by time) set before or during an automatic recovery that did not recover: hard locks
+        self._hard_locks: set[str] = set()
 
     @property
     def speed_mm_s(self) -> float:
@@ -661,6 +694,82 @@ class TelemetryService:
         self._rehome = job
         self.submit(job)
         return job
+
+    # ------------------------------------------------------------------ automatic recovery (ADR-0067)
+    def auto_recovery_blocker(self) -> str:
+        """'' when the current lock may get its automatic recovery now (ADR-0067); otherwise why not. The service
+        re-checks the drives on its own thread before it writes anything."""
+        if not self.motion:
+            return "motor control is not enabled in this session"
+        latch = self.monitor.latch
+        if latch is None:
+            return "the stage is not locked"
+        if latch.rule not in sm.DRIVE_FAULT_RULES:
+            return f"a {latch.rule} lock is not a drive trip"
+        if self.monitor.carried_over:
+            return "the lock was carried over from an earlier session"
+        if self._rehome is not None and not self._rehome.done.is_set():
+            return "a re-home or automatic recovery is running"
+        if latch.at_utc in self._hard_locks:
+            return "it tripped during, or was not cured by, an automatic recovery: a hard lock"
+        used = self.auto_recovery_attempts.get(latch.axis)
+        if used is not None:
+            return f"{latch.axis} already had its automatic attempt this session ({used}); a second trip is a hard lock"
+        kind, why = sm.classify_trip(latch)
+        if kind not in sm.RETRYABLE_TRIPS:
+            return f"this trip is never retried automatically ({kind}: {why})"
+        return ""
+
+    def claim_auto_recovery(self, who: str = "automatic recovery") -> _RecoveryJob | str:
+        """Take the tripped axis' one automatic attempt (ADR-0067), from any thread except the service's. Returns the
+        job, not yet started: the caller turns the light off and lowers Z (`recovery_step` records each), then
+        `run_auto_recovery`, or `abandon_auto_recovery` if it could not; or why no attempt is allowed."""
+        if threading.current_thread() is self._thread:
+            return "claim_auto_recovery called from the telemetry thread"
+        why = self.auto_recovery_blocker()
+        latch = self.monitor.latch
+        if why or latch is None:
+            return why or "the stage is not locked"
+        kind, detail = sm.classify_trip(latch)
+        stamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+        job = _RecoveryJob(threading.Event(), who, axis=latch.axis, rule=latch.rule, latch_utc=latch.at_utc,
+                           trip_class=kind)
+        job.stage = "claimed"
+        job.record = {"kind": "openevos.stage_auto_recovery", "version": 1, "adr": "ADR-0067", "utc": stamp,
+                      "who": who, "lock": {"rule": latch.rule, "axis": latch.axis, "message": latch.message,
+                                           "at_utc": latch.at_utc, "values": dict(latch.values),
+                                           "evidence": latch.evidence},
+                      "trip_class": kind, "trip_detail": detail, "steps": [],
+                      "frames": {ax: f.hex(" ") for ax, f in tp.XY_HOME_FRAMES.items()}}
+        self.auto_recovery_attempts[latch.axis] = f"{stamp[:19]}Z, {latch.rule}"
+        self._rehome = job  # no operator re-home meanwhile
+        self.recovery_step(job, "claimed", rule=latch.rule, axis=latch.axis, trip_class=kind, detail=detail)
+        return job
+
+    def recovery_step(self, job: _RecoveryJob, step: str, **details: Any) -> None:
+        """One step of the recovery, into its record and the monitor's log (the app's steps come from its thread,
+        before the job starts and after it ends; the service's from its own). Rewrites the evidence once written."""
+        entry = {"utc": datetime.now(timezone.utc).isoformat(timespec="milliseconds"), "step": step, **details}
+        job.record.setdefault("steps", []).append(entry)
+        extra = ", ".join(f"{k} {v}" for k, v in details.items())
+        self.monitor.note(f"automatic recovery: {step}" + (f" ({extra})" if extra else ""))
+        if job.path is not None:
+            self._write_recovery_record(job)
+
+    def run_auto_recovery(self, job: _RecoveryJob) -> None:
+        """Start a claimed recovery on the service thread; wait on `job.done`."""
+        self.submit(job)
+
+    def abandon_auto_recovery(self, job: _RecoveryJob, why: str) -> None:
+        """The app side could not prepare (light, objective): nothing goes to X or Y; the lock stays, the attempt is
+        used (a hard lock)."""
+        self._hard_locks.add(job.latch_utc)
+        job.ok, job.stage = False, "escalated"
+        job.message = (f"Automatic recovery stopped before X or Y was touched: {why}. The stage stays locked and "
+                       f"{job.axis} has had its automatic attempt this session: {RECOVERY}")
+        self.recovery_step(job, "escalated", why=why)
+        self._write_recovery_record(job)
+        job.done.set()
 
     def move_carriage(self, dest: str, timeout_s: float = CARRIAGE_WAIT_S) -> tuple[bool, str]:
         """Blocking, from any thread except the service's: F to 'slot1'..'slot4' or 'mirror' through the drive's own
@@ -976,6 +1085,9 @@ class TelemetryService:
                 job.ok, job.message = False, f"lock kept: {why}"
                 job.done.set()
                 continue
+            if isinstance(job, _RecoveryJob):
+                self.abandon_auto_recovery(job, f"not started: {why}")
+                continue
             if isinstance(job, _RehomeJob):
                 job.ok, job.message, job.stage = False, f"re-home not started: {why}", "not started"
                 job.done.set()
@@ -1005,6 +1117,24 @@ class TelemetryService:
                     job.ok, job.message = False, f"lock kept: X/Y reads failed ({exc})"
                     raise
                 finally:
+                    job.done.set()
+                continue
+            if isinstance(job, _RecoveryJob):
+                try:
+                    self._run_recovery(link, job)
+                except (_LinkError, TransportError, OSError, tp.ProtocolRefused) as exc:
+                    job.ok, job.stage = False, "escalated"
+                    job.message = (f"motor link error during the automatic recovery ({exc}); nothing more was sent. "
+                                   f"The stage stays locked unless both axes were seen to home: {RECOVERY}")
+                    raise
+                finally:
+                    _set_extra_writes(link, frozenset())
+                    if not job.ok:
+                        self._hard_locks.add(job.latch_utc)
+                    if self.monitor.latch is not None and not job.ok:
+                        self._hard_locks.add(self.monitor.latch.at_utc)  # any trip during the ladder is a hard lock
+                    self.recovery_step(job, job.stage, ok=job.ok, message=job.message)
+                    self._write_recovery_record(job)
                     job.done.set()
                 continue
             if isinstance(job, _RehomeJob):
@@ -1059,13 +1189,22 @@ class TelemetryService:
         """Remember X/Y, home X then Y with ESTATE 19 (Gate 20's frames), let the monitor clear the lock on fresh reads,
         reload the calibrated limits if needed (ADR-0056 path), then return X then Y with the ordinary move. Anything
         off: refuse (before sending) or stop sending, keep the lock, say why."""
-        job.stage = "checking X, Y and Z"
         job.record = {"utc": datetime.now(timezone.utc).isoformat(timespec="milliseconds"), "who": job.who,
                       "lock": self.monitor.refusal(), "frames": {ax: f.hex(" ") for ax, f in tp.XY_HOME_FRAMES.items()}}
+        if self._rehome_home(link, job):
+            self._rehome_return(link, job)
+
+    def _rehome_home(self, link: DriveLink, job: _RehomeJob, *, auto: bool = False) -> bool:
+        """The re-home up to the lock clearing (ADR-0058 steps 1-5): fresh reads and refusals, remember X/Y, the
+        approach, X then Y home requests, the monitor's clear rule (with a stand-off parked), a fresh poll. True: both
+        homed and the lock cleared (`job.homed`); False: `job.stage`/`job.message` say why, the lock stays. `auto`
+        (ADR-0067) also refuses an axis its drive switched off away from home: it could only be homed from
+        mid-travel."""
+        job.stage = "checking X, Y and Z"
         why = self.monitor.rehome_blocker()
         if why:
             job.stage, job.message = "refused", f"re-home not started: {why}"
-            return
+            return False
         pre = {ax: {n: link.read(tp.VARS[ax][n]) for n in REHOME_PRE_READS} for ax in tp.MOTION_AXES}
         z = {n: link.read(tp.VARS["Z"][n]) for n in ("ESTATEV", "APOS", "CPOS")}
         others = {ax: link.read(tp.VARS[ax]["ESTATEV"]) for ax in ("P", "F", "O")}
@@ -1088,47 +1227,55 @@ class TelemetryService:
             # corner, where an objective struck the stage on 2026-11-17 (Gate 19 run 1)
             problems.append(f"the turret is not on an objective (sensor {turret}): an objective may stand part-way up "
                             "and the stage homes to its 0, 0 corner; seat the turret on an objective first")
+        if auto:
+            for ax, v in pre.items():
+                if not v["SRL"] & sm.SRL_AXIS_ON and abs(v["APOS"]) > REHOME_APPROACH_FROM_COUNTS:
+                    # ADR-0067: a switched-off axis cannot make the approach leg, and its home request is the only
+                    # reviewed way to switch it on: that would home it from mid-travel into the stop
+                    problems.append(f"{ax} was switched off by its drive {um_from_counts(ax, v['APOS']) / 1000:.1f} mm "
+                                    "from home; it can be switched on only by homing it from there, into its stop, "
+                                    "which is never done automatically")
         if problems:
             job.stage, job.message = "refused", "re-home refused, nothing sent: " + "; ".join(problems)
-            return
+            return False
         job.remembered = {ax: pre[ax]["APOS"] for ax in tp.MOTION_AXES}
         self.monitor.note("software re-home: remembered X {X}, Y {Y} (counts)".format(**job.remembered))
         why = self._rehome_approach(link, job, pre)
         if why:
             job.stage, job.message = "failed", f"{why}. Nothing more was sent; the lock stays: {RECOVERY}"
-            return
+            return False
         for ax in tp.MOTION_AXES:
             if self._stop_request.is_set():
                 self._send_stop(link)
                 job.stage, job.message = "stopped", (f"re-home stopped before {ax} by a stop request; the lock stays: "
                                                      f"{RECOVERY}")
-                return
+                return False
             job.stage = f"homing {ax}"
             self.backends[0].report(activity=Activity.MOVING, reason=f"software re-home: homing {ax} (ESTATE 19)")
             ok, msg = self._rehome_axis(link, job, ax)
             if not ok:
                 job.stage, job.message = "failed", f"{msg}. Nothing more was sent; the lock stays: {RECOVERY}"
                 self.backends[0].report(reason=f"software re-home failed: {msg}")
-                return
+                return False
         job.stage = "verifying"
         reads = {ax: {n: link.read(tp.VARS[ax][n]) for n in sm.REHOME_READS} for ax in tp.MOTION_AXES}
         job.record["after"] = reads
         why, standoff = self.monitor.rehome_standoffs(reads)
         if why:
             job.stage, job.message = "failed", f"X and Y homed but the lock stays: {why}. {RECOVERY}"
-            return
+            return False
         if standoff:
             why = self._rehome_park(link, job, standoff)
             if why:
                 job.stage, job.message = "failed", (f"X and Y homed, but {why}. Nothing more was sent; the lock "
                                                     f"stays: {RECOVERY}")
-                return
+                return False
             reads = {ax: {n: link.read(tp.VARS[ax][n]) for n in sm.REHOME_READS} for ax in tp.MOTION_AXES}
             job.record["after_park"] = reads
         why = self.monitor.rehome_done(reads, job.who, parked=standoff)
         if why:
             job.stage, job.message = "failed", f"X and Y homed but the lock stays: {why}. {RECOVERY}"
-            return
+            return False
         job.homed = True
         self.backends[0].report(health=Health.NORMAL, reason="stage lock cleared by a software re-home (ADR-0058)")
         values = self.poll_once(link)  # fresh state; the ADR-0056 path reloads calibrated limits if needed
@@ -1137,7 +1284,7 @@ class TelemetryService:
                 self._on_latch(link)
             self._publish(values)
             self._maybe_reload_limits(link, values)
-        self._rehome_return(link, job)
+        return True
 
     def _rehome_approach(self, link: DriveLink, job: _RehomeJob, pre: dict) -> str:
         """Bring each powered axis close to home with an ordinary verified leg (X, then Y) before its home request, so
@@ -1159,7 +1306,7 @@ class TelemetryService:
             now = {a: {"CSPDCMD": link.read(tp.VARS[a]["CSPDCMD"])} for a in tp.MOTION_AXES}
             start = {a: link.read(tp.VARS[a]["APOS"]) for a in tp.MOTION_AXES}
             move = _MoveJob(f"rehome-approach-{ax}", ctx, {**start, ax: target}, (0.0, 0.0))
-            ok = self._move_leg(link, move, [ax], now, start, under_lock=True)
+            ok = self._move_leg(link, move, [ax], now, start, under_lock=True, staging=True)
             job.record.setdefault("approach", {})[ax] = {"from": apos, "to": target, "ok": ok and ctx.ok is not False,
                                                          "message": ctx.message}
             if not ok:
@@ -1281,6 +1428,123 @@ class TelemetryService:
                 json.dumps(job.record, indent=1, default=str), encoding="utf-8")
         except OSError:
             pass
+
+    # ------------------------------------------------------------------ automatic recovery (ADR-0067)
+    def _run_recovery(self, link: DriveLink, job: _RecoveryJob) -> None:
+        """The ladder's drive part (the light is off and Z at 0 already, done by the app): the same lock still holds,
+        the ADR-0058 re-home with the automatic refusals (`_rehome_home(auto=True)`), a slow test move of the tripped
+        axis, the return. Any failure escalates (`_recovery_escalate`); nothing is retried."""
+        latch = self.monitor.latch
+        if latch is None or latch.at_utc != job.latch_utc:
+            job.stage, job.message = "escalated", ("the lock changed before the automatic recovery started; nothing "
+                                                   f"was sent. {RECOVERY}")
+            return
+        self.recovery_step(job, "fresh drive reads and re-home of X then Y (ADR-0058)")
+        self.backends[0].report(activity=Activity.MOVING, reason=f"automatic recovery of {job.axis} (ADR-0067): "
+                                                                 "re-homing X then Y")
+        if not self._rehome_home(link, job, auto=True):
+            self._recovery_escalate(link, job, f"the re-home did not clear the lock ({job.stage}): {job.message}")
+            return
+        if self.monitor.latched:  # the fresh poll after homing found something
+            self._recovery_escalate(link, job, f"the stage locked again after homing: {self.monitor.refusal()}")
+            return
+        self.recovery_step(job, "re-homed; lock cleared", parked=dict(job.parked))
+        why = self._recovery_test(link, job)
+        if why:
+            self._recovery_escalate(link, job, f"the test move of {job.axis} failed: {why}")
+            return
+        self.recovery_step(job, f"test move of {job.axis} passed", legs=len(job.record["test"]["legs"]))
+        self._rehome_return(link, job)  # X then Y back to where the ladder found them; sets job.ok on success
+        if not job.ok:
+            why = (job.record.get("return") or {}).get("message") or job.message
+            self._recovery_escalate(link, job, f"the return move did not finish: {why}")
+            return
+        job.stage = "recovered"
+        back = job.returned_um or (0.0, 0.0)
+        job.message = (f"Stage recovered automatically after the {job.rule} of {job.axis}: re-homed X then Y, "
+                       f"{job.axis} passed {RECOVERY_TEST_LEGS} slow test legs, and the stage is back at X "
+                       f"{back[0] / 1000:.3f}, Y {back[1] / 1000:.3f} mm. {job.axis} has had its automatic attempt "
+                       "this session: another trip of it needs the operator")
+        self.backends[0].report(health=Health.NORMAL, reason=f"stage recovered automatically after the {job.rule} of "
+                                                             f"{job.axis} (ADR-0067)")
+
+    def _recovery_test(self, link: DriveLink, job: _RecoveryJob) -> str:
+        """The tripped axis alone, RECOVERY_TEST_LEGS verified legs of RECOVERY_TEST_LEG_MM outwards from where it
+        homed, at the slow preset, with every leg check; the drive's earlier speed written back after. '' = passed;
+        otherwise why it failed (a trip meanwhile has latched the monitor)."""
+        ax = job.axis
+        v = tp.VARS[ax]
+        pos, lo, hi, prev = (link.read(v[n]) for n in ("APOS", "LPOSMIN", "LPOSMAX", "CSPDCMD"))
+        step = round(RECOVERY_TEST_LEG_MM * tp.COUNTS_PER_MM[ax])
+        sign = 1 if pos + RECOVERY_TEST_LEGS * step <= hi else -1
+        targets = [pos + sign * i * step for i in range(1, RECOVERY_TEST_LEGS + 1)]
+        restore = next((p for p in tp.SPEED_PRESETS_MM_S if tp.speed_raw(p) == prev), None)
+        preset = RECOVERY_TEST_PRESET if restore is not None else None  # never leave a speed it cannot write back
+        legs: list[dict] = []
+        job.record["test"] = {"axis": ax, "from": pos, "targets": targets, "preset": preset or "unchanged",
+                              "speed_before": prev, "legs": legs}
+        if not all(lo <= t <= hi for t in targets):
+            return f"no room for the test legs inside {ax}'s limits {lo}..{hi} from {pos}"
+        job.stage = f"testing {ax}"
+        self.backends[0].report(activity=Activity.MOVING, reason=f"automatic recovery: test move of {ax} at the "
+                                                                 f"{preset or 'current'} speed")
+        ctx = _ReturnCtx()
+        now = {a: {"CSPDCMD": link.read(tp.VARS[a]["CSPDCMD"])} for a in tp.MOTION_AXES}
+        try:
+            for i, target in enumerate(targets):
+                if i:
+                    self._settle_between_legs(link, ctx)
+                if self._stop_request.is_set():
+                    self._send_stop(link)
+                    return "stopped by a stop request"
+                if self.monitor.latched:
+                    return self.monitor.refusal()
+                start = {a: link.read(tp.VARS[a]["APOS"]) for a in tp.MOTION_AXES}
+                drift = self.monitor.pre_move(ax, start[ax], link.read(v["CPOS"]))
+                if drift:
+                    return drift
+                move = _MoveJob(f"recovery-test-{ax}-{i + 1}", ctx, {**start, ax: target}, (0.0, 0.0))
+                ok = self._move_leg(link, move, [ax], now, start, preset=preset)
+                legs.append({"from": start[ax], "to": target, "landed": link.read(v["APOS"]), "ok": ok,
+                             "message": ctx.message})
+                if not ok:
+                    return ctx.message or "the leg did not finish"
+            return ""
+        finally:
+            if preset is not None and restore is not None and link.read(v["CSPDCMD"]) != prev:
+                link.write(tp.speed_write(ax, restore))
+                job.record["test"]["speed_restored"] = restore
+
+    def _recovery_escalate(self, link: DriveLink, job: _RecoveryJob, why: str) -> None:
+        """The ladder stops here: the stage stays locked (a lock cleared by the re-home is set again, so the stage is
+        never left unlocked after a failed recovery), and the message says what failed."""
+        job.ok, job.stage = False, "escalated"
+        if not self.monitor.latched:
+            self.monitor.trip(RECOVERY_FAILED_RULE, job.axis, f"automatic recovery of {job.axis} failed: {why}",
+                              {"trip_class": job.trip_class, "recovery_of": job.latch_utc})
+            self._on_latch(link)
+        job.message = (f"Automatic recovery of {job.axis} after its {job.rule} failed: {why}. The stage stays locked "
+                       f"and {job.axis} has had its automatic attempt this session: {RECOVERY}, or use Microscope › "
+                       "Re-home stage")
+        self.backends[0].report(reason=f"automatic recovery failed: {why}")
+
+    def _write_recovery_record(self, job: _RecoveryJob) -> None:
+        """`stage-recovery-<time>-<outcome>.json` in the stage evidence folder (real port only); rewritten in place as
+        the app adds its last steps."""
+        job.record.update(stage=job.stage, ok=job.ok, homed=job.homed, message=job.message,
+                          remembered=job.remembered, parked=job.parked, trip_class=job.trip_class,
+                          attempts=dict(self.auto_recovery_attempts))
+        folder = self.monitor.evidence_dir
+        if folder is None:
+            return
+        try:
+            if job.path is None:
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+                job.path = folder / f"stage-recovery-{stamp}-{job.stage.replace(' ', '_')}.json"
+            folder.mkdir(parents=True, exist_ok=True)
+            job.path.write_text(json.dumps(job.record, indent=1, default=str), encoding="utf-8")
+        except OSError as exc:
+            self.monitor.note(f"could not write the recovery record: {exc}")
 
     def _run_move(self, link: DriveLink, job: _MoveJob) -> None:
         ctx = job.ctx
@@ -1737,12 +2001,14 @@ class TelemetryService:
                 self._fast_sample(link)
 
     def _move_leg(self, link: DriveLink, job: _MoveJob, leg: list[str], now: dict, start: dict,
-                  under_lock: bool = False, reapproach_of: dict | None = None) -> bool:
+                  under_lock: bool = False, reapproach_of: dict | None = None, *, staging: bool = False,
+                  preset: str | None = None) -> bool:
         """Move the axes in `leg` (one, under SEQUENTIAL_XY) to their targets. True when done and verified; else the
         command has been failed or cancelled and False is returned. Steps (audit APP-16): speed, target, start,
         supervise to motion complete, the drive's flags, the still axis' encoder, the landing (with its settle window
-        and one re-approach, ADR-0061), the stop at rest."""
-        preset = self.speed_preset if self.speed_control else None
+        and one re-approach, ADR-0061), the stop at rest. `preset` forces a speed preset for this leg (the recovery's
+        slow test legs, ADR-0067); `staging` marks a re-home's approach leg."""
+        preset = preset or (self.speed_preset if self.speed_control else None)
         speed = self._leg_speeds(link, leg, now, preset)
         for ax in leg:
             link.write(tp.move_target(ax, job.targets[ax]))
@@ -1751,7 +2017,8 @@ class TelemetryService:
         label = preset if preset is not None else "fast"  # the power-up speed is the fast preset (ADR-0032)
         run = _Leg(job.ctx, leg, job.targets, start, speed,
                    {ax: watchdog.LegWatch(ax, start[ax], job.targets[ax], label, time.monotonic()) for ax in leg},
-                   under_lock=under_lock, now=now, reapproach_of=reapproach_of)
+                   under_lock=under_lock, now=now, reapproach_of=reapproach_of, staging=staging,
+                   closest={ax: start[ax] for ax in leg})
         try:
             for ax in leg:
                 link.write(tp.move_request(ax))
@@ -1807,6 +2074,7 @@ class TelemetryService:
             ctx.mark_cancelled(self._position_now(link))
             return False
         run.live["X"], run.live["Y"] = self._fast_sample(link)  # both encoders, every tick (~20 Hz)
+        self._track_closest(run)
         if not self._leg_guarded(link, run):
             return False
         for ax in run.axes:  # the watchdog's signals: encoder every tick, POSERR and IQ on alternate ticks
@@ -1870,11 +2138,25 @@ class TelemetryService:
                      f"controlled stop sent; stage locked: {RECOVERY}", error_code="wrong_direction")
         return True
 
+    @staticmethod
+    def _track_closest(run: _Leg) -> None:
+        """ADR-0067: each moving axis' encoder value closest to its target so far (from `run.live`)."""
+        for ax in run.axes:
+            best = run.closest.get(ax, run.start[ax])
+            if abs(run.targets[ax] - run.live[ax]) < abs(run.targets[ax] - best):
+                run.closest[ax] = run.live[ax]
+
+    @staticmethod
+    def _leg_context(run: _Leg, ax: str) -> dict[str, int]:
+        """What a drive-flag latch records about the leg (ADR-0067 `classify_trip`)."""
+        return {"start": run.start[ax], "target": run.targets[ax], "closest": run.closest.get(ax, run.start[ax]),
+                "apos": run.live.get(ax, run.start[ax])}
+
     def _leg_flags_ok(self, link: DriveLink, run: _Leg) -> bool:
         """The drive's own record of this move (plan §6.7), before the stop at rest. False: latched and failed."""
         for ax in run.axes:
-            if self.monitor.after_move(ax, link.read(tp.VARS[ax]["ISTATUSFLAGS"]),
-                                       link.read(tp.VARS[ax]["SRL"])) is not None:
+            if self.monitor.after_move(ax, link.read(tp.VARS[ax]["ISTATUSFLAGS"]), link.read(tp.VARS[ax]["SRL"]),
+                                       self._leg_context(run, ax)) is not None:
                 run.outcome = "drive flags"
                 self._on_latch(link)
                 self._send_stop(link)
@@ -1935,6 +2217,12 @@ class TelemetryService:
             if abs(settled - target) <= SETTLE_BAND_COUNTS:
                 self._landing_record(ax, miss, "settled", "landed inside the band during the settle window")
                 continue
+            if run.staging and abs(settled - target) <= LANDING_RETRY_MAX_COUNTS:
+                # 2026-11-25 14:55: Y's approach before homing settled -6, one count outside the band, and the
+                # Re-home failed; the homing that follows sets the position afresh (ADR-0067)
+                self._landing_record(ax, miss, "accepted (approach)", "an approach leg before homing; homing sets the "
+                                                                      "position afresh (ADR-0067)")
+                continue
             done = self._reapproach(link, run, ax, miss)
             if done is True:
                 continue
@@ -1976,6 +2264,7 @@ class TelemetryService:
                 return None
             self._sleep(max(0.0, FAST_PERIOD_S - (time.monotonic() - self._last_fast)))
             run.live["X"], run.live["Y"] = self._fast_sample(link)
+            self._track_closest(run)
             if not self._leg_guarded(link, run) or self._leg_wrong_way(link, run, ax):
                 return None
             apos = run.live[ax]
@@ -2003,7 +2292,7 @@ class TelemetryService:
         miss["iq"] = tp.signed16(st["IQ"])
         if st["MER"] & 0xFFFF:
             return f"the drive's error register reads MER 0x{st['MER'] & 0xFFFF:04X}, so not re-approached"
-        if self.monitor.after_move(ax, st["ISTATUSFLAGS"], st["SRL"]) is not None:
+        if self.monitor.after_move(ax, st["ISTATUSFLAGS"], st["SRL"], self._leg_context(run, ax)) is not None:
             run.outcome = "drive flags"
             self._on_latch(link)
             self._send_stop(link)

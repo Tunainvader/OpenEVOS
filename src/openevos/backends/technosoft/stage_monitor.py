@@ -21,7 +21,10 @@ What it does (no serial I/O and no Qt; the TelemetryService feeds it from its ow
   operator (`release`, ADR-0057, ADR-0061) after fresh reads pass. With an evidence folder the latch survives app
   restarts;
 * 10 s after a latch it writes the evidence: a JSON (latch, thresholds, status polls, commands, extra drive reads)
-  and a CSV in the `y_drift_correlate.py` format (t, x_apos, y_apos, x_cpos, y_cpos, x_cmd, y_cmd).
+  and a CSV in the `y_drift_correlate.py` format (t, x_apos, y_apos, x_cpos, y_cpos, x_cmd, y_cmd);
+* a drive-flag latch during a move records the leg (start, target, closest approach), and `classify_trip` says what
+  the axis was doing; the stage service may then recover a drive-fault latch automatically, once per axis per session
+  (ADR-0067; the service does it, this monitor only clears on its re-home rule).
 
 It only inhibits: stopping a running move is the service's job. It never homes, resets or switches anything.
 """
@@ -90,6 +93,15 @@ REHOME_STANDOFF_MAX_COUNTS = 60
 STANDOFF_WARNING = "rehome_standoff"
 #: extra reads taken the moment a latch is set, before anything else is sent (plan T0 read order)
 EXTRA_READS = ("ISTATUSFLAGS", "SRL", "MER", "IIQMAX", "IIQMIN", "IQ", "LCOMMERRPOS", "APOS", "CPOS")
+#: ADR-0067: the drive's own protection switched the axis off. Only these latches may get the automatic recovery
+DRIVE_FAULT_RULES = frozenset({"overcurrent_trip", "oscillation_axis_off", "power_stage_off"})
+#: ADR-0067 trip classes (`classify_trip`). A trip that ran back against its command (the commutation-reversal
+#: signature of ADR-0030, 2026-11-25 14:28) or happened while the drive homed is never retried automatically
+RETRYABLE_TRIPS = frozenset({"stuck_at_start", "stopped_short", "landed", "at_rest"})
+TRIP_STUCK_COUNTS = 100  # never further than this from its start: stuck at start (WRONG_WAY_COUNTS, 44 um)
+TRIP_RAN_BACK_COUNTS = 100  # further than this back from its closest approach: ran back against its command
+TRIP_LANDED_COUNTS = 5  # the drives' settle band: it reached its target before it tripped
+ISF_HOME_INTERRUPTED = 0x0008
 
 
 def _utc() -> str:
@@ -472,13 +484,17 @@ class StageMonitor:
         self.trip("command_mismatch", axis, msg, {"apos": apos, "cpos": cpos})
         return msg
 
-    def after_move(self, axis: str, istatusflags: int, srl: int) -> Latch | None:
-        """The drive's own record right after a move (plan §6.7: read ISTATUSFLAGS after every move)."""
+    def after_move(self, axis: str, istatusflags: int, srl: int, leg: dict | None = None) -> Latch | None:
+        """The drive's own record right after a move (plan §6.7: read ISTATUSFLAGS after every move). `leg` (start,
+        target, closest approach, last encoder value of the axis' leg) goes into the latch for `classify_trip`."""
         with self._lock:
             if self.latch is not None:
                 return None
             hit = self._flag_rule(axis, istatusflags, srl)
-            return self._trip(*hit) if hit else None
+            if not hit:
+                return None
+            rule, ax, msg, values = hit
+            return self._trip(rule, ax, msg, {**values, "leg": dict(leg)} if leg else dict(values))
 
     def trip(self, rule: str, axis: str, message: str, values: dict | None = None) -> Latch | None:
         with self._lock:
@@ -649,6 +665,36 @@ class StageMonitor:
             self.samples.popleft()
         while self.polls and self.polls[0][0] < t - RING_S:
             self.polls.popleft()
+
+
+def classify_trip(latch: Latch) -> tuple[str, str]:
+    """ADR-0067: what the tripped axis was doing, from its leg (start, target, closest approach) and the drive's own
+    APOS read at the latch. Returns (class, one-line reason). APOS against CPOS alone cannot tell an axis that never
+    left its start from one that ran back to it (2026-11-25 14:28: X travelled 16.3 mm, then ran 16 mm back against
+    its command); the closest approach during the leg can.
+    Classes: stuck_at_start, stopped_short, landed, at_rest (no leg: a status poll found it), ran_back, homing."""
+    v = latch.values or {}
+    drive = (v.get("drive") or {}).get(latch.axis) or {}
+    isf = drive.get("ISTATUSFLAGS", v.get("ISTATUSFLAGS"))
+    if isinstance(isf, int) and isf & ISF_HOME_INTERRUPTED:
+        return "homing", f"the drive's homing was interrupted (ISTATUSFLAGS 0x{isf:04X} bit 3)"
+    leg = v.get("leg")
+    if not isinstance(leg, dict) or not all(k in leg for k in ("start", "target", "closest")):
+        return "at_rest", "no move of this axis was running"
+    start, target, closest = int(leg["start"]), int(leg["target"]), int(leg["closest"])
+    apos = drive.get("APOS", leg.get("apos", closest))
+    apos = int(apos) if isinstance(apos, int) else closest
+    best = abs(target - closest)
+    back = abs(target - apos) - best
+    gone = abs(target - start) - best
+    if back > TRIP_RAN_BACK_COUNTS:
+        return "ran_back", (f"travelled {gone} counts to {closest}, then ran {back} counts back against its command "
+                            f"to {apos} (target {target})")
+    if best <= TRIP_LANDED_COUNTS:
+        return "landed", f"reached its target {target} (closest {closest}), then tripped"
+    if gone <= TRIP_STUCK_COUNTS:
+        return "stuck_at_start", f"never left its start {start} (closest {closest}, target {target})"
+    return "stopped_short", f"travelled {gone} counts from {start} and stopped at {apos}, {best} short of {target}"
 
 
 def append_landing(folder: Path | str, row: dict) -> Path:

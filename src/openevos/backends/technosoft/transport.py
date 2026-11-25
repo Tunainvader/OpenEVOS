@@ -256,6 +256,12 @@ class SimulatedDriveChain:
         self.land_off: dict[str, list[int]] = {}
         self.land_settle_reads: int | None = None
         self._landing: dict[str, list[int]] = {}  # axis -> [reads left, target]
+        #: tests (ADR-0067): the next move of an axis trips its drive. {"path": [fractions of the way start -> target,
+        #: one per read of its APOS], "flags": ISTATUSFLAGS bits set at the end (0x0001 over-current, 0x2000
+        #: oscillation), "off": the drive switches the axis off (default True)}. At the end the axis stops where the
+        #: path ends, motion complete, ESTATEV 0, its command where it came closest to the target
+        self.trip_on_move: dict[str, dict] = {}
+        self._tripping: dict[str, dict] = {}
         self.o_steps_per_read = 0  # 0: a turret change completes at once; n: one position per n reads (tests)
         self.o_stuck = False
         self._o_turn: list | None = None  # [reads left, start]
@@ -305,6 +311,14 @@ class SimulatedDriveChain:
             target = min(max(self.values.get((axis, "CPOSCMD"), 0), lo), hi)
             self.values[(axis, "CPOS")] = target
             self.values[(axis, "ESTATEV")] = 13
+            if axis in self.trip_on_move:  # tests (ADR-0067): this move trips the drive
+                spec = self.trip_on_move.pop(axis)
+                self._tripping[axis] = {"start": self.values[(axis, "APOS")], "target": target,
+                                        "path": list(spec.get("path") or [0.0]), "flags": spec.get("flags", 0x0001),
+                                        "off": spec.get("off", True), "closest": self.values[(axis, "APOS")]}
+                self.values[(axis, "SRH")] = 0x013F
+                self._pending = b"O"
+                return
             if axis in self.wrong_way:  # tests: the axis runs away from its target (Y, 2026-11-13)
                 start = self.values[(axis, "APOS")]
                 target = start - (target - start) - 500
@@ -328,6 +342,7 @@ class SimulatedDriveChain:
             self._advance()
             self._ramps.pop(axis, None)
             self._landing.pop(axis, None)
+            self._tripping.pop(axis, None)
             self.values[(axis, "CPOS")] = self.values[(axis, "APOS")]
             self.values[(axis, "ESTATEV")] = 0
             self.values[(axis, "SRH")] = 0x033F
@@ -421,6 +436,8 @@ class SimulatedDriveChain:
                 self._o_step()
                 self._home_step()
                 v = self._by_frame[bytes(data)]
+                if v.name == "APOS" and v.axis in self._tripping:
+                    self._trip_step(v.axis)
                 val = self.values[(v.axis, v.name)]
                 if v.bits == 16:
                     raw = (val & 0xFFFF).to_bytes(2, "big")
@@ -442,6 +459,23 @@ class SimulatedDriveChain:
                 continue
             del self._landing[axis]
             self.values[(axis, "APOS")] = target
+
+    def _trip_step(self, axis: str) -> None:
+        """Advance a scripted drive trip (tests, ADR-0067) by one APOS read; at the end of its path the drive's
+        protection stops the axis: flags set, power stage off, motion complete, command where it came closest."""
+        t, v = self._tripping[axis], self.values
+        start, target = t["start"], t["target"]
+        if t["path"]:
+            v[(axis, "APOS")] = start + round(t["path"].pop(0) * (target - start))
+            if abs(target - v[(axis, "APOS")]) < abs(target - t["closest"]):
+                t["closest"] = v[(axis, "APOS")]
+            return
+        del self._tripping[axis]
+        v[(axis, "ISTATUSFLAGS")] |= t["flags"]
+        if t["off"]:
+            v[(axis, "SRL")] &= ~0x8000
+        v[(axis, "CPOS")] = t["closest"]
+        v[(axis, "ESTATEV")], v[(axis, "SRH")] = 0, 0x033F
 
     def _home_step(self) -> None:
         """Advance X/Y homing one read: the axis travels towards its hard stop, then ends at 0 (or interrupted)."""

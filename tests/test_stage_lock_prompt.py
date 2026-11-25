@@ -32,7 +32,9 @@ def win():
     from openevos.ui.shell import MainWindow
 
     app = QApplication.instance() or QApplication([])
-    s = build_sim_session(ThreadClock(), fast=True, fps=30, settings=AppSettings(),
+    settings = AppSettings()
+    settings.basic.stage_auto_recovery = False  # these are the operator's own flows; ADR-0067's automatic one is apart
+    s = build_sim_session(ThreadClock(), fast=True, fps=30, settings=settings,
                           telemetry={"technosoft": {"port": "sim", "poll_interval_s": 0.02, "motion": True}})
     w = MainWindow(SessionModel(s))
     w.show()
