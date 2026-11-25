@@ -1081,13 +1081,14 @@ class FocusFloat(QFrame):
     own path (safe height asks, range refusals, held-move limits)."""
 
     closed = Signal()
+    SIZE = 0.85  # of the panel's natural size
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("zfloat")
         self.setAutoFillBackground(True)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(14, 10, 14, 14)
+        lay.setContentsMargins(12, 8, 12, 12)
         lay.setSpacing(8)
         head = QHBoxLayout()
         head.setSpacing(6)
@@ -1106,8 +1107,10 @@ class FocusFloat(QFrame):
         head.addWidget(self.btn_close)
         lay.addLayout(head)
         self.panel = ZFocusPanel()
-        self.panel.setMinimumHeight(round(380 * min(theme.TEXT_SCALE, 1.3)))
+        self.panel.setMinimumHeight(round(345 * min(theme.TEXT_SCALE, 1.3)))
         lay.addWidget(self.panel, 1)
+        self.panel.lbl_legend.hide()  # the smaller floating copy: the scale's marks are named in its tooltip
+        self.panel.tape.setToolTip(self.panel.lbl_legend.toolTip())
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setObjectName("sep")
@@ -1123,7 +1126,7 @@ class FocusFloat(QFrame):
         self.btn_top.setToolTip("The stack's top slice at the focus now (switches the plan to First and last)")
         self.btn_bottom.setToolTip("The stack's bottom slice at the focus now (switches the plan to First and last)")
         for b in (self.btn_top, self.btn_bottom):
-            b.setMinimumHeight(36)
+            b.setMinimumHeight(32)
             b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             row.addWidget(b, 1)
         lay.addLayout(row)
@@ -1701,8 +1704,9 @@ class ZStackPage(QWidget):
         th = tab.sizeHint().height()
         tab.setGeometry(self.width() - tab.W - 4, max(12, (self.height() - th) // 2), tab.W, th)
         f = self.focus_float
-        fw = max(f.sizeHint().width(), round(320 * min(theme.TEXT_SCALE, 1.4)))
-        fh = min(max(f.sizeHint().height(), f.minimumSizeHint().height()), self.height() - 24)
+        k = FocusFloat.SIZE  # operator 2026-11-25: 15 % smaller than the first cut
+        fw = max(f.minimumSizeHint().width(), round(max(f.sizeHint().width(), 320 * min(theme.TEXT_SCALE, 1.4)) * k))
+        fh = min(max(round(f.sizeHint().height() * k), f.minimumSizeHint().height()), self.height() - 24)
         f.setGeometry(self.width() - tab.W - 10 - fw, 12, fw, fh)
         tab.raise_()
 
