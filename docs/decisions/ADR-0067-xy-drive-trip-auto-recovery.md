@@ -2,6 +2,7 @@
 
 - **Status:** Proposed (2026-11-25). Implemented and tested on the drive emulator only. **Not run on the instrument.**
   Amended the same day by the operator's choice: a switched-off axis is homed from where it stands (see below).
+  Kept automatic on 2026-11-26 by the operator's choice, a deliberate departure from the Instrument Health kit (below).
 - **Asked for by:** the operator, 2026-11-25, after a Multi-D run (8 wells, 2 channels, 141 planes) ended "partial"
   after three wells and 846 images: "who locks the stage, hardware firmware or software why cant we make our scope
   smart, and on such fault detection it will automatically start repairing itself without user intervention".
@@ -137,6 +138,24 @@ is what the operator's Re-home does today (ADR-0058 amendment, unchanged here) a
 mid-travel. The known cost: from mid-travel the homing reaches about 5.6 mm/s before it hits the stop, against about
 2.6 mm/s from near home ("a screech", 2026-11-19), and Y passes its tight spot about 1.9 mm from home on the way. One
 attempt per axis per session still holds, so it happens at most once per axis before the operator is needed.
+
+### Operator's choice (2026-11-26): it stays automatic, against the Instrument Health kit
+The Instrument Health & Predictive Maintenance design kit v1.0 (2026-11-25, design only) lists "no automatic homing"
+as a non-goal. It puts re-homing, drive resets and diagnostic moves among the actions that always need an operator or
+technician. It also routes every hardware action through `CommandRouter` → `SafetyManager`. Asked whether the recovery
+should stop and ask before its re-home, the operator answered "Keep it automatic". So this ADR departs from the kit in
+two places, on purpose:
+- **No approval step.** Steps 4–6 (re-home, slow test legs, return) run without the operator.
+- **Command path.** Its X/Y moves run in the telemetry service's job queue, as the operator's ADR-0058 Re-home does,
+  not through the router.
+
+It keeps what the kit allows as automatic containment: X/Y moves refused while locked, the run stopped between
+positions with its data kept, the light off, the objective down, and every step recorded as evidence. It also keeps
+its own bounds: one attempt per axis per session, and a hard lock for `ran_back`, `homing` and any trip during the
+ladder.
+
+A Health feature built from the kit should show these recoveries as automatic actions, with their
+`stage-recovery-*.json` records as evidence. It should not report them as a breach of its rules.
 
 ## Not chosen
 - **Switching the axis back on in place** (the drive's `AXISON`), then the approach leg, then homing. No reviewed
