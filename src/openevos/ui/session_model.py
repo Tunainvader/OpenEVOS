@@ -42,6 +42,7 @@ class SessionModel(QObject):
         self.tasks = TaskRunner(self)
         self.log: deque[tuple[str, str, str]] = deque(maxlen=2000)
         self.active_commands: dict[str, str] = {}
+        self._motors_were_connected = False
         bus = session.core.bus
         self._subs = [
             bus.subscribe(DeviceStateChanged, self._on_device, dispatcher=self.dispatcher),
@@ -76,6 +77,17 @@ class SessionModel(QObject):
             self.add_log("info" if e.current.health.value == "normal" else "warn",
                          f"{e.device_id}: {e.current.connection.value}/{e.current.health.value}"
                          + (f" — {e.reason}" if e.reason else ""))
+        if (e.device_id == self.session.profile.stage_device and prev is not None
+                and prev.connection.value == "disconnected" and e.current.connection.value == "connected"
+                and self._motors_were_connected):
+            # operator 2026-11-25: the microscope switched off and on with the app running; Z went from 10 um to 0
+            # and nothing said why. The drives re-home at power-up; the cameras and the LED board reconnect by
+            # themselves (ADR-0066)
+            self.add_log("warn", "The microscope's motor controller is back after leaving USB (switched off and on?): "
+                                 "the stage and focus re-home by themselves, so focus again. The cameras and the light "
+                                 "reconnect on their own.")
+        if e.device_id == self.session.profile.stage_device and e.current.connection.value == "connected":
+            self._motors_were_connected = True
 
     def _on_command(self, e: CommandLifecycleEvent) -> None:
         self.command_event.emit(e)

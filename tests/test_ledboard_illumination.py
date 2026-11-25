@@ -371,6 +371,91 @@ def test_link_failure_fails_safe():
     dev.disconnect()
 
 
+# ------------------------------------------------------------------ the microscope switched off and on (ADR-0066)
+APP2 = r"\\?\hid#vid_0dad&pid_0051#fake-after-restart"
+
+
+def _until(cond, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while not cond() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return cond()
+
+
+def _power_cycle(board):
+    """The board comes back in its bootloader, lights off; the handle the app held answers nothing."""
+    board.apps, board.boot, board.bf, board.epi, board.dead = [], [BOOT], 0, 0, True
+
+
+def test_board_back_in_its_bootloader_is_started_and_reconnected_dark():
+    """Operator 2026-11-25, 15:03:45: switched the microscope off and on with the app running; every light command
+    then failed with "power-cycle the instrument now" until the app was restarted."""
+    board = FakeBoard()
+    dev, obs = make(board)
+    dev.presence_poll_s = 0.02
+    started = []
+
+    def restarter():  # the launch's led_autostart: Gate 1 query + StartApp
+        started.append(True)
+        board.apps, board.boot, board.dead = [APP2], [], False
+        return True, "LED board application started after 1.0 s"
+
+    dev.restarter = restarter
+    dev.connect()
+    assert run(dev, "trans", True).status == "ok" and board.bf == 1
+    _power_cycle(board)
+    assert _until(lambda: dev.reconnects == 1)
+    assert started == [True]
+    reasons = [o.get("reason") or "" for o in obs]
+    lost = next(o for o in obs if "restarted" in (o.get("reason") or ""))
+    assert lost["health"] is Health.FAULT and "power-cycle the instrument" not in lost["reason"]
+    assert any("reconnected" in r for r in reasons)
+    assert any(o.get("connection") is Connection.CONNECTED and o.get("health") is Health.NORMAL
+               for o in obs[obs.index(lost):])
+    assert not dev.enabled and board.bf == 0 and board.epi == 0  # reconnects dark; nothing switched on
+    assert run(dev, "trans", True, cid="c2").status == "ok" and board.bf == 1  # the light works again
+    dev.disconnect()
+
+
+def test_a_light_command_before_the_reconnect_says_what_happened():
+    board = FakeBoard()
+    dev, _ = make(board)
+    dev.presence_poll_s = 60.0  # the presence check has not run yet
+    dev.connect()
+    _power_cycle(board)
+    ctx = run(dev, "trans", True)
+    assert ctx.status == "failed" and "restarted" in ctx.message and "power-cycle the instrument" not in ctx.message
+    ctx = run(dev, "trans", True, cid="c2")  # still reconnecting
+    assert ctx.status == "failed" and "reconnecting" in ctx.message and "power-cycle the instrument" not in ctx.message
+    dev.disconnect()
+
+
+def test_board_gone_from_usb_says_switch_off_and_reconnects_when_back():
+    board = FakeBoard()
+    dev, obs = make(board)
+    dev.presence_poll_s = 0.02
+    dev.connect()
+    board.apps, board.dead = [], True  # not on USB at all (no restarter needed once it is back as the application)
+    assert _until(lambda: any("not on USB" in (o.get("reason") or "") for o in obs))
+    time.sleep(0.1)
+    assert dev.reconnects == 0
+    board.apps, board.dead = [APP2], False
+    assert _until(lambda: dev.reconnects == 1)
+    dev.disconnect()
+
+
+def test_without_a_restarter_a_bootloader_board_is_left_alone():
+    board = FakeBoard()
+    dev, _ = make(board)
+    dev.presence_poll_s = 0.02
+    dev.connect()
+    sent = len(board.sent)
+    _power_cycle(board)
+    time.sleep(0.2)
+    assert dev.reconnects == 0 and len(board.sent) <= sent + 2  # at most the failed OFF attempts, never a restart
+    dev.disconnect()
+
+
 # ------------------------------------------------------------------ app session
 @pytest.fixture
 def real_light_session():

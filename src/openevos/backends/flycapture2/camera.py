@@ -18,6 +18,7 @@ as uint16 with the 4 padding bits shifted out (0..4095), matching the profile's 
 
 from __future__ import annotations
 
+import contextlib
 import ctypes as C
 import itertools
 import threading
@@ -65,6 +66,13 @@ RESTART_PAUSE_S = 0.3
 #: restart path's own pause the frames were clean every time, so live view waits the same. Only live view waits: it
 #: runs on its own thread with nothing waiting for it; a snap right after live view stops arrives complete.
 LIVE_RESTART_SETTLE_S = RESTART_PAUSE_S
+#: the camera dropped off USB with the app running (operator 2026-11-25: the microscope was switched off and on at
+#: 15:03:45; "Isochronous transfer has not been started", one failed restart, then a fault that only an app restart
+#: cleared, although the camera was back on USB 8 s later). After the stream fails, the camera is looked for (bus
+#: enumeration on a temporary context, nothing opened) every RECONNECT_POLL_S for up to RECONNECT_WINDOW_S, then
+#: reopened exactly as at launch, and live view resumes if it was running. The same reopen is the Recover action.
+RECONNECT_POLL_S = 2.0
+RECONNECT_WINDOW_S = 300.0
 BIT_SHIFT = 4  # 12-bit data left-aligned in 16 bits
 STALE_FRAMES_AFTER_LIGHT = 1  # lag check 2026-11-16: first snap after LED ON was dark, after OFF part-lit
 
@@ -103,6 +111,10 @@ class FlyCapture2MonoCamera:
         self._stale = 0  # frames still to drop after a light change
         self.stale_dropped = 0
         self.restore_diffs: list[str] | None = None
+        self._closed = threading.Event()  # disconnect(): the reconnect watcher stops
+        self._reconnecting = False
+        self._resume_live = False  # live view was running when the stream failed: start it again once reopened
+        self.reconnects = 0
 
     # ------------------------------------------------------------------ DeviceBackend
     def attach(self, reporter: Reporter) -> None:
@@ -179,6 +191,7 @@ class FlyCapture2MonoCamera:
             self._stale = max(self._stale, STALE_FRAMES_AFTER_LIGHT)
 
     def disconnect(self) -> None:
+        self._closed.set()
         self.stop_stream("disconnect")
         self._restore_and_close()
         self._obs(connection=Connection.DISCONNECTED, activity=Activity.UNKNOWN,
@@ -244,8 +257,14 @@ class FlyCapture2MonoCamera:
         return None
 
     def recover(self) -> None:
+        """Service › Hardware › Recover: reopen the camera as at launch. Only reporting NORMAL kept a handle the
+        camera no longer answered on after it dropped off USB, and the next capture failed again."""
         self.stop_stream("recover")
-        self._obs(health=Health.NORMAL if self._connected else Health.FAULT, activity=Activity.IDLE, reason="recovered")
+        if self._reopen():
+            self._obs(activity=Activity.IDLE, reason="recovered: camera reopened")
+            return
+        self._obs(health=Health.FAULT, activity=Activity.IDLE, reason="recover: the camera is not on USB",
+                  fault="camera not found on USB: is the microscope on?")
 
     def capabilities(self) -> DeviceCapabilities:
         exp = self.exposure_range_ms or (0.01, 60.0)  # Gate 1/2 ranges until connect reads them
@@ -411,5 +430,60 @@ class FlyCapture2MonoCamera:
         return True
 
     def _fail_stream(self, message: str) -> None:
-        self._obs(health=Health.FAULT, reason="camera stream failed", fault=message)
+        s = self._stream
+        live = s is not None and s["acq"] is None
+        self._obs(health=Health.FAULT, reason="camera stream failed; reopening the camera when it is back on USB",
+                  fault=message)
         threading.Thread(target=self.stop_stream, args=(message,), daemon=True).start()
+        self._start_reconnect(resume_live=live)
+
+    # ------------------------------------------------------------------ reconnect (RECONNECT_WINDOW_S)
+    def _start_reconnect(self, *, resume_live: bool) -> None:
+        with self._lock:
+            self._resume_live = self._resume_live or resume_live
+            if self._reconnecting or self._closed.is_set():
+                return
+            self._reconnecting = True
+        threading.Thread(target=self._reconnect_loop, name=f"camera-reconnect:{self.device_id}", daemon=True).start()
+
+    def _reconnect_loop(self) -> None:
+        try:
+            deadline = time.monotonic() + RECONNECT_WINDOW_S
+            while not self._closed.wait(RECONNECT_POLL_S):
+                if self.streaming:  # the failed stream is still stopping
+                    continue
+                if self._reopen():
+                    return
+                if time.monotonic() > deadline:
+                    self._obs(reason=f"camera not back on USB within {RECONNECT_WINDOW_S:.0f} s: switch the microscope "
+                                     "on, then Recover (Service › Hardware) or restart OpenEVOS")
+                    return
+        finally:
+            with self._lock:
+                self._reconnecting = False
+
+    def _reopen(self) -> bool:
+        """Close the stale handle and open the camera again exactly as at launch (connect). Does nothing unless bus
+        enumeration finds the one camera. True = connected again; live view resumes if it was running."""
+        with self._io:
+            try:
+                if self._sdk.count_cameras() != 1:
+                    return False
+            except Exception:  # noqa: BLE001 - driver not ready yet: look again later
+                return False
+            first = self._snapshot
+            self._connected = False
+            self._safe_close()
+        self.connect()
+        if not self._connected:
+            return False
+        if first is not None:  # disconnect restores the state found at the first connect (RAM-only settings)
+            self._snapshot = first
+        self.reconnects += 1
+        self._obs(reason="camera reopened after it dropped off USB (microscope switched off and on?)")
+        with self._lock:
+            resume, self._resume_live = self._resume_live, False
+        if resume and not self.streaming:
+            with contextlib.suppress(RuntimeError):
+                self.start_stream()
+        return True

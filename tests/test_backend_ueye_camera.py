@@ -108,6 +108,46 @@ def test_timeouts_skipped_while_streaming():
     assert t.got.wait(5.0) and dev.skipped_grabs == 3
 
 
+class UnpluggedColour(FakeColour):
+    """Switched off and on with live view running (2026-11-25): off USB every grab fails and no camera is counted."""
+
+    gone = False
+
+    def is_FreezeVideo(self, h, wait):
+        return 1 if self.gone else super().is_FreezeVideo(h, wait)  # IS_INVALID_CAMERA_HANDLE
+
+    def is_GetNumberOfCameras(self, p):
+        rc = super().is_GetNumberOfCameras(p)
+        if self.gone:
+            o(p).value = 0
+        return rc
+
+
+def test_colour_camera_reopens_after_the_microscope_is_switched_off_and_on(monkeypatch):
+    monkeypatch.setattr(ucam, "RECONNECT_POLL_S", 0.02)
+    t = Transport()
+    fake = UnpluggedColour()
+    dev, _, reports = make(fake, t)
+    dev.connect()
+    dev.start_stream()
+    assert t.got.wait(5.0)
+    fake.gone = True
+    deadline = time.monotonic() + 5
+    while dev.streaming and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert not dev.streaming and any(r.get("health") is ucam.Health.FAULT for r in reports)
+    time.sleep(0.2)
+    assert dev.reconnects == 0
+    fake.gone = False
+    n = len(t.frames)
+    deadline = time.monotonic() + 5
+    while not (dev.reconnects == 1 and len(t.frames) > n) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert dev.reconnects == 1 and dev.streaming and len(t.frames) > n
+    assert any("reopened" in (r.get("reason") or "") for r in reports)
+    dev.disconnect()
+
+
 def test_exposure_command_and_guard():
     dev, fake, _ = make()
     dev.connect()

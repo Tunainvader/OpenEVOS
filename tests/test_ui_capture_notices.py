@@ -93,6 +93,31 @@ def test_quick_save_from_the_capture_page_says_it_saved(win, tmp_path):
     assert cap.notice.accessibleName() == f"Done: Saved Image_0001.tif in {tmp_path / 'caps'}"
 
 
+def test_the_motor_controller_coming_back_says_focus_again(win):
+    """Operator 2026-11-25: the microscope switched off and on with the app running; Z went from 10 um to 0 and the
+    camera and light failed, with nothing saying why (ADR-0066)."""
+    from types import SimpleNamespace
+
+    from openevos.core.models import Connection, Health
+
+    _app, w, s = win
+    cap = w.pages["capture"]
+    snap = s.core.store.get(s.profile.stage_device)
+
+    def event(prev, cur):
+        return SimpleNamespace(device_id=s.profile.stage_device, reason="telemetry",
+                               previous=snap.model_copy(update={"connection": prev}) if prev else None,
+                               current=snap.model_copy(update={"connection": cur, "health": Health.NORMAL}))
+
+    w.model._motors_were_connected = False
+    w.model._on_device(event(Connection.DISCONNECTED, Connection.CONNECTED))  # launch: the first connect says nothing
+    assert not cap.notice.isVisible() or "switched off and on" not in cap.notice.text
+    w.model._on_device(event(Connection.CONNECTED, Connection.DISCONNECTED))
+    w.model._on_device(event(Connection.DISCONNECTED, Connection.CONNECTED))
+    assert cap.notice.isVisible() and cap.notice.level == "warn"
+    assert "switched off and on" in cap.notice.text and "focus again" in cap.notice.text
+
+
 def test_stop_and_a_drive_fault_stay_until_they_are_cleared(win, monkeypatch):
     app, w, s = win
     cap = w.pages["capture"]

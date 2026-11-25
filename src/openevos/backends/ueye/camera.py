@@ -17,9 +17,11 @@ Camera envelope (inside what colour Gates 1 and 2 proved, ADR-0033/0038):
 
 from __future__ import annotations
 
+import contextlib
 import ctypes as C
 import itertools
 import threading
+import time
 from collections.abc import Callable
 
 import numpy as np
@@ -56,6 +58,11 @@ MAX_CONSECUTIVE_SKIPS = 5
 EXPOSURE_TOL_MS = 0.11  # one 0.10 ms step at 24 MHz
 STALE_FRAMES_AFTER_EXPOSURE = 1
 STALE_FRAMES_AFTER_LIGHT = 1  # LED-change check 2026-11-15: first snap after ON was 61 % lit
+#: the camera dropped off USB with the app running (microscope switched off and on, 2026-11-25): after a failed stream
+#: the camera is looked for (count only) every RECONNECT_POLL_S for up to RECONNECT_WINDOW_S and reopened as at launch;
+#: live view resumes if it was running. Same reopen as Recover. As the mono camera (flycapture2/camera.py).
+RECONNECT_POLL_S = 2.0
+RECONNECT_WINDOW_S = 300.0
 
 
 class UeyeAppSdk(ue.UeyeGateBackend):
@@ -147,6 +154,10 @@ class UeyeColourCamera:
         self._stop = threading.Event()
         self.frames_produced = 0
         self.skipped_grabs = 0
+        self._closed = threading.Event()  # disconnect(): the reconnect watcher stops
+        self._reconnecting = False
+        self._resume_live = False
+        self.reconnects = 0
 
     # ------------------------------------------------------------------ DeviceBackend
     def attach(self, reporter: Reporter) -> None:
@@ -211,6 +222,7 @@ class UeyeColourCamera:
             self._stale = max(self._stale, STALE_FRAMES_AFTER_LIGHT)
 
     def disconnect(self) -> None:
+        self._closed.set()
         self.stop_stream("disconnect")
         self._safe_close()
         self._obs(connection=Connection.DISCONNECTED, activity=Activity.UNKNOWN,
@@ -264,8 +276,14 @@ class UeyeColourCamera:
         return None
 
     def recover(self) -> None:
+        """Service › Hardware › Recover: reopen the camera as at launch (a stale handle after it dropped off USB
+        otherwise stayed 'recovered' and the next capture failed)."""
         self.stop_stream("recover")
-        self._obs(health=Health.NORMAL if self._connected else Health.FAULT, activity=Activity.IDLE, reason="recovered")
+        if self._reopen():
+            self._obs(activity=Activity.IDLE, reason="recovered: camera reopened")
+            return
+        self._obs(health=Health.FAULT, activity=Activity.IDLE, reason="recover: the camera is not on USB",
+                  fault="camera not found on USB: is the microscope on?")
 
     def capabilities(self) -> DeviceCapabilities:
         exp = self.exposure_range_ms or (0.1, 199.0)  # Gate 1/2 range until connect reads it
@@ -367,5 +385,56 @@ class UeyeColourCamera:
             threading.Thread(target=self.stop_stream, args=("requested frame count reached",), daemon=True).start()
 
     def _fail_stream(self, message: str) -> None:
-        self._obs(health=Health.FAULT, reason="camera stream failed", fault=message)
+        s = self._stream
+        live = s is not None and s["acq"] is None
+        self._obs(health=Health.FAULT, reason="camera stream failed; reopening the camera when it is back on USB",
+                  fault=message)
         threading.Thread(target=self.stop_stream, args=(message,), daemon=True).start()
+        self._start_reconnect(resume_live=live)
+
+    # ------------------------------------------------------------------ reconnect (RECONNECT_WINDOW_S)
+    def _start_reconnect(self, *, resume_live: bool) -> None:
+        with self._lock:
+            self._resume_live = self._resume_live or resume_live
+            if self._reconnecting or self._closed.is_set():
+                return
+            self._reconnecting = True
+        threading.Thread(target=self._reconnect_loop, name=f"camera-reconnect:{self.device_id}", daemon=True).start()
+
+    def _reconnect_loop(self) -> None:
+        try:
+            deadline = time.monotonic() + RECONNECT_WINDOW_S
+            while not self._closed.wait(RECONNECT_POLL_S):
+                if self.streaming:
+                    continue
+                if self._reopen():
+                    return
+                if time.monotonic() > deadline:
+                    self._obs(reason=f"camera not back on USB within {RECONNECT_WINDOW_S:.0f} s: switch the microscope "
+                                     "on, then Recover (Service › Hardware) or restart OpenEVOS")
+                    return
+        finally:
+            with self._lock:
+                self._reconnecting = False
+
+    def _reopen(self) -> bool:
+        """Close the stale handle and open the camera again as at launch (connect), only once the one camera is
+        counted on USB. True = connected again; live view resumes if it was running."""
+        with self._io:
+            try:
+                if self._sdk.count_cameras() != 1:
+                    return False
+            except Exception:  # noqa: BLE001 - driver not ready yet: look again later
+                return False
+            self._safe_close()
+        self.connect()
+        if not self._connected:
+            return False
+        self.reconnects += 1
+        self._obs(reason="camera reopened after it dropped off USB (microscope switched off and on?)")
+        with self._lock:
+            resume, self._resume_live = self._resume_live, False
+        if resume and not self.streaming:
+            with contextlib.suppress(RuntimeError):
+                self.start_stream()
+        return True

@@ -230,6 +230,64 @@ def test_persistent_retrieval_error_faults_after_the_restart_budget(monkeypatch)
     assert fault and "after 3 restart(s)" in fault[-1]["fault"]
 
 
+class UnpluggedChameleon(FakeChameleon):
+    """The instrument 2026-11-25 15:03:45: the microscope switched off and on with live view running. Off USB, the
+    camera answers 32 ("Isochronous transfer has not been started") and enumeration counts no camera."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.gone = False
+
+    def _fc2RetrieveBuffer(self, ctx, p):
+        return 32 if self.gone else super()._fc2RetrieveBuffer(ctx, p)
+
+    def _fc2StartCapture(self, ctx):
+        return 32 if self.gone else 0
+
+    def _fc2GetNumOfCameras(self, ctx, p):
+        o(p).value = 0 if self.gone else 1
+        return 0
+
+    def _fc2Connect(self, ctx, guid):
+        return 32 if self.gone else 0
+
+
+def test_camera_reopens_after_the_microscope_is_switched_off_and_on(monkeypatch):
+    monkeypatch.setattr(fcam, "RESTART_PAUSE_S", 0.0)
+    monkeypatch.setattr(fcam, "RECONNECT_POLL_S", 0.02)
+    t = Transport()
+    cam = UnpluggedChameleon()
+    dev, _, reports = make(cam, t)
+    dev.connect()
+    first = dev._snapshot
+    dev.start_stream()  # live view
+    assert t.got.wait(2.0)
+    cam.gone = True
+    assert _wait(lambda: any(r.get("health") is fcam.Health.FAULT for r in reports) and not dev.streaming)
+    time.sleep(0.2)
+    assert dev.reconnects == 0  # off USB: nothing opened, only counted
+    cam.gone = False
+    n = len(t.frames)
+    assert _wait(lambda: dev.reconnects == 1 and dev.streaming and len(t.frames) > n)  # live view is back
+    assert dev._snapshot is first  # exit still restores the state found at the first connect
+    assert any("reopened" in (r.get("reason") or "") for r in reports)
+    assert [r.get("health") for r in reports if r.get("health") is not None][-1] is fcam.Health.NORMAL
+    dev.disconnect()
+
+
+def test_recover_reopens_the_camera_or_says_it_is_not_on_usb():
+    cam = UnpluggedChameleon()
+    dev, _, reports = make(cam)
+    dev.connect()
+    cam.gone = True
+    dev.recover()
+    assert reports[-1]["health"] is fcam.Health.FAULT and "not on USB" in reports[-1]["reason"]
+    cam.gone = False
+    dev.recover()
+    assert dev.reconnects == 1 and dev._connected and "reopened" in reports[-1]["reason"]
+    dev.disconnect()
+
+
 def test_exposure_and_gain_commands_read_back():
     dev, cam, _ = make()
     dev.connect()

@@ -123,10 +123,12 @@ def _main(argv: list[str] | None, held: list) -> int:
     if guard is not None and guard.note:
         note("instance_guard", guard.note)
 
+    led_autostart_fn = None  # also starts the board again after a power cycle with the app running (ADR-0066)
     if (args.illumination != "sim" and not args.no_led_autostart and args.screenshot_dir is None
             and sys.platform == "win32"):
         from openevos.maintenance.led_autostart import autostart
 
+        led_autostart_fn = autostart
         try:
             r = autostart(evidence_dir=args.scans_dir)
             note("led_autostart", f"LED board: {r.message}"
@@ -191,6 +193,16 @@ def _main(argv: list[str] | None, held: list) -> int:
     session = build_sim_session(ThreadClock(), settings_path=settings_path, fps=args.fps, calibration_path=cal_path,
                                 telemetry=telemetry, audit_path=audit_path,
                                 cameras=cameras or None, illumination=illumination)
+    if led_autostart_fn is not None and session.profile.illumination_device:
+        # the microscope switched off and on with the app running: the LED board comes back in its bootloader; the
+        # backend starts it with the same reviewed steps as the launch above, then reconnects (ADR-0066)
+        rec = session.core.devices.get(session.profile.illumination_device)
+        if rec is not None and hasattr(rec.backend, "restarter"):
+            def _restart_led(start=led_autostart_fn, scans: Path = args.scans_dir) -> tuple[bool, str]:
+                r = start(evidence_dir=scans)
+                return r.light_available, r.message
+
+            rec.backend.restarter = _restart_led
     if args.theme:
         session.settings.basic.theme = args.theme
     built = theme.apply_settings(session.settings.basic, app)  # mode + colour theme + high contrast (ADR-0063)

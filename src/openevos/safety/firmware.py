@@ -222,6 +222,13 @@ REVIEWED_MAINTENANCE: dict[str, dict] = {
         "module": "maintenance/led_autostart.py",
         "review": "docs/decisions/ADR-0055-led-board-autostart-at-launch.md",
     },
+    "led_bootloader.start_app_after_power_cycle": {
+        # the same launch step, run by the LED backend when the board comes back in its bootloader after the microscope
+        # was switched off and on with the app running (ADR-0066, amends ADR-0055); at most three tries per loss
+        "vid_pid": (0x0DAD, 0x0057), "commands": frozenset({0x0A, 0x08}), "adr": "ADR-0066",
+        "module": "maintenance/led_autostart.py",
+        "review": "docs/decisions/ADR-0066-reconnect-after-instrument-power-cycle.md",
+    },
     "motor.o_turret_goto_position": {
         "vid_pid": (0x0403, 0x6001), "commands": frozenset({0x21CC, 0x21B1, 0x0002}),
         "adr": "ADR-0052", "module": "maintenance/motor_gate19_o_turret.py",

@@ -133,6 +133,16 @@ def epi_level_for(percent: float) -> int:
 IO_TIMEOUT_S = 0.5
 MAX_READS = 5
 POWER_CYCLE = "LED OFF could not be confirmed: power-cycle the instrument now"
+#: The microscope switched off and on with the app running (operator 2026-11-25, 15:03:45): the board came back in its
+#: bootloader, every light command then failed with POWER_CYCLE, and only an app restart (which starts the board,
+#: ADR-0055) brought the light back. While connected, the board's USB presence is checked every PRESENCE_POLL_S
+#: (SetupAPI enumeration only, nothing sent). Once it is gone, the stale handle is closed, and when it is back the
+#: `restarter` (the launch's reviewed version query + StartApp, ADR-0066) starts it and the backend connects as at
+#: launch: both lights OFF, confirmed by read-back.
+PRESENCE_POLL_S = 2.0
+RESTARTED = ("the LED board restarted (microscope switched off and on): a restarted board's lights are off; "
+             "reconnecting it")
+GONE = ("the LED board is not on USB: if the microscope is still on, switch it off; reconnecting when it is back")
 EVIDENCE = ("ADR-0031", "ADR-0034", "ADR-0048", "ADR-0049",
             "led-application-gate5-brightness-20261116T175235-complete",
             "led-application-gate4-light-20261113T173549-complete",
@@ -222,8 +232,18 @@ class RealLedIllumination:
         self.epi_max_on_s = epi_max_on_s
         #: F carriage mover (ADR-0051); None = the operator moves F with the maintenance gates
         self.carriage: CarriageMover | None = None
+        #: starts the board's application from its bootloader after a power cycle with the app running (the launch's
+        #: led_autostart, ADR-0066) -> (started, message); None = reconnect only once the application is back by itself
+        self.restarter: Callable[[], tuple[bool, str]] | None = None
+        self.presence_poll_s = PRESENCE_POLL_S
+        self.reconnects = 0
         self._hid = hid
         self._link: _Link | None = None
+        self._link_path: str | None = None
+        self._lost = False  # the board dropped off USB after it was connected: reconnect when it is back
+        self._restart_tries = 0
+        self._closed = threading.Event()
+        self._presence: threading.Thread | None = None
         self._report: Reporter | None = None
         self._seq = itertools.count(1)
         self._lock = threading.RLock()
@@ -350,13 +370,88 @@ class RealLedIllumination:
 
     def _fail_safe(self, why: str) -> str:
         unconfirmed = self._all_off()
-        if unconfirmed:
+        gone = self._board_state() if unconfirmed else None
+        if unconfirmed and gone is None and self._lost and self._link is None:
+            gone = "the LED board left USB earlier and is not reconnected yet; reconnecting it (try again shortly)"
+        if gone:  # not a board that ignores OFF: it restarted or left USB (power-cycling again would not help)
+            msg = f"{why}; {gone}"
+        elif unconfirmed:
             msg = f"{why}; {POWER_CYCLE} ({', '.join(unconfirmed)} may be on)"
         else:
             msg = f"{why}; both lights confirmed off"
         self._obs(health=Health.FAULT, activity=Activity.IDLE, attributes=self._state_attributes(), reason=msg,
                   fault=msg)
         return msg
+
+    # ------------------------------------------------------------------ USB presence (PRESENCE_POLL_S, ADR-0066)
+    def _board_state(self) -> str | None:
+        """None while the interface this backend opened is still on USB (or it never opened one). Otherwise the
+        stale handle is dropped and RESTARTED (the board is back, in its bootloader or re-enumerated) or GONE."""
+        if self._link_path is None:
+            return None
+        try:
+            apps, boot = present_application_interfaces(self._hid)
+        except Exception:  # noqa: BLE001 - enumeration failed: say nothing new
+            return None
+        if self._link_path in apps:
+            return None
+        self._drop_link()
+        return RESTARTED if (boot or apps) else GONE
+
+    def _drop_link(self) -> None:
+        self._cancel_epi_timer()
+        link, self._link, self._link_path = self._link, None, None
+        if link is not None:
+            with contextlib.suppress(Exception):
+                link.close()
+        self._lost = True
+        self._restart_tries = 0
+        self.enabled = self.bf_on = self.epi_on = False
+        self.bf_level = self.epi_level = None  # a restarted board is back on its power-on levels
+
+    def _presence_loop(self) -> None:
+        while not self._closed.wait(self.presence_poll_s):
+            if self._jobs.empty():  # never queue behind a light command
+                self._submit(self._presence_job)
+
+    def _presence_job(self) -> None:
+        if self._closed.is_set() or self._pending is not None:
+            return
+        if self._link is not None:
+            gone = self._board_state()
+            if gone is None:
+                return
+            p, self._pending = self._pending, None
+            if p is not None:
+                p[1].fail(f"LED board: {gone}", "DEVICE_ERROR")
+            self._obs(health=Health.FAULT, activity=Activity.IDLE, attributes=self._state_attributes(),
+                      reason=f"LED board: {gone}", fault=f"LED board: {gone}")
+        if self._lost:
+            self._try_reconnect()
+
+    def _try_reconnect(self) -> None:
+        """The board dropped off USB earlier: once it is back, start it if it is in its bootloader (restarter, at most
+        three tries per loss), then connect exactly as at launch."""
+        apps, boot = present_application_interfaces(self._hid)
+        if boot and not apps:
+            if self.restarter is None or self._restart_tries >= 3:
+                return
+            self._restart_tries += 1
+            try:
+                started, msg = self.restarter()
+            except Exception as exc:  # noqa: BLE001
+                started, msg = False, f"start failed: {exc}"
+            self._obs(reason=f"LED board back in its bootloader after a restart; {msg}")
+            if not started:
+                return
+            apps, boot = present_application_interfaces(self._hid)
+        if len(apps) != 1:
+            return
+        self._connect_job()
+        if self._link is not None:
+            self._lost = False
+            self.reconnects += 1
+            self._obs(reason="LED board reconnected after the microscope was switched off and on; lights off")
 
     def _cancel_epi_timer(self) -> None:
         t, self._epi_timer = self._epi_timer, None
@@ -378,49 +473,60 @@ class RealLedIllumination:
     # ------------------------------------------------------------------ lifecycle
     def connect(self) -> None:
         self._obs(connection=Connection.CONNECTING, activity=Activity.INITIALIZING, reason="looking for the LED board")
+        self._submit(self._connect_job, wait_s=5.0)
+        if self._link is not None and self._presence is None and not self._closed.is_set():
+            self._presence = threading.Thread(target=self._presence_loop, name=f"{self.device_id}-presence",
+                                              daemon=True)
+            self._presence.start()
 
-        def job() -> None:
-            try:
-                apps, boot = present_application_interfaces(self._hid)
-                alt = self._hid.find(VID, PID_APPLICATION_ALT)
-                if boot and not apps:
-                    self._obs(connection=Connection.DISCONNECTED, firmware_mode=FirmwareMode.BOOTLOADER,
-                              health=Health.FAULT, activity=Activity.IDLE,
-                              reason="LED board is in its bootloader (0DAD:0057): restart the app, which starts it "
-                                     "at launch (ADR-0055), or run python -m openevos.maintenance.led_autostart",
-                              fault="LED board in bootloader")
-                    return
-                if len(apps) != 1 or alt:
-                    self._obs(connection=Connection.DISCONNECTED, health=Health.FAULT, activity=Activity.IDLE,
-                              reason=f"expected exactly one LED board application 0DAD:0051, found {len(apps)}"
-                                     + (" (and 0DAD:0052)" if alt else ""), fault="LED board not found")
-                    return
-                desc = self._hid.describe(apps[0])
-                if (desc.vendor_id, desc.product_id, desc.input_report_len, desc.output_report_len) != \
-                        (VID, PID_APPLICATION, REPORT_LEN, REPORT_LEN):
-                    self._obs(connection=Connection.DISCONNECTED, health=Health.FAULT, activity=Activity.IDLE,
-                              reason="LED board interface does not match 0DAD:0051 with 65/65-byte reports",
-                              fault="LED board interface mismatch")
-                    return
-                self._link = _Link(self._hid, apps[0])
-                unconfirmed = self._all_off()  # start dark, whatever the board was doing
-                if unconfirmed:
-                    raise LedLinkError(f"initial OFF not confirmed for {', '.join(unconfirmed)}")
-                self.bf_level = self.bf_level_original = self._read_bf_level()
-                self.epi_level = self.epi_level_original = self._read_epi_level()
-                self._read_cube_in_path()
-                self._obs(connection=Connection.CONNECTED, firmware_mode=FirmwareMode.APPLICATION,
-                          health=Health.NORMAL, activity=Activity.IDLE, position=self.read_position(),
-                          attributes=self._state_attributes(),
-                          reason=f"LED board connected; lights off; cube in path: {self.cube_in_path}")
-            except Exception as exc:  # noqa: BLE001
-                msg = self._fail_safe(f"LED board connect failed: {exc}")
-                self._obs(connection=Connection.DISCONNECTED, reason=msg)
-
-        self._submit(job, wait_s=5.0)
+    def _connect_job(self) -> None:
+        """Worker thread: open the one application interface and start dark (launch, and a reconnect after the
+        board restarted). Original power-on levels are taken at the first connect only (restored at exit)."""
+        try:
+            apps, boot = present_application_interfaces(self._hid)
+            alt = self._hid.find(VID, PID_APPLICATION_ALT)
+            if boot and not apps:
+                self._obs(connection=Connection.DISCONNECTED, firmware_mode=FirmwareMode.BOOTLOADER,
+                          health=Health.FAULT, activity=Activity.IDLE,
+                          reason="LED board is in its bootloader (0DAD:0057): restart the app, which starts it "
+                                 "at launch (ADR-0055), or run python -m openevos.maintenance.led_autostart",
+                          fault="LED board in bootloader")
+                return
+            if len(apps) != 1 or alt:
+                self._obs(connection=Connection.DISCONNECTED, health=Health.FAULT, activity=Activity.IDLE,
+                          reason=f"expected exactly one LED board application 0DAD:0051, found {len(apps)}"
+                                 + (" (and 0DAD:0052)" if alt else ""), fault="LED board not found")
+                return
+            desc = self._hid.describe(apps[0])
+            if (desc.vendor_id, desc.product_id, desc.input_report_len, desc.output_report_len) != \
+                    (VID, PID_APPLICATION, REPORT_LEN, REPORT_LEN):
+                self._obs(connection=Connection.DISCONNECTED, health=Health.FAULT, activity=Activity.IDLE,
+                          reason="LED board interface does not match 0DAD:0051 with 65/65-byte reports",
+                          fault="LED board interface mismatch")
+                return
+            self._link, self._link_path = _Link(self._hid, apps[0]), apps[0]
+            unconfirmed = self._all_off()  # start dark, whatever the board was doing
+            if unconfirmed:
+                raise LedLinkError(f"initial OFF not confirmed for {', '.join(unconfirmed)}")
+            self.bf_level = self._read_bf_level()
+            self.epi_level = self._read_epi_level()
+            if self.bf_level_original is None:
+                self.bf_level_original = self.bf_level
+            if self.epi_level_original is None:
+                self.epi_level_original = self.epi_level
+            self._read_cube_in_path()
+            self._obs(connection=Connection.CONNECTED, firmware_mode=FirmwareMode.APPLICATION,
+                      health=Health.NORMAL, activity=Activity.IDLE, position=self.read_position(),
+                      attributes=self._state_attributes(),
+                      reason=f"LED board connected; lights off; cube in path: {self.cube_in_path}")
+        except Exception as exc:  # noqa: BLE001
+            msg = self._fail_safe(f"LED board connect failed: {exc}")
+            self._obs(connection=Connection.DISCONNECTED, reason=msg)
 
     def disconnect(self) -> None:
         """App exit / unregister: both lights OFF (confirmed) before the handle is closed."""
+        self._closed.set()  # the presence check stops
+
         def job() -> None:
             p, self._pending = self._pending, None
             if p is not None:
@@ -446,6 +552,9 @@ class RealLedIllumination:
     def recover(self) -> None:
         def job() -> None:
             if self._link is None:
+                if self._lost:  # Service › Hardware › Recover after the board restarted: reconnect now
+                    self._restart_tries = 0
+                    self._try_reconnect()
                 return
             unconfirmed = self._all_off()
             if unconfirmed:
