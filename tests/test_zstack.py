@@ -404,7 +404,7 @@ def test_page_shows_the_plan_before_running(app, window):
     n = len(pg.zview.positions)
     assert pg.fig["slices"].text().startswith(str(n)) and "MB" in pg.fig["size"].text()  # ZU-04; design U6
     assert pg.zview.positions and pg.zview.focus is not None  # ZU-03: the stack is drawn
-    assert pg.btn_optimal.isEnabled() and pg.btn_optimal.text().startswith("Nyquist ")  # design U2: shows its value
+    assert pg.btn_optimal.isEnabled() and pg.btn_optimal.text().startswith("Use Nyquist ")  # design U2: shows its value
     pg._use_optimal()
     assert pg.step.value() == pytest.approx(pg._optimal(), abs=0.01)
     assert window.session.settings.zstack.step_um == pytest.approx(pg.step.value())  # remembered
@@ -601,7 +601,7 @@ def test_page_keyboard_nudge_and_reading_order(app, window):  # U13, A4
     QTest.keyClick(pg.btn_optimal, Qt.Key.Key_Up, Qt.KeyboardModifier.ControlModifier)
     assert wait_for(app, lambda: ctl.focus_z() is not None and ctl.focus_z() > z0 + 0.5)
     chips = list(pg.chips.buttons.values())
-    assert pg.btn_optimal.nextInFocusChain() is chips[0]  # rebuilt chips stay in reading order
+    assert pg.btn_go_bottom.nextInFocusChain() is chips[0]  # rebuilt channel rows stay in reading order
 
 
 # ------------------------------------------------------------------ redesign kit review 2026-11-25 (patch v3)

@@ -151,13 +151,17 @@ class _Elided(QLabel):
 
 # ====================================================================================== stack picture
 class ZRangeView(QWidget):
-    """The stack drawn to scale (up = toward the sample; inverted stand, objective at the bottom, as ZEN draws it), with
-    Go to buttons on the top, centre and bottom planes. While a stack runs, the slices taken fill in."""
+    """The stack drawn to scale (redesign kit, Stack Plan ruler): a Z axis with the top, focus and bottom heights on the
+    left, the slices as stacked planes over the objective (inverted stand: up = toward the sample), the focus as a
+    diamond on the centre line, the vessel's focus nominal tagged, the safe height as an amber dashed line (the region
+    above hatched red when the stack crosses it) and the travel limits as solid lines. Go to buttons on the right move
+    the focus to the top, centre or bottom slice. While a stack runs, the slices taken fill in."""
 
     go = Signal(str)  # "top" | "centre" | "bottom"
 
-    X0, X1 = 26.0, 80.0  # stack column
-    TOP, BOTTOM_PAD = 26.0, 34.0
+    AXIS_W = 92.0  # left: Z labels
+    BTN_W = 96.0  # right: Go to buttons and tags
+    TOP_PAD, BOTTOM_PAD = 30.0, 58.0  # room for the safe-height label above, the objective below
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -168,6 +172,7 @@ class ZRangeView(QWidget):
         self.limits: tuple[float, float] | None = None
         self.taken: int | None = None  # running: slices taken in this pass (None = not running)
         self.nominal: float | None = None  # the vessel's focus nominal (drawn when in view)
+        self.objective: str = ""  # e.g. "10× / NA 0.25", written on the objective
         self.run_index: int | None = None
         self.btn_top = QPushButton("Top")
         self.btn_centre = QPushButton("Centre")
@@ -176,10 +181,11 @@ class ZRangeView(QWidget):
                                                  "bottom": self.btn_bottom}
         for which, b in self._buttons.items():
             b.setParent(self)
+            b.setObjectName("chip")
             b.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             b.clicked.connect(self._make_go(which))
-        self.setMinimumHeight(round(168 * min(theme.TEXT_SCALE, 1.3)))
-        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.setMinimumHeight(round(236 * min(theme.TEXT_SCALE, 1.3)))
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setAccessibleName("Z-stack diagram")
 
     def _make_go(self, which: str):
@@ -188,11 +194,7 @@ class ZRangeView(QWidget):
         return fire
 
     def sizeHint(self) -> QSize:
-        return QSize(self._needed_width(), self.minimumHeight())
-
-    def _needed_width(self) -> int:
-        w = max(b.sizeHint().width() for b in self._buttons.values())
-        return int(self.X1 + 12 + w + 8)
+        return QSize(340, self.minimumHeight())
 
     # ---------------------------------------------------------------- state
     def set_state(self, positions, focus, safe, limits, current=None) -> None:
@@ -229,20 +231,45 @@ class ZRangeView(QWidget):
         return "; ".join(bits)
 
     # ---------------------------------------------------------------- geometry
-    def _range(self) -> tuple[float, float] | None:
+    def _span(self) -> tuple[float, float] | None:
         vals = [v for v in (*self.positions, self.focus, self.current) if v is not None]
-        if self.safe:
-            vals.append(self.safe[1])
         if not vals:
             return None
-        lo, hi = min(vals), max(vals)
-        pad = max(2.0, (hi - lo) * 0.1)
+        return min(vals), max(vals)
+
+    def _safe_in_view(self) -> bool:
+        """The safe height is drawn to scale when it is near the stack; far above, it is named at the top instead (a
+        far line would squash the stack to a sliver)."""
+        sp = self._span()
+        if not self.safe or sp is None:
+            return False
+        lo, hi = sp
+        return self.safe[1] <= hi + max(10.0, (hi - lo) * 1.5)
+
+    def _range(self) -> tuple[float, float] | None:
+        sp = self._span()
+        if sp is None:
+            return None
+        lo, hi = sp
+        if self._safe_in_view() and self.safe:
+            hi = max(hi, self.safe[1])
+            lo = min(lo, self.safe[1])
+        pad = max(1.0, (hi - lo) * 0.08)
         return lo - pad, hi + pad
+
+    def _col(self) -> tuple[float, float]:
+        """The stack column (x0, x1)."""
+        return self.AXIS_W + 14, max(self.AXIS_W + 70, self.width() - getattr(self, "_btn_w", self.BTN_W) - 18)
 
     def _y(self, z: float, rng: tuple[float, float]) -> float:
         lo, hi = rng
         y_bot = self.height() - self.BOTTOM_PAD
-        return y_bot - (z - lo) / (hi - lo) * (y_bot - self.TOP)
+        return y_bot - (z - lo) / ((hi - lo) or 1.0) * (y_bot - self.TOP_PAD)
+
+    def _ends(self) -> dict[str, float]:
+        pos = self.positions
+        centre = pos[len(pos) // 2] if len(pos) % 2 else min(pos, key=lambda v: abs(v - (pos[0] + pos[-1]) / 2))
+        return {"top": pos[-1], "centre": centre, "bottom": pos[0]}
 
     def _place_buttons(self) -> None:
         rng = self._range()
@@ -250,31 +277,31 @@ class ZRangeView(QWidget):
         if rng is None or not pos:
             for b in self._buttons.values():
                 b.setVisible(False)
-            self.setFixedWidth(self._needed_width())
             return
-        centre = pos[len(pos) // 2] if len(pos) % 2 else min(pos, key=lambda v: abs(v - (pos[0] + pos[-1]) / 2))
-        want = {"top": pos[-1], "centre": centre, "bottom": pos[0]}
+        want = self._ends()
         show = {"top": len(pos) >= 2, "centre": len(pos) != 2, "bottom": len(pos) >= 2}
+        bw = int(self.BTN_W)
         for which, b in self._buttons.items():
-            z = want[which]
-            b.setText(f"{which.capitalize()} {z:,.1f}")
-            b.setAccessibleName(f"Go to the {which} slice, {z:,.1f} µm")
-            b.setToolTip(f"Move the focus to the {which} slice ({z:,.1f} µm) to check it on live view")
-            b.resize(b.sizeHint().width(), b.sizeHint().height())
-        self.setFixedWidth(self._needed_width())
-        x = int(self.X1 + 12)
+            b.setText(f"Go to {which}")
+            bw = max(bw, b.sizeHint().width())
+        self._btn_w = bw
+        x = int(self.width() - bw)
         prev_bottom = 2.0
         placed: list[tuple[QPushButton, float]] = []
         for which in ("top", "centre", "bottom"):
             b = self._buttons[which]
+            z = want[which]
+            b.setText(f"Go to {which}")
+            b.setAccessibleName(f"Go to the {which} slice, {z:,.1f} µm")
+            b.setToolTip(f"Move the focus to the {which} slice ({z:,.1f} µm) to check it on live view")
+            b.resize(bw, max(24, b.sizeHint().height() - 4))
             b.setVisible(show[which])
             if not show[which]:
                 continue
-            z = want[which]
             y = max(self._y(z, rng) - b.height() / 2, prev_bottom)
             placed.append((b, y))
-            prev_bottom = y + b.height() + 2
-        overflow = prev_bottom - (self.height() - 2)
+            prev_bottom = y + b.height() + 3
+        overflow = prev_bottom - (self.height() - self.BOTTOM_PAD + 10)
         for b, y in placed:
             b.move(x, int(y - max(0.0, overflow)))
 
@@ -283,123 +310,178 @@ class ZRangeView(QWidget):
         self._place_buttons()
 
     # ---------------------------------------------------------------- paint
+    @staticmethod
+    def _mono(base: QFont, delta: int = 0) -> QFont:
+        f = QFont(tk.FONT_MONO)
+        f.setPixelSize(theme.px("caption") + delta)
+        return f
+
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setFont(_caption_font(self.font()))
         w, h = float(self.width()), float(self.height())
-        theme.paint_surface(p, QRectF(0, 0, w, h), 10, inset=True, control=False)
-        top_row = QRectF(8, 4, w - 16, 16)
-        safe_text = f"{self.safe[0]} safe {self.safe[1]:,.1f} µm" if self.safe else ""
-        fm = p.fontMetrics()
-        toward = "toward sample ↑"
-        if safe_text and fm.horizontalAdvance(toward) + fm.horizontalAdvance(safe_text) + 12 > top_row.width():
-            toward = "↑"
-        p.setPen(QColor(theme.TEXT_2))
-        p.drawText(top_row, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, toward)
+        cap = _caption_font(self.font())
+        p.setFont(cap)
         rng = self._range()
         if rng is None:
+            p.setPen(QColor(theme.TEXT_2))
             p.drawText(QRectF(0, 0, w, h), Qt.AlignmentFlag.AlignCenter, "Focus unknown")
             return
-        x0, x1 = self.X0, self.X1
+        x0, x1 = self._col()
+        xc = (x0 + x1) / 2
         crossed = self.crossed()
-        # objective below (inverted stand)
-        obj = QPainterPath()
-        obj.moveTo(x0 + 4, h - 26)
-        obj.lineTo(x1 - 4, h - 26)
-        obj.lineTo(x1 - 12, h - 8)
-        obj.lineTo(x0 + 12, h - 8)
-        obj.closeSubpath()
-        p.setPen(QPen(QColor(theme.BORDER_STRONG), 1))
-        p.setBrush(QColor(theme.PANEL_2))
-        p.drawPath(obj)
-        lo_v, hi_v = rng
-        # travel limits (the focus drive's hard ends): a solid neutral stop, apart from the safe height (kit P0.2)
+        left = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        # axis title
+        p.setPen(QColor(theme.TEXT_2))
+        p.drawText(QRectF(0, 0, self.AXIS_W + 40, 18), left, "Z (µm) ↑")
+        # travel limits: solid neutral stops
         if self.limits:
-            for zl, word in ((self.limits[1], "travel limit"), (self.limits[0], "travel limit")):
-                if lo_v <= zl <= hi_v:
+            for zl in self.limits:
+                if rng[0] <= zl <= rng[1]:
                     yl = self._y(zl, rng)
                     p.setPen(QPen(QColor(theme.BORDER_STRONG), 2))
-                    p.drawLine(QPointF(1, yl), QPointF(w - 1, yl))
+                    p.drawLine(QPointF(self.AXIS_W, yl), QPointF(x1 + 8, yl))
                     p.setPen(QColor(theme.TEXT_2))
-                    up = zl == self.limits[1]
-                    p.drawText(QRectF(x1 + 8, yl - 16 if not up else yl + 1, w - x1 - 12, 15),
-                               Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, word)
-        # safe height: an amber dashed caution line; when the stack crosses it, the region above is hatched red
+                    p.drawText(QRectF(x0, yl - 16, x1 - x0, 15), left, "travel limit")
+        # safe height
         if self.safe:
-            ys = self._y(self.safe[1], rng)
-            if crossed:
-                band = QColor(theme.FAULT)
-                band.setAlpha(70)
-                p.fillRect(QRectF(1, 1, w - 2, max(0.0, ys - 1)), QBrush(band, Qt.BrushStyle.BDiagPattern))
-                p.setPen(QPen(QColor(theme.FAULT), 2))
-                p.drawLine(QPointF(1, ys), QPointF(w - 1, ys))
-                f = _caption_font(self.font())
-                f.setBold(True)
-                p.setFont(f)
-                p.drawText(top_row, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, safe_text)
-                p.setFont(_caption_font(self.font()))
-            else:
-                pen = QPen(QColor(theme.WARN), 1.5)
-                pen.setStyle(Qt.PenStyle.DashLine)
+            safe_text = f"{self.safe[0]} safe height {self.safe[1]:,.1f}"
+            if self._safe_in_view():
+                ys = self._y(self.safe[1], rng)
+                color = QColor(theme.FAULT if crossed else theme.WARN)
+                if crossed:
+                    band = QColor(theme.FAULT)
+                    band.setAlpha(70)
+                    p.fillRect(QRectF(self.AXIS_W, 0, x1 + 8 - self.AXIS_W, max(0.0, ys)),
+                               QBrush(band, Qt.BrushStyle.BDiagPattern))
+                pen = QPen(color, 2 if crossed else 1.5)
+                if not crossed:
+                    pen.setStyle(Qt.PenStyle.DashLine)
                 p.setPen(pen)
-                p.drawLine(QPointF(1, ys), QPointF(w - 1, ys))
-                p.setPen(QColor(theme.WARN))
-                p.drawText(top_row, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, safe_text)
-        # range band and slices
-        if self.positions:
-            a, b = self._y(self.positions[-1], rng), self._y(self.positions[0], rng)
-            p.fillRect(QRectF(x0, a, x1 - x0, max(2.0, b - a)), QColor(theme.ACCENT_DIM))
-            step = max(1, len(self.positions) // 60)
-            pending = QColor(theme.BORDER_STRONG)
-            for i, z in enumerate(self.positions):
-                if i % step and i != self.run_index:
-                    continue
-                if self.safe and z > self.safe[1] + 0.5:
-                    color, width = QColor(theme.FAULT), 1.0
-                elif self.taken is not None and i == self.run_index:
-                    color, width = QColor(theme.WARN), 3.0
-                elif self.taken is not None and i >= self.taken:
-                    color, width = pending, 1.0
-                else:
-                    color, width = QColor(theme.ACCENT), 1.0
-                p.setPen(QPen(color, width))
-                p.drawLine(QPointF(x0, self._y(z, rng)), QPointF(x1, self._y(z, rng)))
-        # focus nominal: an outlined diamond on the column's right edge
-        if self.nominal is not None and lo_v <= self.nominal <= hi_v:
+                p.drawLine(QPointF(self.AXIS_W, ys), QPointF(w - 2, ys))
+                p.setPen(color)
+                p.drawText(QRectF(x0, ys - 17, w - x0 - 2, 15), right, safe_text)
+            else:
+                p.setPen(QColor(theme.TEXT_2))
+                p.drawText(QRectF(x0, 0, w - x0 - 2, 18), right, f"{safe_text} ↑")
+        # the objective under the stack, with its name
+        oy = h - self.BOTTOM_PAD + 10
+        body = QRectF(xc - 52, oy + 12, 104, h - oy - 14)
+        cone = QPainterPath()
+        cone.moveTo(xc - 16, oy)
+        cone.lineTo(xc + 16, oy)
+        cone.lineTo(xc + 40, oy + 12)
+        cone.lineTo(xc - 40, oy + 12)
+        cone.closeSubpath()
+        p.setPen(QPen(QColor(theme.BORDER_STRONG), 1))
+        p.setBrush(QColor(theme.PANEL_2))
+        p.drawPath(cone)
+        p.drawRoundedRect(body, 4, 4)
+        if self.objective:
+            p.setPen(QColor(theme.TEXT_2))
+            p.setFont(self._mono(cap, -1))
+            p.drawText(body, Qt.AlignmentFlag.AlignCenter, self.objective)
+            p.setFont(cap)
+        if not self.positions:
+            return
+        # the centre line, from the top slice to the objective
+        ytop = self._y(self.positions[-1], rng)
+        p.setPen(QPen(QColor(theme.BORDER_STRONG), 1))
+        p.drawLine(QPointF(xc, ytop - 6), QPointF(xc, oy))
+        # slices as stacked planes (a slight perspective, as the kit's ruler), every slice up to 60
+        step = max(1, len(self.positions) // 60)
+        sk = 10.0
+        ph = max(1.5, min(5.0, (self._y(self.positions[0], rng) - ytop) / max(1, len(self.positions)) * 0.45))
+        pending = QColor(theme.BORDER_STRONG)
+        for i, z in enumerate(self.positions):
+            if i % step and i != self.run_index:
+                continue
+            y = self._y(z, rng)
+            if self.safe and z > self.safe[1] + 0.5:
+                edge = QColor(theme.FAULT)
+            elif self.taken is not None and i == self.run_index:
+                edge = QColor(theme.WARN)
+            elif self.taken is not None and i >= self.taken:
+                edge = pending
+            else:
+                edge = QColor(theme.ACCENT)
+            fill = QColor(edge)
+            fill.setAlpha(60 if edge is not pending else 25)
+            plate = QPainterPath()
+            plate.moveTo(x0 + sk, y - ph)
+            plate.lineTo(x1 + sk, y - ph)
+            plate.lineTo(x1 - sk, y + ph)
+            plate.lineTo(x0 - sk, y + ph)
+            plate.closeSubpath()
+            edge.setAlpha(170)
+            p.setPen(QPen(edge, 1))
+            p.setBrush(fill)
+            p.drawPath(plate)
+        # Z labels on the axis: top, the focus (or centre), bottom
+        ends = self._ends()
+        axis_x = self.AXIS_W - 4
+        p.setPen(QPen(QColor(theme.BORDER_STRONG), 1))
+        p.drawLine(QPointF(axis_x, self._y(ends["top"], rng)), QPointF(axis_x, self._y(ends["bottom"], rng)))
+        marks = [(ends["top"], "Top"), (ends["bottom"], "Bottom")]
+        mid = self.focus if self.focus is not None else ends["centre"]
+        marks.insert(1, (mid, "Focus" if self.focus is not None else "Centre"))
+        used: list[float] = []
+        for z, word in marks:
+            y = self._y(z, rng)
+            if any(abs(y - u) < 26 for u in used):
+                continue
+            used.append(y)
+            p.drawLine(QPointF(axis_x - 4, y), QPointF(axis_x + 4, y))
+            p.setPen(QColor(theme.TEXT))
+            p.setFont(self._mono(cap))
+            p.drawText(QRectF(0, y - 15, axis_x - 8, 15), right, f"{z:,.2f}")
+            p.setFont(cap)
+            p.setPen(QColor(theme.TEXT_2))
+            p.drawText(QRectF(0, y, axis_x - 8, 14), right, f"({word})")
+            p.setPen(QPen(QColor(theme.BORDER_STRONG), 1))
+        # focus nominal: a tag at its height
+        if self.nominal is not None and rng[0] <= self.nominal <= rng[1]:
             yn = self._y(self.nominal, rng)
             d = QPainterPath()
-            d.moveTo(x1, yn - 5)
-            d.lineTo(x1 + 5, yn)
-            d.lineTo(x1, yn + 5)
-            d.lineTo(x1 - 5, yn)
+            d.moveTo(x1 + 4, yn - 4)
+            d.lineTo(x1 + 8, yn)
+            d.lineTo(x1 + 4, yn + 4)
+            d.lineTo(x1, yn)
             d.closeSubpath()
-            p.setPen(QPen(QColor(theme.VIOLET), 1.6))
+            p.setPen(QPen(QColor(theme.VIOLET), 1.4))
             p.setBrush(QColor(theme.INPUT))
             p.drawPath(d)
-        # the focus (or, while running, where the drive is now)
+        # the focus (or, while running, where the drive is now): a line across with a diamond on the centre line
         marker = self.focus
         mcolor = QColor(theme.TEXT)
-        if self.taken is not None and self.run_index is not None and self.positions:
+        if self.taken is not None and self.run_index is not None:
             marker, mcolor = self.positions[min(self.run_index, len(self.positions) - 1)], QColor(theme.WARN)
-        if marker is not None:
+        if marker is not None and rng[0] <= marker <= rng[1]:
             yf = self._y(marker, rng)
             p.setPen(QPen(mcolor, 2))
-            p.drawLine(QPointF(x0 - 12, yf), QPointF(x1 + 2, yf))
-            tri = QPainterPath()
-            tri.moveTo(x0 - 20, yf - 5)
-            tri.lineTo(x0 - 13, yf)
-            tri.lineTo(x0 - 20, yf + 5)
-            tri.closeSubpath()
-            p.fillPath(tri, mcolor)
-        if self.current is not None and self.taken is None:
-            p.setPen(QPen(QColor(theme.WARN), 2))
-            p.drawLine(QPointF(x0, self._y(self.current, rng)), QPointF(x1, self._y(self.current, rng)))
+            p.drawLine(QPointF(x0 - sk, yf), QPointF(x1 + sk, yf))
+            dm = QPainterPath()
+            dm.moveTo(xc, yf - 6)
+            dm.lineTo(xc + 6, yf)
+            dm.lineTo(xc, yf + 6)
+            dm.lineTo(xc - 6, yf)
+            dm.closeSubpath()
+            p.setBrush(QColor(theme.PANEL))
+            p.drawPath(dm)
+        if self.current is not None and self.taken is None and rng[0] <= self.current <= rng[1]:
+            yc = self._y(self.current, rng)
+            pen = QPen(QColor(theme.WARN), 1.5)
+            pen.setStyle(Qt.PenStyle.DashLine)
+            p.setPen(pen)
+            p.drawLine(QPointF(x0 - sk, yc), QPointF(x1 + sk, yc))
 
 
 # ====================================================================================== focus curve
 class FocusCurve(QWidget):
-    """Sharpness of every slice, with its Z scale and the best slice; click to show a slice."""
+    """Sharpness of every slice against Z (redesign kit's focus curve): a titled card with a legend, a sharpness axis, Z
+    ticks with grid lines, the curve with its area and points, the best focus as a filled dot, the focus nominal as a
+    diamond, the sharp range (above half height) shaded, and the slice shown as a dashed line. Click to show a slice."""
 
     picked = Signal(int)
 
@@ -410,10 +492,12 @@ class FocusCurve(QWidget):
         self.current = 0
         self.live = False
         self.sharp: tuple[float, float] | None = None
-        self.setMinimumHeight(round(84 * min(theme.TEXT_SCALE, 1.4)))
-        self.setMaximumHeight(round(110 * min(theme.TEXT_SCALE, 1.4)))
+        self.nominal: float | None = None
+        self.setMinimumHeight(round(120 * min(theme.TEXT_SCALE, 1.4)))
+        self.setMaximumHeight(round(200 * min(theme.TEXT_SCALE, 1.4)))
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.setAccessibleName("Focus curve")
-        self.setToolTip("Sharpness of each slice (variance of the Laplacian). Click to show that slice.")
+        self.setToolTip("Sharpness of each slice (variance of the Laplacian, relative). Click to show that slice.")
 
     def set_values(self, values, current: int, z=None, *, live: bool = False) -> None:
         self.values, self.current, self.live = np.asarray(values, float), current, live
@@ -429,7 +513,7 @@ class FocusCurve(QWidget):
 
     def _plot(self) -> QRectF:
         fh = theme.px("caption") + 6
-        return QRectF(self.rect()).adjusted(10, fh + 2, -10, -(fh + 2))
+        return QRectF(self.rect()).adjusted(44, 2 * fh + 10, -16, -(2 * fh + 4))
 
     def sharp_um(self) -> tuple[float, float] | None:
         """The sharp range (half height) in µm, when the curve crosses half height on both sides."""
@@ -449,8 +533,11 @@ class FocusCurve(QWidget):
             bits.append("the peak's half height is not reached on both sides")
         return ", ".join(bits)
 
+    def _n(self) -> int:
+        return max(len(self.values), len(self.z)) if self.live else len(self.values)
+
     def _x(self, i: float, r: QRectF) -> float:
-        n = max(len(self.values), len(self.z)) if self.live else len(self.values)
+        n = self._n()
         return r.left() + (r.width() * i / (n - 1) if n > 1 else r.width() / 2)
 
     def mousePressEvent(self, e):
@@ -463,113 +550,268 @@ class FocusCurve(QWidget):
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setFont(_caption_font(self.font()))
-        theme.paint_surface(p, QRectF(self.rect()), 8, inset=True, control=False)
-        r = self._plot()
+        cap = _caption_font(self.font())
         fh = theme.px("caption") + 6
-        p.setPen(QColor(theme.TEXT_2))
-        if not len(self.values):
-            p.drawText(QRectF(self.rect()), Qt.AlignmentFlag.AlignCenter, "The focus curve appears after a stack")
-            return
-        v = self.values
-        title = ("Sharpness, fills in as slices arrive" if self.live else
-                 f"Sharpness by slice: {self.summary()}. Click to show a slice.")
+        theme.paint_surface(p, QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 10, inset=True, control=False)
         left = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        p.drawText(QRectF(r.left(), 2, r.width(), fh), left, title)
-        ends: list[QRectF] = []
-        if self.z:
+        right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        # title and legend
+        tf = QFont(self.font())
+        tf.setPixelSize(theme.px("body") + 1)
+        tf.setBold(True)
+        p.setFont(tf)
+        p.setPen(QColor(theme.TEXT))
+        p.drawText(QRectF(14, 6, 200, fh + 4), left, "Focus curve")
+        p.setFont(cap)
+        lx = self.width() - 14.0
+        for text, kind in (("Nominal plane", "diamond"), ("Best focus", "dot")):
+            tw = p.fontMetrics().horizontalAdvance(text)
+            p.setPen(QColor(theme.TEXT_2))
+            p.drawText(QRectF(lx - tw, 6, tw, fh + 4), right, text)
+            cx, cy = lx - tw - 12, 6 + (fh + 4) / 2
+            if kind == "dot":
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(theme.ACCENT))
+                p.drawEllipse(QPointF(cx, cy), 4.5, 4.5)
+            else:
+                self._diamond(p, cx, cy, 5)
+            lx = cx - 16
+        sub = ("Sharpness, filling in as slices arrive" if self.live else self.summary())
+        p.setPen(QColor(theme.TEXT_2))
+        p.drawText(QRectF(14, 6 + fh, self.width() - 28, fh), left, _cap(sub))
+        r = self._plot()
+        if not len(self.values):
+            p.drawText(QRectF(self.rect()).adjusted(0, fh, 0, 0), Qt.AlignmentFlag.AlignCenter,
+                       "The focus curve appears after a stack")
+            return
+        # axes, Z ticks and grid
+        grid = QColor(theme.BORDER)
+        p.setPen(QPen(grid, 1))
+        for k in range(1, 4):
+            y = r.bottom() - r.height() * k / 4
+            p.drawLine(QPointF(r.left(), y), QPointF(r.right(), y))
+        p.setPen(QPen(QColor(theme.BORDER_STRONG), 1))
+        p.drawLine(QPointF(r.left(), r.top()), QPointF(r.left(), r.bottom()))
+        p.drawLine(QPointF(r.left(), r.bottom()), QPointF(r.right(), r.bottom()))
+        p.save()
+        if p.fontMetrics().horizontalAdvance("Sharpness") + 8 > r.height():
+            p.restore()
+            p.save()
+            p.setOpacity(0.0)
+        p.translate(14, r.center().y())
+        p.rotate(-90)
+        p.setPen(QColor(theme.TEXT_2))
+        p.drawText(QRectF(-r.height() / 2, -2, r.height(), fh), Qt.AlignmentFlag.AlignCenter, "Sharpness")
+        p.restore()
+        n = self._n()
+        if self.z and n > 1:
             mono = QFont(tk.FONT_MONO)
             mono.setPixelSize(theme.px("caption") - 1)
             p.setFont(mono)
-            lo_t, hi_t = f"{self.z[0]:,.1f} µm", f"{self.z[-1]:,.1f} µm"
             mfm = p.fontMetrics()
-            ends = [QRectF(r.left(), r.bottom() + 2, mfm.horizontalAdvance(lo_t) + 4, fh),
-                    QRectF(r.right() - mfm.horizontalAdvance(hi_t) - 4, r.bottom() + 2, mfm.horizontalAdvance(hi_t) + 4,
-                           fh)]
-            p.drawText(ends[0], Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, lo_t)
-            p.drawText(ends[1], Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, hi_t)
-            p.setFont(_caption_font(self.font()))
-        span = float(v.max() - v.min()) or 1.0
+            lab_w = mfm.horizontalAdvance(f"{self.z[-1]:,.2f}") + 28
+            ticks = max(2, min(n, int(r.width() // lab_w) + 1))
+            stride = max(1, math.ceil((n - 1) / (ticks - 1)))
+            idxs = list(range(0, n, stride))
+            for i in idxs:
+                if i >= len(self.z):
+                    continue
+                x = self._x(i, r)
+                p.setPen(QPen(grid, 1))
+                p.drawLine(QPointF(x, r.top()), QPointF(x, r.bottom()))
+                p.setPen(QPen(QColor(theme.BORDER_STRONG), 1))
+                p.drawLine(QPointF(x, r.bottom()), QPointF(x, r.bottom() + 4))
+                p.setPen(QColor(theme.TEXT_2))
+                t = f"{self.z[i]:,.2f}"
+                tw = mfm.horizontalAdvance(t)
+                p.drawText(QRectF(min(max(x - tw / 2, r.left() - 20), r.right() - tw + 10), r.bottom() + 5, tw, fh),
+                           Qt.AlignmentFlag.AlignCenter, t)
+            p.setFont(cap)
+            p.drawText(QRectF(r.left(), r.bottom() + fh + 2, r.width(), fh), Qt.AlignmentFlag.AlignCenter,
+                       "Z position (µm)")
+        v = self.values
+        lo = float(v.min())
+        span = float(v.max() - lo) or 1.0
+
+        def pt(i: int) -> QPointF:
+            return QPointF(self._x(i, r), r.bottom() - 4 - (v[i] - lo) / span * (r.height() - 10))
+
         if self.sharp is not None:  # where it stays above half height: a rough depth in focus
             band = QColor(theme.OK)
-            band.setAlpha(40)
+            band.setAlpha(36)
             xa, xb2 = self._x(self.sharp[0], r), self._x(self.sharp[1], r)
             p.fillRect(QRectF(xa, r.top(), max(1.0, xb2 - xa), r.height()), band)
         path = QPainterPath()
-        for i, val in enumerate(v):
-            pt = QPointF(self._x(i, r), r.bottom() - (val - v.min()) / span * r.height())
+        for i in range(len(v)):
             if i == 0:
-                path.moveTo(pt)
+                path.moveTo(pt(i))
             else:
-                path.lineTo(pt)
-            if self.live:
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor(theme.ACCENT))
-                p.drawEllipse(pt, 2.5, 2.5)
-        p.strokePath(path, QPen(QColor(theme.ACCENT), 1.6))
+                path.lineTo(pt(i))
+        area = QPainterPath(path)
+        area.lineTo(QPointF(self._x(len(v) - 1, r), r.bottom()))
+        area.lineTo(QPointF(self._x(0, r), r.bottom()))
+        area.closeSubpath()
+        fill = QColor(theme.ACCENT)
+        fill.setAlpha(46)
+        p.fillPath(area, fill)
+        p.strokePath(path, QPen(QColor(theme.ACCENT), 2))
+        if len(v) <= 80:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(theme.ACCENT))
+            for i in range(len(v)):
+                p.drawEllipse(pt(i), 2.6, 2.6)
         if self.live:
             return
-        best = int(np.argmax(v))
-        xb = self._x(best, r)
-        p.setPen(QPen(QColor(theme.OK), 1.5))
-        p.drawLine(QPointF(xb, r.top()), QPointF(xb, r.bottom()))
-        text = f"best {self.z[best]:,.1f} µm" if best < len(self.z) else f"best: slice {best + 1}"
-        tw = p.fontMetrics().horizontalAdvance(text) + 6
-        if xb + tw < r.right():
-            p.drawText(QRectF(xb + 4, r.top(), tw, fh - 4), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                       text)
-        else:
-            p.drawText(QRectF(xb - tw - 4, r.top(), tw, fh - 4),
-                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, text)
+        # the slice shown
         xc = self._x(self.current, r)
-        p.setPen(QPen(QColor(theme.TEXT), 1))
-        p.drawLine(QPointF(xc, r.top() + fh - 2), QPointF(xc, r.bottom()))
-        shown = f"{self.current + 1}"
-        sw = p.fontMetrics().horizontalAdvance(shown) + 6
-        box = QRectF(xc - sw / 2, r.bottom() + 2, sw, fh)
-        if not any(box.intersects(e) for e in ends):  # the shown slice's number, unless it would sit on a Z label
-            p.drawText(box, Qt.AlignmentFlag.AlignCenter, shown)
+        pen = QPen(QColor(theme.TEXT_2), 1)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        p.setPen(pen)
+        p.drawLine(QPointF(xc, r.top()), QPointF(xc, r.bottom()))
+        # nominal plane
+        if self.nominal is not None and self.z and min(self.z) <= self.nominal <= max(self.z):
+            xn = self._x(z_at_index(self.nominal, self.z), r)
+            self._diamond(p, xn, r.top() + 8, 5)
+        # best focus
+        best = int(np.argmax(v))
+        b = pt(best)
+        p.setPen(QPen(QColor(theme.PANEL), 2))
+        p.setBrush(QColor(theme.ACCENT))
+        p.drawEllipse(b, 6, 6)
+        text = f"{self.z[best]:,.2f} µm" if best < len(self.z) else f"slice {best + 1}"
+        tw = p.fontMetrics().horizontalAdvance(text) + 8
+        p.setPen(QColor(theme.ACCENT_TX or theme.ACCENT))
+        bx = b.x() + 9 if b.x() + 9 + tw < r.right() else b.x() - 9 - tw
+        p.drawText(QRectF(bx, b.y() - fh, tw, fh), left, text)
+
+    @staticmethod
+    def _diamond(p: QPainter, cx: float, cy: float, s: float) -> None:
+        d = QPainterPath()
+        d.moveTo(cx, cy - s)
+        d.lineTo(cx + s, cy)
+        d.lineTo(cx, cy + s)
+        d.lineTo(cx - s, cy)
+        d.closeSubpath()
+        p.setPen(QPen(QColor(theme.VIOLET), 1.5))
+        p.setBrush(QColor(theme.INPUT))
+        p.drawPath(d)
 
 
-# ====================================================================================== channel chips
-class ChannelChips(QWidget):
-    """Channels as toggle chips with their display colour (the list's check boxes were 1.05:1 on the list)."""
+def z_at_index(z: float, zs: list[float]) -> float:
+    """Fractional slice index of height `z` in increasing `zs` (inverse of zviews.z_at)."""
+    if len(zs) < 2:
+        return 0.0
+    for i in range(len(zs) - 1):
+        if zs[i] <= z <= zs[i + 1]:
+            return i + (z - zs[i]) / ((zs[i + 1] - zs[i]) or 1.0)
+    return 0.0 if z < zs[0] else float(len(zs) - 1)
+
+
+# ====================================================================================== channel rows
+class _ChannelRow(QPushButton):
+    """One channel as a full-width row: a check box, its display colour, its name, and its filter (Ex / Em) on the
+    right (redesign kit's channel list). Checkable; the text keeps a ✓ when on, for screen readers and tests, while
+    the row is painted."""
+
+    def __init__(self, name: str, color: str, detail: str, parent=None):
+        super().__init__(parent)
+        self.name, self.color, self.detail = name, color, detail
+        self.setCheckable(True)
+        self.setFlat(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedHeight(round(30 * min(theme.TEXT_SCALE, 1.5)))
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect())
+        on = self.isChecked()
+        if self.underMouse() or self.hasFocus():
+            hov = QColor(theme.ACCENT)
+            hov.setAlpha(22)
+            p.fillRect(r, hov)
+        if self.hasFocus():
+            p.setPen(QPen(QColor(theme.ACCENT), 1))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 4, 4)
+        cy = r.center().y()
+        box = QRectF(10, cy - 8, 16, 16)
+        p.setPen(QPen(QColor(theme.ACCENT if on else theme.BORDER_STRONG), 1.5))
+        p.setBrush(QColor(theme.ACCENT) if on else QColor(theme.INPUT))
+        p.drawRoundedRect(box, 3, 3)
+        if on:
+            tick = QPainterPath()
+            tick.moveTo(box.left() + 3.5, cy)
+            tick.lineTo(box.left() + 7, cy + 3.5)
+            tick.lineTo(box.right() - 3, cy - 4)
+            p.setPen(QPen(QColor(theme.ACCENT_ON or "#ffffff"), 2))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawPath(tick)
+        p.setPen(QPen(QColor(theme.BORDER_STRONG), 1))
+        p.setBrush(QColor(self.color))
+        p.drawEllipse(QPointF(42, cy), 5.5, 5.5)
+        f = QFont(self.font())
+        f.setBold(on)
+        p.setFont(f)
+        p.setPen(QColor(theme.TEXT if on else theme.TEXT_2))
+        p.drawText(QRectF(56, 0, r.width() - 60, r.height()),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self.name)
+        p.setFont(_caption_font(self.font()))
+        p.setPen(QColor(theme.TEXT_2))
+        p.drawText(QRectF(56, 0, r.width() - 66, r.height()),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, self.detail)
+
+
+class ChannelChips(QFrame):
+    """The channels as a list of rows (kit's channel list: check box, colour, name, Ex / Em); state is the check box and
+    weight, never colour alone. The name is kept for the page API (buttons, checked, set_checked)."""
 
     changed = Signal()
-    COLUMNS = 3
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._grid = QGridLayout(self)
-        self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setSpacing(6)
+        self.setObjectName("zchannels")
+        self._lay = QVBoxLayout(self)
+        self._lay.setContentsMargins(0, 2, 0, 2)
+        self._lay.setSpacing(0)
         self.buttons: dict[str, QPushButton] = {}
         self._items: list[tuple[str, str, str]] = []
+        self._details: dict[str, str] = {}
         self.setAccessibleName("Z-stack channels")
+        self._restyle()
+
+    def _restyle(self) -> None:
+        self.setStyleSheet(f"QFrame#zchannels {{ border: 1px solid {theme.BORDER}; border-radius: 8px; "
+                           f"background: {theme.INPUT}; }}")
 
     def items(self) -> list[tuple[str, str, str]]:
         return list(self._items)
 
-    def set_channels(self, items: list[tuple[str, str, str]], checked: set[str]) -> None:
-        """`items` = [(text, slot, colour)]; rebuilt only when they change."""
+    def set_channels(self, items: list[tuple[str, str, str]], checked: set[str],
+                     details: dict[str, str] | None = None) -> None:
+        """`items` = [(text, slot, colour)], `details` = {slot: "Ex 385 / Em 445"}; rebuilt only when they change."""
         if items == self._items:
             return
         for b in self.buttons.values():
-            self._grid.removeWidget(b)
+            self._lay.removeWidget(b)
             b.deleteLater()
         self.buttons.clear()
         self._items = list(items)
+        self._details = dict(details or {})
         for i, (text, slot, color) in enumerate(items):
-            b = QPushButton(text)
-            b.setCheckable(True)
+            b = _ChannelRow(text, color, self._details.get(slot, ""))
             b.setChecked(slot in checked)
-            b.setIcon(self._dot(color))
             b.setAccessibleName(f"{text} channel")
-            b.setFixedHeight(round(26 * min(theme.TEXT_SCALE, 1.5)))
             b.toggled.connect(self._make_toggled(b, text))
             self._label(b, text)
             self.buttons[slot] = b
-            self._grid.addWidget(b, i // self.COLUMNS, i % self.COLUMNS)
+            if i:
+                sep = QFrame()
+                sep.setFixedHeight(1)
+                sep.setStyleSheet(f"background: {theme.BORDER}; border: none;")
+                self._lay.addWidget(sep)
+            self._lay.addWidget(b)
 
     def _make_toggled(self, b: QPushButton, text: str):
         def toggled(_on: bool) -> None:
@@ -579,19 +821,8 @@ class ChannelChips(QWidget):
 
     @staticmethod
     def _label(b: QPushButton, text: str) -> None:
-        b.setText(f"✓ {text}" if b.isChecked() else text)  # state not by colour alone
-
-    @staticmethod
-    def _dot(color: str) -> QIcon:
-        pm = QPixmap(12, 12)
-        pm.fill(Qt.GlobalColor.transparent)
-        p = QPainter(pm)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(QPen(QColor(theme.BORDER_STRONG), 1))
-        p.setBrush(QColor(color))
-        p.drawEllipse(QRectF(1, 1, 10, 10))
-        p.end()
-        return QIcon(pm)
+        b.setText(f"✓ {text}" if b.isChecked() else text)  # state not by colour alone (read by screen readers)
+        b.update()
 
     def slots(self) -> list[str]:
         return [slot for _t, slot, _c in self._items]
@@ -622,6 +853,8 @@ class ViewPicker(QWidget):
             self.method.addItem(name, key)
             self.method.setItemData(self.method.count() - 1, VIEW_TIPS.get(key, name), Qt.ItemDataRole.ToolTipRole)
         self.method.setCurrentIndex(max(0, self.method.findData("max")))
+        self.method.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.method.setMinimumContentsLength(6)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
@@ -697,7 +930,7 @@ class Filmstrip(QListWidget):
     running) stays an empty frame, so gaps are seen, not compressed away. Clicking a frame shows that slice."""
 
     picked = Signal(int)
-    THUMB = QSize(72, 54)
+    THUMB = QSize(64, 48)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -708,9 +941,10 @@ class Filmstrip(QListWidget):
         self.setIconSize(self.THUMB)
         self.setSpacing(2)
         self.setUniformItemSizes(True)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setFixedHeight(self.THUMB.height() + 30)
+        self.setFixedHeight(self.THUMB.height() + 26)
+        self.setFrameShape(QFrame.Shape.NoFrame)
         self.setAccessibleName("Slices filmstrip")
         self.key: tuple | None = None
         self.currentRowChanged.connect(self._row)
@@ -794,8 +1028,11 @@ class ZStackPage(QWidget):
         viewer = _NoHeightForWidth()
         vl = QVBoxLayout(viewer)
         vl.setContentsMargins(0, 0, 0, 0)
-        vl.addWidget(self._build_viewer())
+        vl.setSpacing(12)
+        vl.addWidget(self._build_viewer(), 1)
+        vl.addWidget(self._build_footer())
         root.addWidget(viewer, 1)
+        self._style_readouts()
 
         self._play = QTimer(self)
         self._play.setInterval(125)
@@ -830,147 +1067,146 @@ class ZStackPage(QWidget):
         w.setAccessibleName(name)
         return box
 
+    def _inline(self, text: str, w: QWidget, name: str) -> QWidget:
+        """A label and its field on one line (the kit's "Below [10.00 µm]")."""
+        lab = label(text, "caption")
+        lab.setBuddy(w)
+        w.setAccessibleName(name)
+        return hbox(lab, w, spacing=8)
+
     def _row_button(self, title: str, name: str) -> tuple[QPushButton, QLabel]:
-        """A one-line disclosure row: title left, its current values right."""
+        """A one-line disclosure row: chevron and title left, its current values right."""
         b = QPushButton()
         b.setCheckable(True)
         b.setAccessibleName(name)
         lay = QHBoxLayout(b)
         lay.setContentsMargins(10, 0, 10, 0)
+        chev = QLabel("›")
+        chev.setStyleSheet("background: transparent; font-weight: 700;")
         t = QLabel(title)
         t.setStyleSheet("font-weight: 600; background: transparent;")
         t.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
         val = _Elided("", "caption")
         val.setStyleSheet("background: transparent;")
-        for x in (t, val):
+        for x in (chev, t, val):
             x.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        lay.addWidget(chev)
         lay.addWidget(t)
         lay.addSpacing(6)
         lay.addWidget(val, 1)
-        b.setMinimumHeight(32)
+        b.toggled.connect(self._make_chevron(chev))
+        b.setMinimumHeight(34)
         return b, val
 
+    @staticmethod
+    def _make_chevron(chev: QLabel):
+        def turn(on: bool) -> None:
+            chev.setText("⌄" if on else "›")
+        return turn
+
     def _build_setup(self) -> QWidget:
-        f, lay = panel("Z-stack", spacing=8)
+        f, lay = panel("Stack plan", spacing=10)
         self._setup_panel = f
-        width = round(400 * min(theme.TEXT_SCALE, 1.5))
+        width = round(396 * min(theme.TEXT_SCALE, 1.5))
         f.setFixedWidth(width)
-        self.mode = SegmentedControl([("centre", "Centre on focus"), ("range", "Top and bottom")],
+        self.mode = SegmentedControl([("centre", "Centre on focus"), ("range", "First and last")],
                                      accessible_name="How to set the range")
         self.mode.activated.connect(self._mode_changed)
         lay.addWidget(self.mode)
 
-        # focus readout and nudge
-        fbox = QWidget()
-        fv = QVBoxLayout(fbox)
-        fv.setContentsMargins(0, 0, 0, 0)
-        fv.setSpacing(0)
-        fv.addWidget(label("Focus", "caption"))
+        # current focus: readout, nudge down / up, step per press
+        lay.addWidget(label("Current focus (Z)", "caption"))
         self.lbl_focus = QLabel("—")
-        self.lbl_focus.setStyleSheet(f"font-family: '{tk.FONT_MONO}', monospace; font-size: {theme.px('title') + 5}px;"
-                                     " font-weight: 500;")
+        self.lbl_focus.setObjectName("zfocus")
         self.lbl_focus.setToolTip("Focus position now (µm from home)")
         self.lbl_focus.setAccessibleName("Focus position")
-        fv.addWidget(self.lbl_focus)
+        self.lbl_focus.setMinimumWidth(150)
         self.btn_down = QToolButton()
-        self.btn_down.setText("▼")
+        self.btn_down.setText("−")
         self.btn_up = QToolButton()
-        self.btn_up.setText("▲")
+        self.btn_up.setText("+")
         self.nudge = QComboBox()
         for um in NUDGES:
             self.nudge.addItem(f"{um:g} µm", um)
         self.nudge.setCurrentIndex(2)
-        self.nudge.setToolTip("How far one ▲ / ▼ press (or Ctrl+Up / Ctrl+Down) moves the focus")
+        self.nudge.setToolTip("How far one − / + press (or Ctrl+Down / Ctrl+Up) moves the focus")
         self.nudge.setAccessibleName("Focus step per press")
         self.nudge.currentIndexChanged.connect(self._name_nudges)
         for b in (self.btn_down, self.btn_up):
-            b.setMinimumSize(40, 32)
+            b.setMinimumSize(36, 34)
             b.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.btn_down.clicked.connect(self._make_nudge(-1))
         self.btn_up.clicked.connect(self._make_nudge(+1))
         self._name_nudges()
-        lay.addWidget(hbox(fbox, self.btn_down, self.btn_up, self.nudge, stretch_last=False))
+        lay.addWidget(hbox(self.lbl_focus, None, self.btn_down, self.btn_up, self.nudge, spacing=6))
 
-        # range: the picture with its Go to buttons, the fields beside it
-        lay.addWidget(label("Range", "section"))
-        self.zview = ZRangeView()
-        self.zview.go.connect(self._go)
-        self.btn_go_top, self.btn_go_centre, self.btn_go_bottom = (self.zview.btn_top, self.zview.btn_centre,
-                                                                    self.zview.btn_bottom)
-        side = QWidget()
-        sv = QVBoxLayout(side)
-        sv.setContentsMargins(0, 0, 0, 0)
-        sv.setSpacing(8)
+        # range: centre mode (below / above), or first and last from live focus
         self.centre_box = QWidget()
         cv = QVBoxLayout(self.centre_box)
         cv.setContentsMargins(0, 0, 0, 0)
-        cv.setSpacing(8)
+        cv.setSpacing(4)
         self.above = QDoubleSpinBox(minimum=0, maximum=2000, decimals=2, suffix=" µm")
         self.below = QDoubleSpinBox(minimum=0, maximum=2000, decimals=2, suffix=" µm")
         self.above.setToolTip("Range above the focus (toward the sample)")
         self.below.setToolTip("Range below the focus (away from the sample)")
-        cv.addWidget(self._field("Above focus", self.above, "Range above focus"))
-        cv.addWidget(self._field("Below focus", self.below, "Range below focus"))
-        sv.addWidget(self.centre_box)
+        cv.addWidget(label("Range around the focus", "caption"))
+        cv.addWidget(hbox(self._inline("Below", self.below, "Range below focus"), None,
+                          self._inline("Above", self.above, "Range above focus"), spacing=12))
+        lay.addWidget(self.centre_box)
         self.range_box = QWidget()
-        rv = QVBoxLayout(self.range_box)
-        rv.setContentsMargins(0, 0, 0, 0)
-        rv.setSpacing(3)
+        rg = QGridLayout(self.range_box)
+        rg.setContentsMargins(0, 0, 0, 0)
+        rg.setHorizontalSpacing(8)
+        rg.setVerticalSpacing(6)
         self.lbl_top = label("Not set", "mono")
         self.lbl_bottom = label("Not set", "mono")
         self.btn_set_top = QPushButton("Set &top")
         self.btn_set_top.setToolTip("Focus on the top of the sample on live view, then press (Alt+T)")
-        self.btn_set_top.setAccessibleName("Set top from the focus now")
+        self.btn_set_top.setAccessibleName("Set the last slice (top) from the focus now")
         self.btn_set_bottom = QPushButton("Set &bottom")
         self.btn_set_bottom.setToolTip("Focus on the bottom of the sample on live view, then press (Alt+B)")
-        self.btn_set_bottom.setAccessibleName("Set bottom from the focus now")
+        self.btn_set_bottom.setAccessibleName("Set the first slice (bottom) from the focus now")
         self.btn_set_top.clicked.connect(self._set_top)
         self.btn_set_bottom.clicked.connect(self._set_bottom)
-        rv.addWidget(label("Top", "caption"))
-        rv.addWidget(self.lbl_top)
-        rv.addWidget(self.btn_set_top)
-        rv.addSpacing(8)
-        rv.addWidget(label("Bottom", "caption"))
-        rv.addWidget(self.lbl_bottom)
-        rv.addWidget(self.btn_set_bottom)
-        sv.addWidget(self.range_box)
-        sv.addStretch(1)
-        self.lbl_range_hint = label("", "caption", wrap=True)
-        sv.addWidget(self.lbl_range_hint)
-        rrow = QWidget()
-        rl = QHBoxLayout(rrow)
-        rl.setContentsMargins(0, 0, 0, 0)
-        rl.setSpacing(10)
-        rl.addWidget(self.zview, 0, Qt.AlignmentFlag.AlignTop)
-        rl.addWidget(side, 1)
-        lay.addWidget(rrow)
+        rg.addWidget(label("Last (top)", "caption"), 0, 0)
+        rg.addWidget(self.lbl_top, 0, 1)
+        rg.addWidget(self.btn_set_top, 0, 2)
+        rg.addWidget(label("First (bottom)", "caption"), 1, 0)
+        rg.addWidget(self.lbl_bottom, 1, 1)
+        rg.addWidget(self.btn_set_bottom, 1, 2)
+        rg.setColumnStretch(1, 1)
+        lay.addWidget(self.range_box)
+        self.lbl_range_hint = label("", "caption", wrap=True)  # kept for older callers; not shown
+        self.lbl_range_hint.setVisible(False)
 
-        # sampling: step and slices edit each other; the Nyquist step
-        self.keep = SegmentedControl([("interval", "Keep interval"), ("slices", "Keep slices")],
+        # sampling: Z interval with the recommended (Nyquist) step; keep interval / slices; the slice count
+        self.step = QDoubleSpinBox(minimum=0.1, maximum=500, decimals=2, suffix=" µm")
+        self.step.setToolTip("Distance between slices")
+        self.btn_optimal = QPushButton("Use Nyquist")
+        self.btn_optimal.clicked.connect(self._use_optimal)
+        lay.addWidget(hbox(self._inline("Z interval", self.step, "Step between slices"), None, self.btn_optimal,
+                           spacing=8))
+        self.lbl_optimal = label("", "caption", wrap=True)
+        lay.addWidget(self.lbl_optimal)
+        self.keep = SegmentedControl([("interval", "Interval"), ("slices", "Slices")],
                                      accessible_name="When the range changes, keep")
         self.keep.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.keep.buttons["interval"].setToolTip("A range change keeps the step and changes the number of slices")
         self.keep.buttons["slices"].setToolTip("A range change keeps the number of slices and changes the step")
         self.keep.activated.connect(self._keep_changed)
-        lay.addWidget(hbox(label("Sampling", "section"), None, self.keep))
-        self.step = QDoubleSpinBox(minimum=0.1, maximum=500, decimals=2, suffix=" µm")
-        self.step.setToolTip("Distance between slices")
         self.slices = QSpinBox(minimum=1, maximum=9999)
         self.slices.setToolTip("Number of slices: changes the step, keeps the range. Centre on focus always includes "
                                "the focus plane, so the count can come out one more or less.")
-        self.btn_optimal = QPushButton("Nyquist")
-        self.btn_optimal.clicked.connect(self._use_optimal)
         self.slices.valueChanged.connect(self._slices_changed)
-        srow = QWidget()
-        sg = QGridLayout(srow)
-        sg.setContentsMargins(0, 0, 0, 0)
-        sg.setHorizontalSpacing(8)
-        sg.addWidget(self._field("Step", self.step, "Step between slices"), 0, 0)
-        sg.addWidget(self._field("Slices", self.slices, "Number of slices"), 0, 1)
-        sg.addWidget(self.btn_optimal, 0, 2, Qt.AlignmentFlag.AlignBottom)
-        for ci in range(3):
-            sg.setColumnStretch(ci, 1)
-        lay.addWidget(srow)
+        lay.addWidget(hbox(label("Keep", "caption"), self.keep, None,
+                           self._inline("Slices", self.slices, "Number of slices"), spacing=8))
+
+        # the stack drawn to scale
+        self.zview = ZRangeView()
+        self.zview.go.connect(self._go)
+        self.btn_go_top, self.btn_go_centre, self.btn_go_bottom = (self.zview.btn_top, self.zview.btn_centre,
+                                                                    self.zview.btn_bottom)
+        lay.addWidget(self.zview)
 
         # channels
         lay.addWidget(label("Channels", "section"))
@@ -980,16 +1216,17 @@ class ZStackPage(QWidget):
         self.order = QComboBox()
         self.order.addItem("Channel by channel (fewer cube changes)", "channel_first")
         self.order.addItem("All channels at each Z (fewer Z moves)", "z_first")
-        self.order.setAccessibleName("Channel order")
+        self.order.setAccessibleName("Acquisition order")
         self.order.currentIndexChanged.connect(self._on_index_changed)
+        self.order_box = self._field("Acquisition order", self.order, "Acquisition order")
+        lay.addWidget(self.order_box)
 
-        # more options and saving: one-line rows showing their values
-        self.btn_more, self.lbl_more = self._row_button("More options", "More options")
-        self.btn_saving, self.lbl_saving = self._row_button("Saving", "Saving options")
-        lay.addWidget(hbox(self.btn_more, self.btn_saving, spacing=8))
+        # advanced acquisition and saving: disclosure rows showing their values
+        self.btn_more, self.lbl_more = self._row_button("Advanced acquisition", "Advanced acquisition")
+        lay.addWidget(self.btn_more)
         self.more = QWidget()
         mv = QVBoxLayout(self.more)
-        mv.setContentsMargins(0, 0, 0, 0)
+        mv.setContentsMargins(4, 0, 4, 4)
         mv.setSpacing(8)
         self.chk_light = QCheckBox("Light off between slices")
         self.chk_light.setToolTip("Less light on the sample (bleaching, phototoxicity); each slice takes longer")
@@ -998,17 +1235,17 @@ class ZStackPage(QWidget):
         self.approach = QDoubleSpinBox(minimum=0, maximum=50, decimals=1, suffix=" µm")
         self.approach.setToolTip("The first slice is approached from this far below, like every other slice, so the "
                                  "focus drive's backlash is the same for all slices")
-        self.order_box = self._field("Channel order", self.order, "Channel order")
-        mv.addWidget(self.order_box)
         mv.addWidget(self.chk_light)
         mv.addWidget(hbox(self._field("Settle after each move", self.settle, "Settle after each move"),
                           self._field("Backlash approach", self.approach, "Backlash approach distance"), spacing=8))
         self.more.setVisible(False)
         self.btn_more.toggled.connect(self.more.setVisible)
         lay.addWidget(self.more)
+        self.btn_saving, self.lbl_saving = self._row_button("Saving", "Saving options")
+        lay.addWidget(self.btn_saving)
         self.saving = QWidget()
         svv = QVBoxLayout(self.saving)
-        svv.setContentsMargins(0, 0, 0, 0)
+        svv.setContentsMargins(4, 0, 4, 4)
         svv.setSpacing(6)
         self.chk_autosave = QCheckBox("Save each stack automatically")
         self.lbl_folder = label("", "caption", wrap=True)
@@ -1040,25 +1277,65 @@ class ZStackPage(QWidget):
         sa.setWidgetResizable(True)
         sa.setFrameShape(QFrame.Shape.NoFrame)
         sa.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        col = _NoHeightForWidth()
+        cl = QVBoxLayout(col)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.addWidget(sa, 1)
+        col.setFixedWidth(width + 14)
+        return col
 
-        # the run footer stays in view: four numbers, messages by kind, progress, Acquire / Stop
-        foot, fl = panel(None, spacing=8)
+    # ------------------------------------------------------------------ build: pre-flight footer
+    def _build_footer(self) -> QWidget:
+        """Pre-flight card under the viewer (kit Screen A footer): the verdict and the four numbers, the checks, the
+        messages by kind; while running, progress and time left; Pause and Acquire / Stop on the right."""
+        foot, fl = panel(None, spacing=6)
+        foot.setObjectName("panel")
+        top = QHBoxLayout()
+        top.setSpacing(14)
+        self.lbl_pf_icon = QLabel()
+        self.lbl_pf_icon.setFixedSize(30, 30)
+        self.lbl_pf_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_pf_title = QLabel("Pre-flight")
+        self.lbl_pf_title.setObjectName("zpftitle")
+        self.lbl_pf_title.setAccessibleName("Pre-flight result")
+        top.addWidget(self.lbl_pf_icon)
+        top.addWidget(self.lbl_pf_title)
+        top.addSpacing(10)
         self.summary = QWidget()
-        sgl = QGridLayout(self.summary)
+        sgl = QHBoxLayout(self.summary)
         sgl.setContentsMargins(0, 0, 0, 0)
-        sgl.setHorizontalSpacing(8)
-        sgl.setVerticalSpacing(0)
+        sgl.setSpacing(18)
         self.fig: dict[str, QLabel] = {}
-        for ci, (key, title) in enumerate((("slices", "Slices"), ("time", "Time"), ("size", "Size"),
-                                           ("light", "Light on"))):
-            sgl.addWidget(label(title, "caption"), 0, ci)
+        for key, title in (("slices", "Slices"), ("time", "Time"), ("size", "Size"), ("light", "Light on")):
+            box = QWidget()
+            bl = QVBoxLayout(box)
+            bl.setContentsMargins(0, 0, 0, 0)
+            bl.setSpacing(0)
+            bl.addWidget(label(title, "caption"))
             val = QLabel("—")
-            val.setStyleSheet(f"font-family: '{tk.FONT_MONO}', monospace; font-size: {theme.px('body') + 1}px;"
-                              " font-weight: 500;")
+            val.setObjectName("zfig")
             val.setAccessibleName(title)
             self.fig[key] = val
-            sgl.addWidget(val, 1, ci)
-            sgl.setColumnStretch(ci, 1)
+            bl.addWidget(val)
+            sgl.addWidget(box)
+        top.addWidget(self.summary)
+        top.addStretch(1)
+        self.btn_pause = QPushButton("Pause")
+        self.btn_pause.setMinimumHeight(44)
+        self.btn_pause.setToolTip("Pause after the current slice; the light is off while paused")
+        self.btn_pause.clicked.connect(self._pause_or_resume)
+        self.btn_pause.setVisible(False)
+        self.btn = QPushButton("Acquire Z-stack")
+        self.btn.setObjectName("primary")
+        self.btn.setMinimumHeight(44)
+        self.btn.setMinimumWidth(round(200 * min(theme.TEXT_SCALE, 1.4)))
+        self.btn.clicked.connect(self._acquire_or_stop)
+        top.addWidget(self.btn_pause)
+        top.addWidget(self.btn)
+        fl.addLayout(top)
+        self._paused = False
+        self._paused_since: float | None = None
+        self._paused_total = 0.0
         self.lbl_checks = label("", "caption", wrap=True)
         self.lbl_checks.setTextFormat(Qt.TextFormat.RichText)
         self.lbl_checks.setAccessibleName("Pre-flight checks")
@@ -1073,44 +1350,37 @@ class ZStackPage(QWidget):
         self.lbl_progress = label("", "", wrap=True)
         self.lbl_left = label("", "muted", wrap=True)
         self.lbl_after = label("", "muted", wrap=True)
-        self.btn = QPushButton("Acquire Z-stack")
-        self.btn.setObjectName("primary")
-        self.btn.setMinimumHeight(36)
-        self.btn.clicked.connect(self._acquire_or_stop)
-        self.btn_pause = QPushButton("Pause")
-        self.btn_pause.setMinimumHeight(36)
-        self.btn_pause.setToolTip("Pause after the current slice; the light is off while paused")
-        self.btn_pause.clicked.connect(self._pause_or_resume)
-        self.btn_pause.setVisible(False)
-        self.btn_pause.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self._paused = False
-        self._paused_since: float | None = None
-        self._paused_total = 0.0
-        foot_widgets: tuple[QWidget, ...] = (self.summary, self.lbl_checks, self.lbl_error, self.lbl_warn,
-                                             self.lbl_note, self.progress, self.lbl_progress, self.lbl_left,
-                                             self.lbl_after, hbox(self.btn_pause, self.btn, spacing=8))
-        for fw in foot_widgets:
+        for fw in (self.lbl_checks, self.lbl_error, self.lbl_warn, self.lbl_note, self.progress, self.lbl_progress,
+                   self.lbl_left, self.lbl_after):
             fl.addWidget(fw)
         self.lbl_left.setVisible(False)
         self.lbl_after.setVisible(False)
-        col = _NoHeightForWidth()
-        cl = QVBoxLayout(col)
-        cl.setContentsMargins(0, 0, 0, 0)
-        cl.setSpacing(8)
-        cl.addWidget(sa, 1)
-        cl.addWidget(foot)
-        col.setFixedWidth(width + 14)
-        foot.setFixedWidth(width)
-        return col
+        holder = _NoHeightForWidth()
+        hl = QVBoxLayout(holder)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.addWidget(foot)
+        return holder
+
+    def _set_verdict(self, state: str, text: str) -> None:
+        """The footer's verdict: "ok" (✓ green), "warn" (! amber), "bad" (✗ red), "run" (● accent), "off" (– grey)."""
+        mark, color = {"ok": ("✓", theme.OK), "warn": ("!", theme.WARN), "bad": ("✗", theme.FAULT),
+                       "run": ("●", theme.ACCENT), "off": ("–", theme.TEXT_2)}[state]
+        self.lbl_pf_icon.setText(mark)
+        self.lbl_pf_icon.setStyleSheet(f"border-radius: 15px; background: {color}; color: {theme.PANEL};"
+                                       f" font-weight: 800; font-size: {theme.px('body') + 3}px;")
+        self.lbl_pf_title.setText(text)
+        self.lbl_pf_title.setStyleSheet(f"font-size: {theme.px('body') + 3}px; font-weight: 700;")
 
     # ------------------------------------------------------------------ build: viewer
     def _build_viewer(self) -> QWidget:
-        g, gl = panel("Stack")
+        g, gl = panel(None, spacing=8)
         self.view_mode = ViewPicker(accessible_name="Z-stack view")
         self.view_mode.activated.connect(self._view_changed)
         self.view_channel = QComboBox()
         self.view_channel.setToolTip("Channel shown")
         self.view_channel.setAccessibleName("Channel shown")
+        self.view_channel.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.view_channel.setMinimumContentsLength(5)
         self.view_channel.currentIndexChanged.connect(self._on_channel_changed)
         self.btn_save = QPushButton("Save stack…")
         self.btn_save.setToolTip("Save this stack: a folder with an OME-TIFF (every channel, pixel size, each plane's "
@@ -1121,8 +1391,9 @@ class ZStackPage(QWidget):
         self.btn_details.setToolTip("This stack's settings: range, step, channels, exposure, objective, pixel size, "
                                     "times")
         self.btn_details.toggled.connect(self._on_toggled_details)
-        gl.addWidget(hbox(self.view_mode, self.view_channel, self.btn_details, self.btn_save, spacing=10,
-                          stretch_last=False))
+        bar = hbox(self.view_mode, None, self.view_channel, self.btn_details, self.btn_save, spacing=6)
+        self.view_mode.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        gl.addWidget(bar)
         self.lbl_status = label("", "warn", wrap=True)
         self.lbl_status.setVisible(False)
         gl.addWidget(self.lbl_status)
@@ -1139,30 +1410,59 @@ class ZStackPage(QWidget):
         self.view.placeholder = "No stack yet. Set the range on the left, then Acquire Z-stack."
         self.view.clicked.connect(self._on_view_click)
         gl.addWidget(self.view, 1)
+
+        # transport: play, previous / next, the filmstrip, Go to this Z
         self.btn_play = QToolButton()
         self.btn_play.setText("▶")
         self.btn_play.setToolTip("Play through the slices")
         self.btn_play.setAccessibleName("Play through the slices")
         self.btn_play.setCheckable(True)
-        self.btn_play.setMinimumSize(40, 32)
+        self.btn_play.setMinimumSize(40, 36)
         self.btn_play.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.btn_play.toggled.connect(self._toggle_play)
+        self.btn_prev = QToolButton()
+        self.btn_prev.setText("‹")
+        self.btn_prev.setToolTip("Previous slice")
+        self.btn_prev.setAccessibleName("Previous slice")
+        self.btn_next = QToolButton()
+        self.btn_next.setText("›")
+        self.btn_next.setToolTip("Next slice")
+        self.btn_next.setAccessibleName("Next slice")
+        for b in (self.btn_prev, self.btn_next):
+            b.setMinimumSize(28, 36)
+            b.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.btn_prev.clicked.connect(self._make_step(-1))
+        self.btn_next.clicked.connect(self._make_step(+1))
+        self.strip = Filmstrip()
+        self.strip.picked.connect(self._pick_slice)
+        self.btn_goto = QPushButton("Go to this Z")
+        self.btn_goto.setToolTip("Move the focus to this slice's Z")
+        self.btn_goto.clicked.connect(self._goto_slice)
+        self.transport = QWidget()
+        tl = QHBoxLayout(self.transport)
+        tl.setContentsMargins(0, 0, 0, 0)
+        tl.setSpacing(6)
+        for tw in (self.btn_play, self.btn_prev, self.strip, self.btn_next, self.btn_goto):
+            tl.addWidget(tw, 1 if tw is self.strip else 0)
+        self.transport.setVisible(False)
+        gl.addWidget(self.transport)
+
+        # the Z ruler: bottom Z, the slider, top Z; what is shown under it (accent)
         self.slice = QSlider(Qt.Orientation.Horizontal)
         self.slice.setRange(0, 0)
         self.slice.setToolTip("Slice (← → or Page Up / Page Down when focused)")
         self.slice.setAccessibleName("Slice")
         self.slice.setMinimumHeight(24)
         self.slice.valueChanged.connect(self._on_slice_changed)
-        self.lbl_slice = label("", "")
-        self.btn_goto = QPushButton("Go to this Z")
-        self.btn_goto.setToolTip("Move the focus to this slice's Z")
-        self.btn_goto.clicked.connect(self._goto_slice)
+        self.lbl_zlo = label("", "mono")
+        self.lbl_zhi = label("", "mono")
         # projection range (Fiji Z Project start / stop slice): view only; Save stack writes whole-stack projections
         self.proj_from = QSpinBox(minimum=1, maximum=1)
         self.proj_to = QSpinBox(minimum=1, maximum=1)
         self.proj_from.setAccessibleName("Project from slice")
         self.proj_to.setAccessibleName("Project to slice")
         for sb in (self.proj_from, self.proj_to):
+            sb.setFixedWidth(round(76 * min(theme.TEXT_SCALE, 1.5)))
             sb.setToolTip("Slices included in the projection shown (Save stack… writes whole-stack projections)")
             sb.valueChanged.connect(self._on_range_spin)
         self.lbl_range_to = label("to", "caption")
@@ -1172,29 +1472,54 @@ class ZStackPage(QWidget):
         self.btn_all = QPushButton("All")
         self.btn_all.setToolTip("Project every slice")
         self.btn_all.clicked.connect(self._use_all_range)
-        self._range_widgets: tuple[QWidget, ...] = (self.proj_from, self.lbl_range_to, self.proj_to, self.btn_sharp,
-                                                    self.btn_all)
+        self._range_widgets: tuple[QWidget, ...] = (label("Project slices", "caption"), self.proj_from,
+                                                    self.lbl_range_to, self.proj_to, self.btn_sharp, self.btn_all)
         row = QWidget()
         rl = QHBoxLayout(row)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(8)
-        rl.addWidget(self.btn_play)
+        rl.addWidget(self.lbl_zlo)
         rl.addWidget(self.slice, 1)
+        rl.addWidget(self.lbl_zhi)
+        self._range_gap = QWidget()
+        self._range_gap.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._range_gap.setVisible(False)
+        rl.addWidget(self._range_gap)
         for w in self._range_widgets:
             rl.addWidget(w)
             w.setVisible(False)
-        rl.addWidget(self.lbl_slice)
-        rl.addWidget(self.btn_goto)
         self._slice_layout = rl
         gl.addWidget(row)
-        self.strip = Filmstrip()
-        self.strip.picked.connect(self._pick_slice)
-        self.strip.setVisible(False)
-        gl.addWidget(self.strip)
+        self.lbl_slice = label("", "zslice")
+        self.lbl_slice.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_slice.setWordWrap(True)
+        gl.addWidget(self.lbl_slice)
         self.curve = FocusCurve()
         self.curve.picked.connect(self._pick_slice)
         gl.addWidget(self.curve)
         return g
+
+    def _make_step(self, d: int):
+        def step(_checked: bool = False) -> None:
+            if self.slice.isEnabled() and self.slice.maximum() > 0:
+                self.slice.setValue(min(max(self.slice.value() + d, 0), self.slice.maximum()))
+        return step
+
+    def retint(self) -> None:
+        """Colours painted in code follow a theme change."""
+        self.chips._restyle()
+        self._style_readouts()
+        self._update_setup()
+        self.update()
+
+    def _style_readouts(self) -> None:
+        mono = f"font-family: '{tk.FONT_MONO}', monospace;"
+        self.lbl_focus.setStyleSheet(f"{mono} font-size: {theme.px('title') + 5}px; font-weight: 500; "
+                                     f"background: {theme.INPUT}; border: 1px solid {theme.BORDER}; "
+                                     "border-radius: 6px; padding: 2px 10px;")
+        for v in self.fig.values():
+            v.setStyleSheet(f"{mono} font-size: {theme.px('body') + 2}px; font-weight: 600;")
+        self.lbl_slice.setStyleSheet(f"color: {theme.ACCENT_TX or theme.ACCENT}; font-weight: 600;")
 
     # ------------------------------------------------------------------ small slots (no tuple lambdas: mypy gate)
     def _make_nudge(self, sign: int):
@@ -1302,12 +1627,16 @@ class ZStackPage(QWidget):
     def _fill_channels(self) -> None:
         """Only channels the active camera can image (audit APP-13)."""
         role = self.session.settings.active_camera
-        want = [(c.display, c.slot, c.pseudocolor) for c in self.session.profile.channels_for(role) if c.installed]
+        chans = [c for c in self.session.profile.channels_for(role) if c.installed]
+        want = [(c.display, c.slot, c.pseudocolor) for c in chans]
+        details = {c.slot: (f"Ex {c.excitation_nm} / Em {c.emission_nm}" if c.excitation_nm and c.emission_nm else
+                            f"Em {c.emission_nm}" if c.emission_nm else c.kind.value.replace("_", " ").capitalize())
+                   for c in chans}
         if want != self.chips.items():
             keep = set(self.checked_channels()) or set(self.zs_settings.channels)
             capture_slot = getattr(self.cap, "channel", None)
             self.chips.blockSignals(True)
-            self.chips.set_channels(want, keep)
+            self.chips.set_channels(want, keep, details)
             if not self.checked_channels() and want:
                 slots = [s for _t, s, _c in want]
                 self.chips.set_checked(capture_slot if isinstance(capture_slot, str) and capture_slot in slots
@@ -1317,12 +1646,14 @@ class ZStackPage(QWidget):
         self._update_setup()
 
     def _chain_chips(self) -> None:
-        """Rebuilt chips join the end of the focus chain; put them back in reading order (after Sampling)."""
-        prev: QWidget = self.btn_optimal
+        """Rebuilt channel rows join the end of the focus chain; put them back in reading order (after the
+        drawing)."""
+        prev: QWidget = self.btn_go_bottom
         for b in self.chips.buttons.values():
             QWidget.setTabOrder(prev, b)
             prev = b
-        QWidget.setTabOrder(prev, self.btn_more)
+        QWidget.setTabOrder(prev, self.order)
+        QWidget.setTabOrder(self.order, self.btn_more)
 
     # ------------------------------------------------------------------ set-up state
     def _focus(self) -> float | None:
@@ -1338,8 +1669,6 @@ class ZStackPage(QWidget):
     def _mode_changed(self, key: str, *, save: bool = True) -> None:
         self.centre_box.setVisible(key == "centre")
         self.range_box.setVisible(key == "range")
-        self.lbl_range_hint.setText("The buttons on the drawing move the focus to that slice.")
-        self.lbl_range_hint.setVisible(key == "centre")
         if save:
             self._save_settings()
         self._update_setup()
@@ -1419,7 +1748,13 @@ class ZStackPage(QWidget):
             return
         opt = self._optimal()
         self.btn_optimal.setEnabled(opt is not None)
-        self.btn_optimal.setText(f"Nyquist {opt:.1f} µm" if opt else "Nyquist")
+        self.btn_optimal.setText(f"Use Nyquist {opt:.2f} µm" if opt else "Use Nyquist")
+        self.lbl_optimal.setText("Recommended step from the objective's NA and the shortest emission ticked."
+                                 if opt else "The recommended step needs the objective's NA in the profile.")
+        obj = self._objective()
+        self.zview.objective = ((f"{obj.magnification:g}× / NA {obj.numerical_aperture:g}" if obj.numerical_aperture
+                                 else f"{obj.magnification:g}×") if obj is not None and obj.magnification else "")
+        self.curve.nominal = self.zview.nominal
         self.btn_optimal.setAccessibleName(f"Use the Nyquist step, {opt:.1f} µm" if opt else "Nyquist step unknown")
         self.btn_optimal.setToolTip(self._optimal_why() if opt else
                                     "The Nyquist step needs the objective's numerical aperture in the instrument "
@@ -1480,6 +1815,8 @@ class ZStackPage(QWidget):
         self.lbl_note.setVisible(bool(notes) and not running)
         self.lbl_checks.setVisible(bool(self.lbl_checks.text()) and not running)
         if not running:
+            self._set_verdict(*(("bad", "Check the plan") if errors else
+                                ("warn", "Pre-flight: asks first") if warn else ("ok", "Pre-flight passed")))
             self.btn.setEnabled(ok and not busy)
             self.btn.setToolTip("" if ok and not busy else (f"Instrument busy: {self.model.tasks.current}" if busy
                                                              else " ".join(errors)))
@@ -1665,6 +2002,8 @@ class ZStackPage(QWidget):
             self._paused, self._paused_since, self._paused_total = False, None, 0.0
             self.btn_pause.setText("Pause")
         self.summary.setVisible(not running)
+        if running:
+            self._set_verdict("run", "Acquiring Z-stack")
         self.lbl_left.setVisible(running)
         self.lbl_after.setVisible(running)
         self._setup_panel.setEnabled(not running)
@@ -1763,7 +2102,8 @@ class ZStackPage(QWidget):
         key = ("run", slot)
         if self.strip.key != key:
             self.strip.load(key, pos)
-            self.strip.setVisible(True)
+            self.transport.setVisible(True)
+            self._z_ends(list(pos))
         self.strip.set_thumb(index, self._thumb_rgb(img.data, slot), pos[index])
         if self.view_mode.current() != "slice" or not self.isVisible():
             return
@@ -1870,10 +2210,14 @@ class ZStackPage(QWidget):
         self.view.badge = "LIVE • SIMULATED" if frame.metadata.synthetic else "LIVE"
 
     def _slice_row(self, *, slider: bool, goto: bool) -> None:
-        self.btn_play.setVisible(slider)
-        self.slice.setVisible(slider)
-        self._slice_layout.setStretchFactor(self.lbl_slice, 0 if slider else 1)
+        for w in (self.btn_play, self.btn_prev, self.btn_next, self.slice, self.lbl_zlo, self.lbl_zhi):
+            w.setVisible(slider)
         self.btn_goto.setVisible(goto)
+        self.transport.setVisible(self.strip.count() > 0 and self.view_mode.current() != "live" and (slider or goto))
+
+    def _z_ends(self, z: list[float]) -> None:
+        self.lbl_zlo.setText(f"Z {z[0]:,.2f}" if z else "")
+        self.lbl_zhi.setText(f"Z {z[-1]:,.2f} µm" if z else "")
 
     # ------------------------------------------------------------------ viewer: channels, ranges, sections
     def _mergeable(self, zs) -> list:
@@ -2010,7 +2354,7 @@ class ZStackPage(QWidget):
         is_proj = mode in METHODS
         self.view.set_click_mode(mode == "ortho")
         self._ortho_layout = None
-        for w in self._range_widgets:
+        for w in (*self._range_widgets, self._range_gap):
             w.setVisible(is_proj and zs is not None)
         self.slice.setEnabled(mode in ("slice", "ortho") and self._run is None)
         self.btn_play.setEnabled(mode in ("slice", "ortho") and zs is not None)
@@ -2037,7 +2381,7 @@ class ZStackPage(QWidget):
             self.strip.load(skey, list(zs.planned_z_um))
             for k, im in enumerate(st.images):
                 self.strip.set_thumb(k, self._thumb_rgb(im.data, st.channel), st.z_um[k])
-        self.strip.setVisible(True)
+        self._z_ends(list(zs.planned_z_um))
         names = " + ".join(s_.images[0].channel_label for s_ in sts)
         sim = " • SIMULATED" if zs.synthetic else ""
         chan_badge = f"MERGED {names.upper()} • " if merged else ""
