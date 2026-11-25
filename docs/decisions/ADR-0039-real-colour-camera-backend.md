@@ -1,6 +1,15 @@
 # ADR-0039: Real colour camera backend in the app (uEye UI-146xLE-C via the uEye API)
 
-- **Status:** Proposed (2026-11-15). Implemented and tested against a fake DLL (17 tests, including a full session that captures with live view running). The read-only presence probe finds the camera. **Not run on the instrument yet; the first app session needs the user's approval.**
+- **Status:** Accepted (2026-11-21). Proposed 2026-11-15 and tested against a fake DLL (16 tests, including a full session that captures with live view running). **On the instrument:**
+  - **The image path is proven,** but only with the cube changer at the mirror (F = 128,000, Motor Gate 12 / ADR-0041). At the cube slots the camera sees nothing; see "On the instrument".
+  - **The live view works in the app** (2026-11-15, flashlight).
+  - **A brightfield exposure sweep is linear:** 5.82 DN/ms in red at the LED's default level, so 20–30 ms is usable.
+  - **The exposure-lag fix is confirmed** (2026-11-16); see "Exposure lag".
+  - **Open:**
+    - the right ~20–25 % of the field is vignetted (mirror centring; motor scope);
+    - the colour order is not yet checked against a coloured target;
+    - a possible one-frame lag after an LED change;
+    - gain is fixed at 1x.
 - **Builds on:** ADR-0033 (Gate 1, colour PASS), ADR-0038 (Gate 2, colour PASS 2026-11-15), ADR-0037 (mono backend pattern).
 
 ## Context
