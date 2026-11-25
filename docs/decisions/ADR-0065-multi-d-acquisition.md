@@ -1,8 +1,9 @@
 # ADR-0065: Multi-D acquisition (Z × C × T × P)
 
-- **Status:** Accepted (2026-11-25). Implemented and tested on the simulator only. **Physical positions (P) are
-  locked** on the instrument until the XY stage is qualified (gate G-XY below). Z × C and Z × C × T at one position
-  have not yet been run on the instrument either: the on-instrument check below is still to do.
+- **Status:** Accepted (2026-11-25). Implemented and tested on the simulator only. Physical positions (P) were locked
+  on the instrument until the XY stage is qualified (gate G-XY below); since the addendum of 2026-11-25 (pre-flight
+  fixes, positions on the operator's word) they run after the operator confirms. Nothing has yet been run on the
+  instrument: the on-instrument check below is still to do.
 - **Asked for by:** the operator, 2026-11-25, with the OpenEVOS Multi-Dimensional Acquisition Kit v1.0: "read
   instructions carefully lets build a multi dimensional scan system".
 - **Code:**
@@ -61,7 +62,8 @@ stage is qualified, because of the cross-axis feedback issue (simulation is not 
    when complete. Free space is checked before every volume against the volume plus a 512 MB reserve. The journal
    has one line per image: event id, indices, planned and observed XY and Z, channel settings, time and a CRC-32 of
    the pixels. Simulated runs say so in `experiment.json`, in every volume record and on every journal line.
-7. **Gate G-XY.** `PHYSICAL_POSITIONS_QUALIFIED = False`. On the instrument (or any session with the physical stage
+7. **Gate G-XY** (refusal replaced by an operator confirmation: see the second addendum).
+   `PHYSICAL_POSITIONS_QUALIFIED = False`. On the instrument (or any session with the physical stage
    enabled) pre-flight refuses a plan with any XY move, and the page says why. The rest (Z × C × T at the current
    position) stays available. The simulator runs positions so the plan, writer and review can be exercised.
    Autofocus at every position and per-channel Z offsets are not offered: the kit gates them until validated.
@@ -94,7 +96,10 @@ stage is qualified, because of the cross-axis feedback issue (simulation is not 
 2. Z × C × T, 3 timepoints at 1 min, minimum interval: timepoint records and lateness as expected; light off
    between timepoints.
 3. Pause during a volume and between timepoints; Stop and keep data mid-volume: partial manifest, no return move.
-4. Confirm pre-flight refuses a plan with two positions while G-XY is closed.
+4. ~~Confirm pre-flight refuses a plan with two positions while G-XY is closed.~~ Superseded by the second
+   addendum: with two positions, Acquire asks the position question; Cancel starts nothing. Then two neighbouring
+   wells, 3 planes, one channel, with the operator present: watch the moves go one axis at a time and the stage
+   monitor stay quiet.
 
 ## Addendum (2026-11-25): merged onto main, page laid out after the kit's mockup
 The patch was applied to main on top of the merged Z-stack engine (ADR-0064); its 36 tests pass unchanged there. The
@@ -118,3 +123,41 @@ and the contact sheet), so the page was laid out again without changing what it 
   volumes not acquired, and Open raw data / Experiment manifest.
 Orthogonal XZ / YZ sections and a thumbnail gallery in Review, shown in the mockup, are still later (kit doc 06 §4
 calls them a later phase). Tests: `tests/test_mda.py` gains the map, chips, queue, axis bars and dataset tree.
+
+## Addendum (2026-11-25): pre-flight offers fixes; positions on the instrument are the operator's call
+**Asked for by:** the operator, on the Plan step's pre-flight card (Travel failing for 8 wells, Stage refused by
+G-XY): "why dont you set a auto set/fix prompt while selecting this feature, multi dimentional auto means i will do
+positions".
+
+**Fixes.** A failing check that software can put right now offers a button under the checklist, with a caption that
+says exactly what it changes. Fixes edit the plan only; none moves anything. For **Travel** (planes outside the focus
+limits, or a per-position focus reference missing):
+- *Use focus now*: the reference becomes the current focus; offered only when that puts every plane in range.
+- *Raise the reference* (or *Lower*): the reference moves just far enough that the lowest plane sits at the bottom
+  focus limit (or the highest at the top). The caption says plainly that this fits the stack into the travel and
+  does not find the sample.
+- Per-position focus: the fix sets only the positions that fail.
+- When focus reads within 1 µm of the bottom limit, the card adds: focus on the sample first. The focus drive
+  re-homes there when the microscope is switched on, so a reference of 0 almost always means "not focused yet".
+Code: `mda.MDAFix`, `mda.focus_fixes`, `mda.apply_fix`; `MDAPreflight.fixes` / `fix_hint`; the page's
+`_show_fixes` / `apply_fix`. The Travel line now names a shared range once ("A1, A3, B4 and 5 more: planes
+-10.0–10.0 µm, limits 0–8,000 µm").
+
+**Positions on the instrument.** G-XY no longer refuses. `PHYSICAL_POSITIONS_QUALIFIED` stays `False`: it records
+that XY and its cross-axis feedback are *not* qualified. While it is `False` and the plan has XY moves on the real
+stage, pre-flight marks Stage "!" (not ✗), and Acquire asks before the run, as it already does for the safe height
+("Move between positions on the instrument?", default Cancel). The question names the number of positions, says XY
+is unqualified and how the moves are made. The runner refuses to start without that confirmation
+(`confirmed_positions`), journals it (`"kind": "confirmed"`, `positions_on_instrument`) and the event log records it.
+Checked before lifting the refusal, so the constraints the architecture session holds still apply:
+- Multi-D's `_go_to` calls `controller.move_stage`, the same call as `scan_runner` (Scan page). That is a
+  `MoveStageAbsolute` through the router to the Technosoft stage service, which runs one axis at a time
+  (`SEQUENTIAL_XY = True`, telemetry.py), with the stage monitor watching the still axis and its automatic
+  re-approach (ADR-0061). No combined X/Y move.
+- Multi-D never turns the turret (no `set_objective` in `mda*.py` or `zstack*.py`).
+- Stage limits, coordinate frame and XY read-back are still checked in pre-flight as before. Outside the limits, a
+  different frame or no read-back is a ✗ that cannot be confirmed away.
+Tests: `test_physical_positions_need_the_operators_confirmation`, `test_travel_fixes_use_focus_now_or_raise_the_
+reference`, `test_travel_fix_per_position_sets_only_the_failing_references`,
+`test_page_offers_a_fix_for_travel_and_applies_it`; the page's gate test now declines the question and checks that
+nothing starts.

@@ -57,8 +57,10 @@ MAX_POSITIONS = 384  # as the time-lapse beacons (manual p.30)
 XY_SPEED_UM_S = 5_000.0
 XY_SETTLE_S = 0.5
 STORAGE_RESERVE_MB = 512.0
-#: the one physical gate the kit sets that software can check: multi-position runs on the real stage stay off until the
-#: XY stage and its cross-axis feedback are qualified (kit doc 04 §9, MDA-035). Simulation is not affected.
+#: the kit's physical gate (kit doc 04 §9, MDA-035): the XY stage and its cross-axis feedback are not yet qualified.
+#: Until they are, a multi-position run on the real stage is the operator's call: pre-flight asks them to confirm before
+#: the first move (ADR-0065 addendum 2026-11-25) instead of refusing. The moves themselves take the Scan page's path
+#: (router -> stage service, one axis at a time under the stage monitor). Simulation is not affected.
 PHYSICAL_POSITIONS_QUALIFIED = False
 
 
@@ -430,15 +432,117 @@ def summarize(plan: MultiDimPlan, profile, *, preview: int = 8) -> PlanSummary:
 
 # ====================================================================================== preflight
 @dataclass(frozen=True)
+class MDAFix:
+    """One click that makes a failing pre-flight check pass. It edits the plan only and moves nothing; `explain` says
+    plainly what it changes."""
+    check: str  # the check it fixes, as named in the checklist
+    label: str  # the button text
+    explain: str
+    global_anchor_um: float | None = None  # the new global focus reference
+    anchors: tuple[tuple[str, float], ...] = ()  # (position_id, new per-position focus reference)
+
+
+def apply_fix(plan: MultiDimPlan, fix: MDAFix) -> MultiDimPlan:
+    if fix.global_anchor_um is not None:
+        plan = replace(plan, global_anchor_z_um=fix.global_anchor_um)
+    if fix.anchors:
+        new = dict(fix.anchors)
+        plan = replace(plan, positions=tuple(replace(p, z_anchor_um=new[p.position_id]) if p.position_id in new else p
+                                             for p in plan.positions))
+    return plan
+
+
+def focus_fixes(plan: MultiDimPlan, session) -> tuple[tuple[MDAFix, ...], str | None]:
+    """Fixes for a focus reference that puts planes outside the focus limits (or is missing), and a hint when the
+    focus has evidently not been set on the sample. Never moves anything."""
+    ctl, prof = session.controller, session.profile
+    try:
+        offs = plan.z_offsets()
+    except CaptureRejected:
+        return (), None
+    if not offs:
+        return (), None
+    lim = ctl.axis_limits(prof.focus_device, "z") if prof.focus_device else None
+    zf = ctl.focus_z()
+
+    def fits(a: float) -> bool:
+        return lim is None or (a + offs[0] >= lim[0] - 1e-6 and a + offs[-1] <= lim[1] + 1e-6)
+
+    per = plan.focus_policy is FocusPolicy.PER_POSITION
+    if per:
+        bad = [(p.position_id, p.z_anchor_um) for p in plan.positions
+               if p.z_anchor_um is None or not fits(p.z_anchor_um)]
+        n = len(bad)
+        whom = (" of the position" if n == 1 and len(plan.positions) == 1 else
+                f" of {'all ' if n == len(plan.positions) else ''}{n} position{'s' if n != 1 else ''}")
+    else:
+        a = plan.global_anchor_z_um
+        bad = [("", a)] if a is None or not fits(a) else []
+        whom = ""
+    if not bad:
+        return (), None
+    fixes: list[MDAFix] = []
+
+    def make(label: str, explain: str, values: list[tuple[str, float]]) -> MDAFix:
+        if per:
+            return MDAFix("Travel", label, explain, anchors=tuple(values))
+        return MDAFix("Travel", label, explain, global_anchor_um=values[0][1])
+
+    # 1. the focus now, when it brings every plane into range and differs from what is set
+    if zf is not None and fits(zf) and any(a is None or abs(a - zf) > 0.05 for _, a in bad):
+        fixes.append(make("Use focus now", f"Sets the focus reference{whom} to the current focus, {zf:,.1f} µm, so the "
+                          f"planes run {zf + offs[0]:,.1f}–{zf + offs[-1]:,.1f} µm. Changes the plan only; nothing "
+                          "moves now.", [(pid, float(zf)) for pid, _ in bad]))
+    # 2. shift the reference just enough that the stack fits (lowest plane at the bottom limit, or top at the top)
+    span = offs[-1] - offs[0]
+    if lim is not None and span <= lim[1] - lim[0] + 1e-6 and all(a is not None for _, a in bad):
+        moved: list[tuple[str, float]] = []
+        up = down = False
+        for pid, a in bad:
+            assert a is not None
+            if a + offs[0] < lim[0]:
+                new, up = math.ceil((lim[0] - offs[0]) * 10 - 1e-6) / 10, True
+            else:
+                new, down = math.floor((lim[1] - offs[-1]) * 10 + 1e-6) / 10, True
+            moved.append((pid, new))
+        vals = {v for _, v in moved}
+        to = f"{next(iter(vals)):,.1f} µm" if len(vals) == 1 else "the nearest value that fits"
+        if up and not down:
+            label, where = "Raise the reference", (f"the lowest plane sits at the bottom focus limit "
+                                                   f"({lim[0]:,.0f} µm)")
+        elif down and not up:
+            label, where = "Lower the reference", f"the highest plane sits at the top focus limit ({lim[1]:,.0f} µm)"
+        else:
+            label, where = "Move the reference into range", "every plane is inside the focus limits"
+        fixes.append(make(label, f"Sets the focus reference{whom} to {to}, so {where}. The planes keep their "
+                          f"{span:,.1f} µm span and step. This only fits the stack into the travel: it does not "
+                          "find the sample. Changes the plan only; nothing moves now.", moved))
+    hint = None
+    if zf is not None and lim is not None and abs(zf - lim[0]) < 1.0:
+        hint = (f"Focus reads {zf:,.1f} µm, the bottom of its travel. The focus drive re-homes there when the "
+                "microscope is switched on, so this almost always means the sample has not been focused yet: focus on "
+                "the sample first (Capture page), then press Use focus now.")
+    return tuple(fixes), hint
+
+
+@dataclass(frozen=True)
 class MDAPreflight:
     errors: tuple[str, ...] = ()
-    confirm: str | None = None
+    confirm: str | None = None  # planes above the safe height: asked before the run
     notes: tuple[str, ...] = ()
     checks: tuple[tuple[str, str, str], ...] = ()  # (name, "ok" | "warn" | "fail" | "skip", detail)
+    #: positions on the real stage while XY is unqualified: the operator is asked before the run (ADR-0065 addendum)
+    confirm_positions: str | None = None
+    fixes: tuple[MDAFix, ...] = ()  # one-click fixes for failing checks
+    fix_hint: str | None = None  # what the fixes cannot do (e.g. "focus first")
 
     @property
     def ok(self) -> bool:
         return not self.errors
+
+    @property
+    def questions(self) -> tuple[str, ...]:
+        return tuple(q for q in (self.confirm_positions, self.confirm) if q)
 
 
 def _free_mb(folder: Path) -> float | None:
@@ -476,6 +580,8 @@ def preflight(plan: MultiDimPlan, session, summary: PlanSummary | None = None, *
     lim = ctl.axis_limits(prof.focus_device, "z") if prof.focus_device else None
     safe = cap.safe_height_for() if getattr(cap, "safe_height_for", None) else None
     out_of_range: list[str] = []
+    ranges: dict[tuple[float, float], list[str]] = {}
+    at_bottom: list[str] = []  # the same out-of-range span, named once for its positions
     above = 0
     above_where: list[str] = []
     try:
@@ -491,16 +597,24 @@ def preflight(plan: MultiDimPlan, session, summary: PlanSummary | None = None, *
         lo_app = lo - (plan.z.approach_um if plan.z.enabled else 0.0)
         if lim and (lo < lim[0] - 1e-6 or hi > lim[1] + 1e-6):
             out_of_range.append(f"{pos.label} ({lo:,.1f}–{hi:,.1f} µm)")
+            ranges.setdefault((round(lo, 1), round(hi, 1)), []).append(pos.label)
         elif lim and lo_app < lim[0]:
-            notes.append(f"{pos.label}: the bottom is at the focus limit; its first plane is approached from above")
+            at_bottom.append(pos.label)
         if safe and hi > safe[1] + 0.5:
             above += sum(1 for o in offsets if a + o > safe[1] + 0.5)
             above_where.append(pos.label)
+    if at_bottom:
+        who = ", ".join(at_bottom[:3]) + (f" and {len(at_bottom) - 3} more" if len(at_bottom) > 3 else "")
+        notes.append(f"{who}: the bottom plane is at the focus limit, so the first plane is approached from above")
     if out_of_range:
         errors.append("outside the focus limits"
                       + (f" {lim[0]:,.0f}–{lim[1]:,.0f} µm" if lim else "") + ": " + ", ".join(out_of_range))
-    checks.append(("Travel", "fail" if out_of_range else "ok",
-                   "; ".join(out_of_range) or "every plane inside the focus limits"))
+    travel = "; ".join(
+        f"{', '.join(names[:3])}{f' and {len(names) - 3} more' if len(names) > 3 else ''}: planes {a:,.1f}–{b:,.1f} µm"
+        for (a, b), names in ranges.items())
+    if lim and ranges:
+        travel += f", limits {lim[0]:,.0f}–{lim[1]:,.0f} µm"
+    checks.append(("Travel", "fail" if out_of_range else "ok", travel or "every plane inside the focus limits"))
     confirm = None
     if above:
         assert safe is not None
@@ -510,13 +624,19 @@ def preflight(plan: MultiDimPlan, session, summary: PlanSummary | None = None, *
     checks.append(("Safe height", "warn" if confirm else ("ok" if safe else "skip"),
                    "planes above it: you will be asked" if confirm else
                    ("below it everywhere" if safe else "no safe height set for this objective")))
-    # XY positions: limits, frame, telemetry, and the physical gate
+    fixes, fix_hint = focus_fixes(plan, session)
+    # XY positions: limits, frame, telemetry, and the physical gate (the operator's call, asked before the run)
     movers = [p for p in plan.positions if p.moves]
+    confirm_positions = None
     if movers:
         physical = (not getattr(session, "simulated", True)) or getattr(session, "physical_stage", False)
         if physical and not PHYSICAL_POSITIONS_QUALIFIED:
-            errors.append("multi-position runs on the instrument stay off until the XY stage and its cross-axis "
-                          "feedback are qualified (ADR-0065); run in simulation, or with no positions")
+            n = len(movers)
+            confirm_positions = (
+                f"This run moves the stage between {n} position{'s' if n != 1 else ''} on the instrument. The XY "
+                "stage and its cross-axis feedback are not yet qualified (ADR-0065). Each move takes the Scan page's "
+                "path: one axis at a time, watched by the stage monitor, with its automatic re-approach; a drive "
+                "fault stops the run and keeps every volume already written. Move between positions?")
         if ctl.stage_xy() is None:
             errors.append("stage position unknown (no fresh XY read-back)")
         lx = ctl.axis_limits(prof.stage_device, "x")
@@ -529,9 +649,10 @@ def preflight(plan: MultiDimPlan, session, summary: PlanSummary | None = None, *
             errors.append("outside the stage limits: " + ", ".join(outside))
         if wrong:
             errors.append("saved in another coordinate frame or unit: " + ", ".join(wrong))
-        checks.append(("Stage", "fail" if (outside or wrong or (physical and not PHYSICAL_POSITIONS_QUALIFIED))
-                       else "ok", f"{len(movers)} position{'s' if len(movers) != 1 else ''}"
-                       + (" (simulated stage)" if not physical else "")))
+        checks.append(("Stage", "fail" if (outside or wrong) else ("warn" if confirm_positions else "ok"),
+                       f"{len(movers)} position{'s' if len(movers) != 1 else ''}"
+                       + (" (simulated stage)" if not physical else
+                          ", XY not yet qualified: you will be asked" if confirm_positions else "")))
     else:
         checks.append(("Stage", "skip", "no XY moves: the run stays where the stage is"))
     # time
@@ -558,4 +679,5 @@ def preflight(plan: MultiDimPlan, session, summary: PlanSummary | None = None, *
         checks.append(("Storage", "fail", "no save folder"))
     if summary.frame_source != "camera profile":
         notes.append("the size estimate uses a default frame size: the camera profile has none")
-    return MDAPreflight(tuple(dict.fromkeys(errors)), confirm, tuple(notes), tuple(checks))
+    return MDAPreflight(tuple(dict.fromkeys(errors)), confirm, tuple(notes), tuple(checks), confirm_positions,
+                        fixes, fix_hint)

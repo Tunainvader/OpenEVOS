@@ -13,7 +13,9 @@ Three steps along the top, the way the scientist works:
 * **Review.** Opens any experiment folder: step through T, P, C and Z, project a Z subrange, read the metadata;
   volumes not acquired are listed, never hidden.
 
-Physical positions stay locked until the XY stage is qualified (kit gate G-XY); the simulator runs them.
+Positions on the instrument: the XY stage is not yet qualified (kit gate G-XY), so Acquire asks the operator to confirm
+the moves first (ADR-0065 addendum 2026-11-25); the simulator runs them without asking. A failing pre-flight check
+that has a fix offers it as a button that says what it changes (it edits the plan, never moves anything).
 """
 
 from __future__ import annotations
@@ -62,6 +64,7 @@ from openevos.acquisition.mda import (
     STORAGE_RESERVE_MB,
     ChannelPlan,
     FocusPolicy,
+    MDAFix,
     Missed,
     MultiDimPlan,
     PositionPlan,
@@ -113,7 +116,7 @@ def _size(mb: float) -> str:
 
 
 def _gate_locked(session) -> bool:
-    """Positions with stage moves are allowed only on the simulator until the XY stage is qualified (kit G-XY)."""
+    """Positions with stage moves need the operator's confirmation on the instrument until XY is qualified (G-XY)."""
     return not PHYSICAL_POSITIONS_QUALIFIED and ((not session.simulated) or bool(session.physical_stage))
 
 
@@ -623,7 +626,14 @@ class MultiDPage(QWidget):
         self.lbl_notes = label("", "muted", wrap=True)
         self.lbl_checks = label("", "", wrap=True)
         self.lbl_checks.setTextFormat(Qt.TextFormat.RichText)
-        for w in (self.lbl_checks, self.lbl_errors, self.lbl_confirm, self.lbl_notes):
+        # one-click fixes for failing checks, each saying what it changes; rebuilt on every pre-flight
+        self.fix_box = QWidget()
+        self.fix_lay = QVBoxLayout(self.fix_box)
+        self.fix_lay.setContentsMargins(0, 2, 0, 2)
+        self.fix_lay.setSpacing(4)
+        self.fix_box.setVisible(False)
+        self.fix_buttons: list[QPushButton] = []
+        for w in (self.lbl_checks, self.fix_box, self.lbl_errors, self.lbl_confirm, self.lbl_notes):
             pfl.addWidget(w)
         rl.addWidget(pf)
 
@@ -1268,8 +1278,8 @@ class MultiDPage(QWidget):
         self.t_missed.setVisible(self.t_sched.currentData() == Schedule.FIXED.value)
         locked = _gate_locked(self.session)
         self.lbl_gate.setVisible(locked and self.card_p.enabled())
-        self.lbl_gate.setText("Stage moves between positions are locked on this instrument until the XY stage is "
-                              "qualified. You can plan and save positions; Acquire stays off while any are listed.")
+        self.lbl_gate.setText("The XY stage is not yet qualified on this instrument: Acquire asks you to confirm "
+                              "the moves between positions before the run starts.")
         try:
             plan = self.plan()
         except (CaptureRejected, ValueError) as exc:
@@ -1370,7 +1380,7 @@ class MultiDPage(QWidget):
     def _show_problem(self, text: str) -> None:
         self.lbl_errors.setText("Fix before acquiring: " + text)
         self.lbl_errors.setVisible(True)
-        for w in (self.lbl_confirm, self.lbl_notes, self.lbl_checks):
+        for w in (self.lbl_confirm, self.lbl_notes, self.lbl_checks, self.fix_box):
             w.setVisible(False)
         self.last_preflight = None
         self._update_acquire()
@@ -1384,6 +1394,38 @@ class MultiDPage(QWidget):
         self.lbl_notes.setText("\n".join(f"• {n}" for n in pre.notes))
         self.lbl_checks.setVisible(bool(pre.checks))
         self.lbl_checks.setText(checklist_html(list(pre.checks)))
+        self._show_fixes(pre.fixes, pre.fix_hint)
+
+    def _show_fixes(self, fixes: tuple[MDAFix, ...], hint: str | None) -> None:
+        while self.fix_lay.count():
+            item = self.fix_lay.takeAt(0)
+            old = item.widget() if item is not None else None
+            if old is not None:
+                old.deleteLater()
+        self.fix_buttons = []
+        for fx in fixes:
+            b = QPushButton(f"Fix {fx.check.lower()}: {fx.label}")
+            b.setToolTip(fx.explain)
+            b.setAccessibleName(f"{fx.label}. {fx.explain}")
+            b.clicked.connect(lambda _c=False, f=fx: self.apply_fix(f))
+            self.fix_buttons.append(b)
+            self.fix_lay.addWidget(b)
+            self.fix_lay.addWidget(label(fx.explain, "caption", wrap=True))
+        if hint:
+            self.fix_lay.addWidget(label(hint, "warn", wrap=True))
+        self.fix_box.setVisible(bool(hint or fixes))
+
+    def apply_fix(self, fx: MDAFix) -> None:
+        """A pre-flight Fix button: edits the plan (the focus reference), never moves anything."""
+        if fx.global_anchor_um is not None:
+            self.anchor_um = fx.global_anchor_um
+        if fx.anchors:
+            new = dict(fx.anchors)
+            self.positions = [replace(q, z_anchor_um=new[q.position_id]) if q.position_id in new else q
+                              for q in self.positions]
+            self._fill_table()
+        self.model.add_log("info", f"Multi-D: {fx.label}. {fx.explain}")
+        self.refresh()  # at once, so the check turns green under the operator's click
 
     def _running(self) -> bool:
         return self.model.tasks.busy and self.model.tasks.current == TASK
@@ -1394,7 +1436,7 @@ class MultiDPage(QWidget):
         ok = pre is not None and pre.ok and not busy
         self.btn_acquire.setEnabled(ok)
         self.btn_acquire.setToolTip("" if ok else "Another workflow is running" if busy else
-                                    "Fix the items listed under Before you acquire")
+                                    "Fix the items marked ✗ under Pre-flight validation (its Fix buttons can do it)")
 
     def _on_busy(self, _busy: bool) -> None:
         running = self._running()
@@ -1436,9 +1478,9 @@ class MultiDPage(QWidget):
         return True
 
     # ------------------------------------------------------------------ acquire
-    def _confirm(self, text: str) -> bool:
-        box = QMessageBox(QMessageBox.Icon.Warning, "Acquire above the safe height?", text, parent=self)
-        run = box.addButton("Acquire", QMessageBox.ButtonRole.AcceptRole)
+    def _confirm(self, text: str, title: str = "Acquire above the safe height?", run_text: str = "Acquire") -> bool:
+        box = QMessageBox(QMessageBox.Icon.Warning, title, text, parent=self)
+        run = box.addButton(run_text, QMessageBox.ButtonRole.AcceptRole)
         cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(cancel)
         box.exec()
@@ -1459,7 +1501,16 @@ class MultiDPage(QWidget):
             self._show_preflight(pre)
             self.model.add_log("warn", "Multi-D: " + "; ".join(pre.errors))
             return False
-        confirmed = False
+        confirmed = confirmed_positions = False
+        if pre.confirm_positions:
+            q = pre.confirm_positions
+            if not (ask(q) if ask else self._confirm(q, "Move between positions on the instrument?",
+                                                      "Move and acquire")):
+                return False
+            confirmed_positions = True
+            n = sum(1 for p in plan.positions if p.moves)
+            self.model.add_log("warn", f"Multi-D: operator confirmed moves between {n} positions on the instrument "
+                                       "(XY stage not yet qualified)")
         if pre.confirm:
             if not (ask(pre.confirm) if ask else self._confirm(pre.confirm)):
                 return False
@@ -1495,8 +1546,8 @@ class MultiDPage(QWidget):
                 disp(self._show_latest)
 
         def work():
-            return runner.run(plan, summ, pre, confirmed_above_safe=confirmed, progress=on_progress,
-                              on_image=on_image)
+            return runner.run(plan, summ, pre, confirmed_above_safe=confirmed,
+                              confirmed_positions=confirmed_positions, progress=on_progress, on_image=on_image)
 
         return bool(self.model.submit_when_idle(TASK, work, on_done=self._done, on_error=self._error))
 

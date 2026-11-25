@@ -29,6 +29,7 @@ from openevos.acquisition.mda import (
     TimeAxisPlan,
     Traversal,
     ZAxisPlan,
+    apply_fix,
     compile_events,
     compile_jobs,
     preflight,
@@ -411,14 +412,62 @@ def test_s004_no_focus_telemetry_blocks(sim, tmp_path, monkeypatch):
     assert not pre.ok
 
 
-def test_physical_positions_are_gated_until_xy_qualification(sim, tmp_path, monkeypatch):
+def test_physical_positions_need_the_operators_confirmation(sim, tmp_path, monkeypatch):
+    """ADR-0065 addendum 2026-11-25: XY is not yet qualified, so positions on the instrument are asked, not refused."""
     p = simplan(sim, n_p=2)
-    assert preflight(p, sim, save_root=tmp_path).ok  # the simulator runs positions
+    pre = preflight(p, sim, save_root=tmp_path)
+    assert pre.ok and pre.confirm_positions is None  # the simulator runs positions without asking
     monkeypatch.setattr(type(sim), "simulated", property(lambda _s: False), raising=False)
     pre = preflight(p, sim, save_root=tmp_path)
-    assert not pre.ok and any("qualif" in e for e in pre.errors), pre.errors
-    # no XY move (one position where the stage is): Z x C x T stays available
-    assert not any("qualif" in e for e in preflight(simplan(sim), sim, save_root=tmp_path).errors)
+    assert pre.ok, pre.errors
+    q = pre.confirm_positions or ""
+    assert "2 positions" in q and "one axis at a time" in q
+    assert {n: s for n, s, _d in pre.checks}["Stage"] == "warn"
+    s = summarize(p, sim.profile)
+    with pytest.raises(CaptureRejected, match="confirmation"):
+        MultiDimRunner(sim, ExperimentWriter(tmp_path)).run(p, s, pre)
+    res = MultiDimRunner(sim, ExperimentWriter(tmp_path)).run(p, s, pre, confirmed_positions=True)
+    assert res.state is MDAState.COMPLETED
+    journal = (Path(res.folder) / "events.jsonl").read_text("utf-8")
+    assert '"kind": "confirmed"' in journal and "positions_on_instrument" in journal
+    # no XY move (one position where the stage is): nothing to confirm
+    assert preflight(simplan(sim), sim, save_root=tmp_path).confirm_positions is None
+
+
+def test_travel_fixes_use_focus_now_or_raise_the_reference(sim, tmp_path, monkeypatch):
+    """The operator's case: focus re-homed to the bottom, reference 0, planes -10..+10: each fix makes Travel pass."""
+    lo, _hi = sim.controller.axis_limits(sim.profile.focus_device, "z")
+    zf = sim.controller.focus_z()
+    p = replace(simplan(sim, n_p=2), global_anchor_z_um=lo)
+    pre = preflight(p, sim, save_root=tmp_path)
+    assert not pre.ok and {n: s for n, s, _d in pre.checks}["Travel"] == "fail"
+    labels = [f.label for f in pre.fixes]
+    assert labels == ["Use focus now", "Raise the reference"], labels
+    now, up = pre.fixes
+    assert now.global_anchor_um == pytest.approx(zf) and "nothing moves" in now.explain
+    assert up.global_anchor_um == pytest.approx(lo + 1.0) and "does not find the sample" in up.explain
+    for fx in pre.fixes:
+        assert preflight(apply_fix(p, fx), sim, save_root=tmp_path).ok
+    # focus still at the bottom (just re-homed): only Raise can help, and the hint says to focus first
+    monkeypatch.setattr(sim.controller, "focus_z", lambda: lo)
+    pre = preflight(p, sim, save_root=tmp_path)
+    assert [f.label for f in pre.fixes] == ["Raise the reference"]
+    assert pre.fix_hint and "focus on the sample first" in pre.fix_hint
+
+
+def test_travel_fix_per_position_sets_only_the_failing_references(sim, tmp_path):
+    lo, _hi = sim.controller.axis_limits(sim.profile.focus_device, "z")
+    zf = sim.controller.focus_z()
+    base = simplan(sim, n_p=3)
+    pos = (replace(base.positions[0], z_anchor_um=zf), replace(base.positions[1], z_anchor_um=lo),
+           replace(base.positions[2], z_anchor_um=None))
+    p = replace(base, positions=pos, focus_policy=FocusPolicy.PER_POSITION)
+    pre = preflight(p, sim, save_root=tmp_path)
+    assert not pre.ok
+    assert [f.label for f in pre.fixes] == ["Use focus now"]  # a missing reference cannot be raised
+    fx = pre.fixes[0]
+    assert dict(fx.anchors) == {"P0002": pytest.approx(zf), "P0003": pytest.approx(zf)} and "2 positions" in fx.explain
+    assert preflight(apply_fix(p, fx), sim, save_root=tmp_path).ok
 
 
 def test_storage_preflight_blocks_when_space_is_short(sim, tmp_path, monkeypatch):
@@ -528,9 +577,33 @@ def test_page_plan_file_round_trip_and_gate_note(app, window, tmp_path, monkeypa
     assert pg.name.text() == "Saved" and len(pg.positions) == 1
     assert not pg.load_plan_file(tmp_path / "missing.json")
     monkeypatch.setattr(type(pg.session), "simulated", property(lambda _s: False), raising=False)
+    pg.md.save_folder = str(tmp_path / "exp")
+    pg.positions.append(replace(pg.positions[0], position_id="P0002", label="Two", x=pg.positions[0].x + 500))
+    pg._fill_table()
     pg.refresh()
-    assert pg.lbl_gate.isVisibleTo(pg) and "qualified" in pg.lbl_gate.text()
-    assert not pg.btn_acquire.isEnabled()
+    assert pg.lbl_gate.isVisibleTo(pg) and "confirm" in pg.lbl_gate.text()
+    assert pg.btn_acquire.isEnabled(), pg.last_preflight
+    asked: list[str] = []
+    assert not pg.acquire(ask=lambda q: asked.append(q) or False)  # declined: nothing starts
+    assert len(asked) == 1 and "positions on the instrument" in asked[0] and not window.model.tasks.busy
+
+
+def test_page_offers_a_fix_for_travel_and_applies_it(app, window, tmp_path):
+    pg = window.pages["multid"]
+    pg.md.save_folder = str(tmp_path / "exp")
+    lo, _hi = pg.session.controller.axis_limits(pg.session.profile.focus_device, "z")
+    pg.card_z.switch.setChecked(True)
+    pg.z_a.setValue(10.0)
+    pg.z_b.setValue(10.0)
+    pg.anchor_um = lo
+    pg.refresh()
+    assert not pg.btn_acquire.isEnabled() and pg.fix_box.isVisibleTo(pg)
+    texts = [b.text() for b in pg.fix_buttons]
+    assert texts == ["Fix travel: Use focus now", "Fix travel: Raise the reference"], texts
+    pg.fix_buttons[1].click()
+    pump(app, 0.1)
+    assert pg.anchor_um == pytest.approx(lo + pg.z_a.value()) and pg.btn_acquire.isEnabled()
+    assert not pg.fix_box.isVisibleTo(pg)
 
 
 def test_u001_monitor_fits_1280_by_760(app, window):

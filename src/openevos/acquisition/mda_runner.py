@@ -107,14 +107,20 @@ class MultiDimRunner:
 
     # ------------------------------------------------------------------ run
     def run(self, plan: MultiDimPlan, summary: PlanSummary, pre: MDAPreflight, *, confirmed_above_safe: bool = False,
-            progress: ProgressFn | None = None, on_image: ImageFn | None = None) -> MDAResult:
+            confirmed_positions: bool = False, progress: ProgressFn | None = None,
+            on_image: ImageFn | None = None) -> MDAResult:
         if not pre.ok:
             raise CaptureRejected("; ".join(pre.errors))
         if pre.confirm and not confirmed_above_safe:
             raise CaptureRejected("planes above the safe height need confirming first")
+        if pre.confirm_positions and not confirmed_positions:
+            raise CaptureRejected("moving between positions on the instrument needs the operator's confirmation first")
         t0 = self.monotonic()
         started = datetime.now(UTC)
         self.writer.begin(plan, summary, started_at=started)
+        for what, q in (("positions_on_instrument", pre.confirm_positions), ("above_safe_height", pre.confirm)):
+            if q:
+                self.writer.record("confirmed", what=what, question=q)
         self.state = MDAState.RUNNING
         total = summary.images
         done = 0
