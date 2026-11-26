@@ -44,6 +44,7 @@ from openevos.acquisition.mda import (
 from openevos.acquisition.mda import Missed as MissedPolicy
 from openevos.acquisition.scan_runner import RunControl, RunStopped
 from openevos.imaging.mda_store import ExperimentWriter, StorageFull
+from openevos.safety.restrictions import run_guard
 
 
 class MDAState(str, Enum):
@@ -122,6 +123,17 @@ class MultiDimRunner:
     def run(self, plan: MultiDimPlan, summary: PlanSummary, pre: MDAPreflight, *, confirmed_above_safe: bool = False,
             confirmed_positions: bool = False, progress: ProgressFn | None = None,
             on_image: ImageFn | None = None) -> MDAResult:
+        """Inside the SafetyManager's run guard (ADR-0070): refused before anything moves when a restriction the
+        operator confirmed covers what it needs."""
+        caps = self.cap.run_capabilities(plan.camera, positions=len(plan.positions)) \
+            if hasattr(self.cap, "run_capabilities") else set()
+        with run_guard(self.s, "Multi-D", caps, self.control.stop):
+            return self._run(plan, summary, pre, confirmed_above_safe=confirmed_above_safe,
+                             confirmed_positions=confirmed_positions, progress=progress, on_image=on_image)
+
+    def _run(self, plan: MultiDimPlan, summary: PlanSummary, pre: MDAPreflight, *, confirmed_above_safe: bool = False,
+             confirmed_positions: bool = False, progress: ProgressFn | None = None,
+             on_image: ImageFn | None = None) -> MDAResult:
         if not pre.ok:
             raise CaptureRejected("; ".join(pre.errors))
         if pre.confirm and not confirmed_above_safe:

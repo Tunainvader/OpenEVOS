@@ -40,6 +40,7 @@ from openevos.core.models import (
 from openevos.safety.capabilities import AxisLimits, CapabilitySource, DeviceCapabilities
 from openevos.safety.firmware import FirmwareModeRefusal, operation_refusal
 from openevos.safety.interlocks import DEFAULT_INTERLOCKS, Interlock
+from openevos.safety.restrictions import HealthRestrictionInterlock, RestrictionRegistry
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,9 @@ class _Reasons:
 class SafetyManager:
     def __init__(self, interlocks: Sequence[Interlock] = DEFAULT_INTERLOCKS):
         self.interlocks: list[Interlock] = list(interlocks)
+        #: restrictions the operator confirmed from Health (ADR-0070); enforced by an interlock and by run_guard
+        self.restrictions = RestrictionRegistry()
+        self.interlocks.append(HealthRestrictionInterlock(self.restrictions))
 
     def add_interlock(self, interlock: Interlock) -> None:
         self.interlocks.append(interlock)

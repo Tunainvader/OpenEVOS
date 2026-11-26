@@ -1,9 +1,14 @@
-"""Health page (ADR-0068 Phase 0, ADR-0069 Phase 1 of the Instrument Health kit): read-only status of the instrument.
+"""Health page (ADR-0068 Phase 0, ADR-0069 Phase 1, ADR-0070 Phase 2 of the Instrument Health kit).
 
 An overview (overall state, freshness, counts), the operating-capability list kept apart from physical health, one card
 per subsystem with its source, provenance and age, "Why is operation restricted?" quoting the StageMonitor's lock and
 the SafetyManager's refusal, the rules' open WATCH assessments and the correlated incidents (Phase 1), and the recent
 Health events. One button writes a diagnostic bundle (a zip file); it commands nothing.
+
+Phase 2 (ADR-0070, the operator's "ask, then restrict"): the Protection panel lists what Health proposes to restrict
+and what the SafetyManager restricts now. Its buttons appear only when there is something to decide: confirm or
+decline a proposal, stop the run a confirmed restriction waits for, lift a restriction, acknowledge a WATCH. Each asks
+first, and none sends a device command (stopping a run uses the run's own Stop).
 
 The page never commands anything and never waits on a device: it reads `HealthService.latest` (an immutable report the
 sampler thread swaps in) and the recorder's recent events once a second. States are shown as shape + text + colour,
@@ -24,6 +29,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -202,9 +208,10 @@ class HealthPage(QWidget):
         gl.addLayout(top)
         self.overall_why = label("", "", wrap=True)
         gl.addWidget(self.overall_why)
-        gl.addWidget(label("Read-only. Health observes and recommends: the StageMonitor and the SafetyManager decide "
-                           "what may move, and nothing on this page sends a command. Unknown is never shown as "
-                           "healthy; a value from the simulator is marked DEMO.", "caption", wrap=True))
+        gl.addWidget(label("Health observes and recommends: the StageMonitor and the SafetyManager decide what may "
+                           "move, and nothing on this page sends a device command. Health restricts only what you "
+                           "confirm under Protection. Unknown is never shown as healthy; a value from the simulator is "
+                           "marked DEMO.", "caption", wrap=True))
         self.journal = label("", "caption", wrap=True)
         gl.addWidget(self.journal)
         root.addWidget(g)
@@ -291,6 +298,22 @@ class HealthPage(QWidget):
         rl.addLayout(ex)
         root.addWidget(r)
 
+        # ------------------------------------------------------------------ protection (Phase 2)
+        pr, prl = panel("Protection")
+        prl.addWidget(label("For some WATCHes Health proposes a restriction. Nothing is restricted until you confirm "
+                            "it; the SafetyManager then refuses only that capability and everything else stays "
+                            "available. A run that needs it is never cut short unless you choose to stop it at its "
+                            "next safe point. A restriction is lifted when its verification passes, or when you lift "
+                            "it. Acknowledging a WATCH clears nothing.", "caption", wrap=True))
+        self.protect_box = QVBoxLayout()
+        self.protect_box.setSpacing(8)
+        prl.addLayout(self.protect_box)
+        self.protect_note = label("", "caption", wrap=True)
+        prl.addWidget(self.protect_note)
+        root.addWidget(pr)
+        self._protect_key: tuple[Any, ...] | None = None
+        self._protect_labels: dict[str, QLabel] = {}
+
         # ------------------------------------------------------------------ recent events
         e, el = panel("Recent events")
         self.events = QTableWidget(0, len(EVENT_HEADERS))
@@ -368,6 +391,7 @@ class HealthPage(QWidget):
         self.rules.setText(self._rules_html(rep, now))
         self.detectors.setText(self._detectors_text(rep))
         self._fill_incidents()
+        self._fill_protection(rep)
         self._export_done()
         self._fill_events(now)
 
@@ -459,6 +483,158 @@ class HealthPage(QWidget):
         self._export_result = None
         self.export_btn.setEnabled(True)
         self.export_note.setText(f"Written: {res[1]}" if res[0] == "ok" else f"Export failed: {res[1]}")
+
+    # ------------------------------------------------------------------ Phase 2: protection
+    def ask(self, title: str, text: str, choices: list[str]) -> str:
+        """A modal question; returns the chosen button's text ("" when closed). Tests replace it."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle(title)
+        box.setText(text)
+        buttons = [(box.addButton(c, QMessageBox.ButtonRole.RejectRole if c == "Cancel"
+                                  else QMessageBox.ButtonRole.AcceptRole), c) for c in choices]
+        box.exec()
+        clicked = box.clickedButton()
+        return next((c for b, c in buttons if b is clicked), "")
+
+    def _fill_protection(self, rep: HealthReport) -> None:
+        svc = self.service
+        if not hasattr(svc, "proposals"):
+            return
+        props = svc.proposals()
+        prots = svc.protections()
+        unacked = [a for a in rep.assessments if not svc.acknowledged(a.assessment_id)]
+        key = (tuple((x.proposal_id, x.runs, x.recurring) for x in props),
+               tuple((r.restriction_id, r.state) for r, _v in prots), tuple(a.assessment_id for a in unacked))
+        if key != self._protect_key:
+            self._protect_key = key
+            self._rebuild_protection(props, prots, unacked)
+        for r, v in prots:  # the verification moves on every sample; only its text changes
+            lab = self._protect_labels.get(r.restriction_id)
+            if lab is not None:
+                lab.setText(self._restriction_html(r, v))
+
+    def _rebuild_protection(self, props: Any, prots: Any, unacked: Any) -> None:
+        box = self.protect_box
+        while box.count():
+            item = box.takeAt(0)
+            w = item.widget() if item is not None else None
+            if w is not None:
+                w.deleteLater()
+        self._protect_labels = {}
+
+        def row(html: str, buttons: list[tuple[str, str, Any]]) -> QLabel:
+            holder = QWidget()
+            h = QHBoxLayout(holder)
+            h.setContentsMargins(0, 0, 0, 0)
+            text = QLabel(html)
+            text.setWordWrap(True)
+            text.setTextFormat(Qt.TextFormat.RichText)
+            text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            h.addWidget(text, 1)
+            for caption, name, fn in buttons:
+                b = QPushButton(caption)
+                b.setObjectName(name)
+                b.clicked.connect(fn)
+                h.addWidget(b, 0, Qt.AlignmentFlag.AlignTop)
+            box.addWidget(holder)
+            return text
+
+        warn = theme.state_color("warn")
+        for p in props:
+            a = p.assessment
+            runs = (f"<br><b>Running now and needing it: {_esc(', '.join(p.runs))}.</b> Confirming waits for it to "
+                    "end, unless you choose to stop it at its next safe point.") if p.runs else ""
+            again = ("<br><b>Recurring:</b> restricted and released for the same reason within 24 h; a technician "
+                     "should inspect it.") if p.recurring else ""
+            row(f"<p><span style='color:{warn}'>▲ PROPOSED</span> <b>Restrict: {_esc(p.title)}</b><br>"
+                f"After rule {_esc(a.detector)}: {_esc(a.title)}. {_esc(a.detail)}<br>"
+                f"Stays available: {_esc(p.policy.keeps)}<br>"
+                f"Release: {_esc('; '.join(p.policy.release_conditions))}<br>"
+                f"Policy {_esc(p.policy.policy_id)} v{_esc(p.policy.version)} · {_esc(a.provenance.value)}"
+                f"{runs}{again}</p>",
+                [("Confirm…", "health_confirm", lambda _=False, pid=p.proposal_id: self.confirm_proposal(pid)),
+                 ("Decline", "health_decline", lambda _=False, pid=p.proposal_id: self.decline_proposal(pid))])
+        for r, v in prots:
+            buttons = [("Lift…", "health_lift", lambda _=False, rid=r.restriction_id: self.lift_restriction(rid))]
+            if r.state == "pending":
+                buttons.insert(0, ("Stop the run now…", "health_stop_runs",
+                                   lambda _=False, rid=r.restriction_id: self.stop_runs(rid)))
+            self._protect_labels[r.restriction_id] = row(self._restriction_html(r, v), buttons)
+        for a in unacked:
+            row(f"<p><span style='color:{warn}'>▲ WATCH</span> {_esc(a.title)} "
+                f"(rule {_esc(a.detector)}; not acknowledged)</p>",
+                [("Acknowledge", "health_ack", lambda _=False, aid=a.assessment_id: self.acknowledge(aid))])
+        if not (props or prots or unacked):
+            box.addWidget(label("Nothing proposed, nothing restricted by Health, no WATCH to acknowledge.", "muted"))
+
+    @staticmethod
+    def _restriction_html(r: Any, v: Any) -> str:
+        look = theme.state_color("locked" if r.state == "active" else "warn")
+        state = "■ RESTRICTED" if r.state == "active" else "▲ PENDING (waits for the run that needs it)"
+        ver = f"<br>Verification: {_esc(v.summary)}" if v is not None else ""
+        since = r.activated_at or r.requested_at
+        return (f"<p><span style='color:{look}'>{state}</span> <b>{_esc(r.title)}</b><br>"
+                f"Why: {_esc(r.reason)}<br>Enforced by the SafetyManager · confirmed by the operator · since "
+                f"{_esc(since[:19].replace('T', ' '))} UTC · policy {_esc(r.policy_id)} v{_esc(r.policy_version)}<br>"
+                f"Release: {_esc('; '.join(r.release_conditions))}{ver}</p>")
+
+    def _after(self, text: str) -> None:
+        self.protect_note.setText(text)
+        self._protect_key = None
+        self.service.sample()
+        self.refresh()
+
+    def confirm_proposal(self, proposal_id: str) -> None:
+        p = next((x for x in self.service.proposals() if x.proposal_id == proposal_id), None)
+        if p is None:
+            self._after("That proposal is no longer open (its WATCH may have resolved).")
+            return
+        a = p.assessment
+        text = (f"Restrict: {p.title}\n\nWhy: rule {a.detector}: {a.title}. {a.detail}\n\nStays available: "
+                f"{p.policy.keeps}\n\nRelease: {'; '.join(p.policy.release_conditions)}")
+        if p.runs:
+            text += (f"\n\nRunning now and needing it: {', '.join(p.runs)}. It can finish first, or stop at its next "
+                     "safe point (the current move or image finishes; everything taken is kept).")
+            choices = ["Apply when the run ends", "Stop the run at its next safe point", "Cancel"]
+        else:
+            choices = ["Restrict", "Cancel"]
+        ans = self.ask("Confirm restriction", text, choices)
+        if ans in ("", "Cancel"):
+            return
+        try:
+            r = self.service.confirm(proposal_id, stop_runs=ans.startswith("Stop"))
+        except Exception as exc:  # noqa: BLE001 - shown on the page
+            self._after(f"Not restricted: {type(exc).__name__}: {exc}")
+            return
+        self._after(f"Restriction {'in force' if r.active else 'confirmed, waiting for the run'}: {r.title}")
+
+    def decline_proposal(self, proposal_id: str) -> None:
+        self.service.decline(proposal_id)
+        self._after("Declined; the WATCH stays on the page.")
+
+    def stop_runs(self, restriction_id: str) -> None:
+        if self.ask("Stop the run", "Stop the run this restriction waits for at its next safe point? The current "
+                    "move or image finishes and everything taken is kept.", ["Stop the run", "Cancel"]) \
+                != "Stop the run":
+            return
+        stopped = self.service.stop_runs(restriction_id)
+        self._after(f"Asked to stop: {', '.join(stopped)}" if stopped else "No run to stop.")
+
+    def lift_restriction(self, restriction_id: str) -> None:
+        if self.ask("Lift restriction", "Lift this restriction now, without its verification? It is recorded as lifted "
+                    "by the operator.", ["Lift", "Cancel"]) != "Lift":
+            return
+        try:
+            r = self.service.lift(restriction_id)
+        except Exception as exc:  # noqa: BLE001
+            self._after(f"Not lifted: {type(exc).__name__}: {exc}")
+            return
+        self._after(f"Lifted by the operator: {r.title}")
+
+    def acknowledge(self, assessment_id: str) -> None:
+        self.service.acknowledge(assessment_id)
+        self._after("Acknowledged; the WATCH stays until its rule resolves it.")
 
     def _why_html(self, rep: HealthReport, now: datetime) -> str:
         if rep.error:

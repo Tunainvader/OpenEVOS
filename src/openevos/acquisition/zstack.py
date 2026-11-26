@@ -38,6 +38,7 @@ from openevos.acquisition.controller import CommandError
 from openevos.acquisition.scan_runner import RunControl, RunStopped
 from openevos.core.models import CommandStatus
 from openevos.instrument.profile import CameraRole
+from openevos.safety.restrictions import run_guard
 
 _log = logging.getLogger(__name__)
 MAX_SLICES = 200
@@ -267,7 +268,14 @@ class ZStackRunner:
     def run(self, plan: ZStackPlan, progress: Callable[[int, int, str], None] | None = None, *,
             on_image: Callable[[str, int, int, CapturedImage], None] | None = None) -> ZStackSet:
         """`progress(done, total, text)` before each image; `on_image(slot, slice_index, done, image)` after each one
-        (the page shows slices as they arrive). Neither may stop the stack: an error in `on_image` is logged."""
+        (the page shows slices as they arrive). Neither may stop the stack: an error in `on_image` is logged.
+        Inside the SafetyManager's run guard (ADR-0070)."""
+        caps = self.cap.run_capabilities(plan.role) if hasattr(self.cap, "run_capabilities") else set()
+        with run_guard(self.cap, "Z-stack", caps, self.control.stop):
+            return self._run(plan, progress, on_image=on_image)
+
+    def _run(self, plan: ZStackPlan, progress: Callable[[int, int, str], None] | None = None, *,
+             on_image: Callable[[str, int, int, CapturedImage], None] | None = None) -> ZStackSet:
         pf = preflight(self.cap, plan)
         if pf.errors:
             raise CaptureRejected("; ".join(pf.errors))

@@ -101,6 +101,11 @@ def export_diagnostics(health: Any, dest_dir: Path | str, *, hours: float = 24.0
         z.writestr("baselines.json", _dump(health.baselines.to_json()))
         z.writestr("inventory.json", _dump([{**_plain(s), "monitored": s.monitored} for s in inventory.INVENTORY]))
         z.writestr("series.json", _dump(series))
+        reg = getattr(health, "registry", None)  # Phase 2 (ADR-0070): restrictions with their audit history
+        z.writestr("restrictions.json", _dump({"restrictions": [r.to_json() for r in reg.all()] if reg else [],
+                                                "proposals": [{"proposal": x.proposal_id, "title": x.title,
+                                                               "assessment": x.assessment.to_json()}
+                                                              for x in health.proposals()]}))
     health._emit("diagnostics.exported", "host", "info", f"diagnostic bundle written: {path}",
                  provenance=Provenance.DERIVED, source="export_diagnostics",
                  data={"path": str(path), "events": len(rows), "hours": hours})

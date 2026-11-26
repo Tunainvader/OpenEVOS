@@ -27,6 +27,7 @@ from openevos.acquisition.capture import CapturedImage, CaptureService, ZStack
 from openevos.acquisition.controller import CommandError
 from openevos.acquisition.scan_plan import ScanPlan, Tile
 from openevos.instrument.vessels import Vessel
+from openevos.safety.restrictions import run_guard
 
 Progress = Callable[[int, int, str], None]
 
@@ -211,6 +212,15 @@ class ScanRunner:
             raise RuntimeError(f"Z-stack: {zs.message}")
 
     def run(self, plan: ScanPlan, progress: Progress | None = None) -> ScanResult:
+        """The scan, inside the SafetyManager's run guard (ADR-0070): refused before anything moves when a
+        restriction the operator confirmed covers what it needs."""
+        r = plan.routine
+        caps = self.capture.run_capabilities(r.camera, positions=len(plan.tiles), saving=bool(r.output_folder)) \
+            if hasattr(self.capture, "run_capabilities") else set()
+        with run_guard(self.capture, "Scan", caps, self.control.stop):
+            return self._run(plan, progress)
+
+    def _run(self, plan: ScanPlan, progress: Progress | None = None) -> ScanResult:
         r = plan.routine
         res = ScanResult(plan)
         self.stage_events = res.stage_events  # ADR-0067: the recoveries and skipped tiles of this scan

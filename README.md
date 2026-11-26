@@ -183,6 +183,7 @@ All 56 architecture decision records in [`docs/decisions`](docs/decisions), newe
 - [ADR-0065](docs/decisions/ADR-0065-multi-d-acquisition.md): Multi-D acquisition (Z × C × T × P): plan, scheduler, experiment folder, page; physical positions gated
 - [ADR-0068](docs/decisions/ADR-0068-instrument-health-phase0.md): Instrument Health, Phase 0: telemetry inventory, health model, SQLite journal, read-only Health page
 - [ADR-0069](docs/decisions/ADR-0069-instrument-health-phase1.md): Instrument Health, Phase 1: versioned baselines, WATCH-only rules, incidents, diagnostic export, simulator injection
+- [ADR-0070](docs/decisions/ADR-0070-instrument-health-phase2.md): Instrument Health, Phase 2: capability-scoped protection, ask then restrict, verified release
 
 ## AI assistant link (MCP, read-only)
 

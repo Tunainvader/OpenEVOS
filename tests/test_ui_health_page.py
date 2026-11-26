@@ -108,7 +108,8 @@ def test_health_page_is_read_only(win):
     page = w.pages["health"]
     buttons = [b.objectName() for b in page.findChildren(QAbstractButton)
                if b.objectName() != "qt_tableview_cornerbutton"]
-    # nothing to acknowledge, release or command here: the one button writes a diagnostic zip (Phase 1)
+    # nothing proposed, restricted or to acknowledge: the only button writes a diagnostic zip (Phase 1); the
+    # Protection panel's buttons appear only when there is something to decide (Phase 2)
     assert buttons == ["health_export"]
     from openevos.backends.technosoft import protocol as tp
 
@@ -147,6 +148,49 @@ def test_page_shows_a_rule_watch_and_its_incident(win):
     assert any("simulated LED driver fault" in t for t in titles), titles
     assert page.cards["illumination"].chip.state in ("WATCH", "FAULT")
 
+
+
+def test_protection_panel_asks_confirms_and_lifts(win):
+    """Phase 2 (ADR-0070): a filling data drive raises a WATCH; the page proposes restricting new saving runs; the
+    operator confirms (the dialog is stubbed); the capability reads RESTRICTED by the SafetyManager; Lift asks and
+    lifts. No click sends a device command."""
+    from datetime import timedelta
+
+    from PySide6.QtWidgets import QPushButton
+
+    from openevos.backends.technosoft import protocol as tp
+    from openevos.health.inject import SimulatorFaultInjector
+
+    app, w, s = win
+    w.navigate("health")
+    page = w.pages["health"]
+    h = page.service
+    t = [h._now()]
+    h._now = lambda: t[0]
+    h.disk_period_s = 0.0
+    SimulatorFaultInjector(s, h).disk_filling(20 * 10**9, 20e6)
+    for _ in range(8):
+        t[0] += timedelta(seconds=30)
+        h.sample()
+    page.refresh()
+    names = {b.objectName() for b in page.findChildren(QPushButton)}
+    assert {"health_confirm", "health_decline", "health_ack"} <= names
+    asked = []
+    page.ask = lambda title, text, choices: asked.append((title, text, choices)) or choices[0]
+    reads = {v.frame for vs in tp.VARS.values() for v in vs.values()} | {bytes([0xFF])}
+    chain = s.telemetry[0].simulated_chain
+    n = len(chain.writes)
+    next(b for b in page.findChildren(QPushButton) if b.objectName() == "health_confirm").click()
+    pump(app, 0.1)
+    assert asked and asked[0][2] == ["Restrict", "Cancel"] and "Stays available" in asked[0][1]
+    assert page.cap_rows["data_saving"][0].state == "RESTRICTED"
+    assert "[SafetyManager]" in page.cap_rows["data_saving"][2].text()
+    assert "RESTRICTED" in page._protect_labels[next(iter(page._protect_labels))].text()
+    lift = next(b for b in page.findChildren(QPushButton) if b.objectName() == "health_lift")
+    lift.click()
+    pump(app, 0.1)
+    assert h.registry.open() == [] and "Lifted by the operator" in page.protect_note.text()
+    assert [f for f in list(chain.writes)[n:] if f not in reads] == []  # nothing on the panel commanded a drive
 
 def test_page_without_an_app_service_runs_its_own_memory_only_one():
     from PySide6.QtWidgets import QApplication

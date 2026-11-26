@@ -21,6 +21,7 @@ from openevos.acquisition.scan_plan import Beacon
 from openevos.acquisition.scan_runner import RunStopped, ScanRunner
 from openevos.instrument.profile import CameraRole, InstrumentProfile
 from openevos.instrument.vessels import Vessel, VesselStageMap, well_label_sort_key
+from openevos.safety.restrictions import run_guard
 
 MAX_BEACONS = 384
 
@@ -146,6 +147,16 @@ class TimelapseRunner:
     def run(self, r: TimelapseRoutine, progress: Callable[[int, int, str], None] | None = None,
             on_timepoint: Callable[[int, list[tuple[str, dict[str, CapturedImage]]]], None] | None = None
             ) -> TimelapseResult:
+        """Inside the SafetyManager's run guard (ADR-0070), like a scan."""
+        cap = self.sr.capture
+        caps = cap.run_capabilities(r.camera, positions=2, saving=bool(r.output_folder)) \
+            if hasattr(cap, "run_capabilities") else set()
+        with run_guard(cap, "Time-lapse", caps, self.control.stop):
+            return self._run(r, progress, on_timepoint)
+
+    def _run(self, r: TimelapseRoutine, progress: Callable[[int, int, str], None] | None = None,
+             on_timepoint: Callable[[int, list[tuple[str, dict[str, CapturedImage]]]], None] | None = None
+             ) -> TimelapseResult:
         res = TimelapseResult(r)
         schedule: list[float] = []
         t_acc = 0.0

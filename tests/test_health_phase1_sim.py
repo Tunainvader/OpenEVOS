@@ -212,7 +212,7 @@ def test_the_diagnostic_bundle_holds_what_the_rules_saw(session, health, tmp_pat
     with zipfile.ZipFile(path) as z:
         names = set(z.namelist())
         assert names == {"manifest.json", "report.json", "assessments.json", "detectors.json", "incidents.json",
-                         "events.jsonl", "baselines.json", "inventory.json", "series.json"}
+                         "events.jsonl", "baselines.json", "inventory.json", "series.json", "restrictions.json"}
         man = json.loads(z.read("manifest.json"))
         assert man["simulated"] is True and man["physical_parts"] == [] and man["events"] > 0
         ass = json.loads(z.read("assessments.json"))

@@ -133,6 +133,9 @@ class HealthView:
     detectors: tuple[DetectorStatus, ...] = ()
     #: device id -> the plain integer counters its backend keeps (frames_produced, incomplete_frames, reconnects ...)
     backend_counters: dict[str, dict[str, int]] = field(default_factory=dict)
+    #: Phase 2 (ADR-0070): restrictions the operator confirmed and the SafetyManager enforces now, each as
+    #: {"policy", "version", "title", "reason", "since", "release", "capabilities": page capability keys}
+    confirmed: tuple[dict[str, Any], ...] = ()
 
 
 # ====================================================================================================== devices
@@ -550,6 +553,11 @@ def capability_status(cap: CapabilityDef, subs: dict[str, SubsystemHealth], view
     if missing:
         return CapabilityStatus(cap.key, cap.title, CapabilityState.UNAVAILABLE, tuple(missing), "Health",
                                 cap.depends_on)
+    held = [r for r in view.confirmed if cap.key in r["capabilities"]]
+    if held:  # Phase 2: a restriction the operator confirmed; the SafetyManager refuses it (ADR-0070)
+        return CapabilityStatus(cap.key, cap.title, CapabilityState.RESTRICTED,
+                                tuple(f"restricted by Health policy {r['policy']} v{r['version']}, confirmed by the "
+                                      f"operator: {r['reason']}" for r in held), "SafetyManager", cap.depends_on)
     if refusals:
         return CapabilityStatus(cap.key, cap.title, CapabilityState.RESTRICTED,
                                 tuple(f"SafetyManager refuses it: {r}" for r in refusals), "SafetyManager",
@@ -567,7 +575,7 @@ def capability_status(cap: CapabilityDef, subs: dict[str, SubsystemHealth], view
         why = tuple(f"{d.title} {d.state.value}: {d.reasons[0] if d.reasons else ''}" for d in monitored
                     if d.state is dep_state)
         if state is CapabilityState.AT_RISK:
-            why += ("advisory: the SafetyManager does not refuse it, and Health restricts nothing",)
+            why += ("advisory: the SafetyManager does not refuse it; Health restricts only what the operator confirms",)
     return CapabilityStatus(cap.key, cap.title, state, why + note, "Health", cap.depends_on)
 
 
@@ -612,6 +620,11 @@ def _restrictions(view: HealthView, caps: list[CapabilityStatus], subs: dict[str
                                last_router_refusal=last[0] if last else "",
                                last_router_refusal_at=last[1] if last else None,
                                safety_reasons=view.probe_refusals.get(sub, ())))
+    for r in view.confirmed:  # Phase 2 (ADR-0070)
+        out.append(Restriction(source=f"SafetyManager (Health policy {r['policy']} v{r['version']}, confirmed by "
+                                      "the operator)", capabilities=tuple(r["capabilities"]), summary=r["title"],
+                               since_utc=r["since"], recovery="release: " + "; ".join(r["release"]),
+                               evidence=r["reason"], releasable=True))
     return out
 
 

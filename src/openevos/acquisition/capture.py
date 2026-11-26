@@ -24,6 +24,7 @@ from openevos.core.frame_transport import Frame
 from openevos.core.models import utcnow
 from openevos.instrument.profile import CameraRole, ChannelKind, InstrumentProfile
 from openevos.instrument.settings import AppSettings
+from openevos.safety.restrictions import DATA_SAVING, FOCUS_Z, MULTI_POSITION, imaging, registry_of
 
 
 class CaptureRejected(RuntimeError):
@@ -228,6 +229,25 @@ class CaptureService:
         obj = self.profile.objective(slot_now) if slot_now else None
         if obj is None or not obj.installed:
             raise CaptureRejected("no objective in the light path")
+        reg = registry_of(self.ctl)
+        why = reg.capture_refusal(cam.device_id) if reg is not None else []
+        if why:  # a restriction the operator confirmed from Health (ADR-0070)
+            raise CaptureRejected(f"{cam.display_name} capture refused: " + "; ".join(why))
+
+    def run_capabilities(self, role: CameraRole | None, *, positions: int = 1, saving: bool = True,
+                         focus: bool = True) -> set[str]:
+        """What a run needs, for the SafetyManager's run guard (ADR-0070)."""
+        caps: set[str] = set()
+        cam = self.profile.camera(role or self.settings.active_camera)
+        if cam is not None:
+            caps.add(imaging(cam.device_id))
+        if positions > 1:
+            caps.add(MULTI_POSITION)
+        if saving:
+            caps.add(DATA_SAVING)
+        if focus:
+            caps.add(FOCUS_Z)
+        return caps
 
     def capture_all_channels(self) -> list[str]:
         sel = [s for s in self.settings.mono.capture_all if (c := self.profile.channel(s)) and c.installed]

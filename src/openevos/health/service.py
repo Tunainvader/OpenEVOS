@@ -71,8 +71,18 @@ from openevos.health.assess import (
 )
 from openevos.health.journal import JOURNAL_FILE, HealthJournal
 from openevos.health.model import Assessment, HealthEvent, HealthReport, HealthState, Provenance
+from openevos.health.protection import (
+    POLICY_BY_ID,
+    RECURRENCE_S,
+    Proposal,
+    Verification,
+    VerifyInput,
+    page_capabilities,
+    policy_for,
+)
 from openevos.health.rules import AXES, MetricSeries, RuleEngine, RuleInput, following_metric
 from openevos.health.stats import BASELINE_FILE, Baseline, BaselineStore, build_baseline
+from openevos.safety.restrictions import RESTRICTIONS_FILE, Restriction, RestrictionRegistry
 
 SAMPLE_PERIOD_S = 1.0
 RECENT_EVENTS = 300
@@ -200,6 +210,14 @@ class HealthService:
         #: how the free space is read, and how often (the simulator injector replaces the reader; tests the period)
         self.disk_reader: Callable[[Path, datetime], DiskView] = disk_view
         self.disk_period_s = DISK_PERIOD_S
+        # Phase 2 (ADR-0070): the SafetyManager's registry of confirmed restrictions, Health's proposals for it
+        reg = getattr(getattr(self.core, "safety", None), "restrictions", None)
+        self.registry: RestrictionRegistry | None = reg if isinstance(reg, RestrictionRegistry) else None
+        self._proposals: tuple[Proposal, ...] = ()
+        self._declined: set[str] = set()  # assessment ids the operator declined to restrict for
+        self._acked: dict[str, str] = {}  # assessment id -> when the operator acknowledged it
+        self._verify: dict[str, Verification] = {}
+        self._plock = threading.Lock()  # proposals, declined, acked, verify (page thread vs sampler)
 
     # ================================================================== lifecycle
     def start(self, *, sampler: bool = True) -> HealthService:
@@ -216,9 +234,19 @@ class HealthService:
                       bus.subscribe(HardwareFaultEvent, self._on_fault),
                       bus.subscribe(StorageFaultEvent, self._on_storage),
                       bus.subscribe(AcquisitionStatusEvent, self._on_acquisition)]
+        reg = self.registry
+        if reg is not None:
+            try:
+                reg.now = self._now
+                if reg.path is None and self.journal.path is not None:
+                    reg.attach(self.journal.path.with_name(RESTRICTIONS_FILE))
+                reg.listeners.append(self._on_restriction)
+            except Exception as exc:  # noqa: BLE001
+                self._fail(exc)
         try:
             self.journal.start()
-            self._emit("recorder.started", "host", "info", "Health recorder started (read-only; Phases 0-1)",
+            self._emit("recorder.started", "host", "info", "Health recorder started (Phases 0-2: it restricts only "
+                       "what the operator confirms)",
                        source="HealthService", data={"journal": self.journal.stats().get("path", "")})
         except Exception as exc:  # noqa: BLE001 - starting Health never fails the caller (the app launch)
             self._fail(exc)
@@ -239,6 +267,9 @@ class HealthService:
             except Exception:  # noqa: BLE001, S110 - shutting down
                 pass
         self._subs = []
+        reg = self.registry
+        if reg is not None and self._on_restriction in reg.listeners:
+            reg.listeners.remove(self._on_restriction)
         self._stop.set()
         t = self._thread
         if t is not None and t is not threading.current_thread():
@@ -466,6 +497,10 @@ class HealthService:
                 view = self._run_rules(view)
             except Exception as exc:  # noqa: BLE001 - a rule failure leaves the Phase 0 assessment standing
                 self._fail(exc)
+            try:
+                view = self._protect(view)
+            except Exception as exc:  # noqa: BLE001 - a protection failure leaves the enforcement as it is
+                self._fail(exc)
             report = assess(view)
         except Exception as exc:  # noqa: BLE001 - an assessment failure shows UNKNOWN, never the last green
             self._fail(exc)
@@ -531,6 +566,167 @@ class HealthService:
                           probe_missing=missing, last_reason=last_reason, last_refusal=last_refusal,
                           link_errors=link_errors, counters=counters, disks=dict(self._disk[1]), host=host,
                           host_measured_at=now, backend_counters=counters_by_device)
+
+    # ------------------------------------------------------------------ Phase 2 (ADR-0070): protection
+    def _protect(self, view: HealthView) -> HealthView:
+        """Verify the active restrictions (lift those whose verification passed), refresh the proposals, and show
+        what the SafetyManager enforces now on the capability list."""
+        reg = self.registry
+        if reg is None:
+            return view
+        now_s = view.now.timestamp()
+        fp = self.fingerprint(view)
+        for r in reg.open():
+            pol = POLICY_BY_ID.get(r.policy_id)
+            if pol is None or not r.active:
+                continue
+            act = datetime.fromisoformat(r.activated_at).timestamp()
+            v = pol.verify(VerifyInput(now_s, act, str(r.trigger.get("key", "")), self.series, self.baselines, fp))
+            with self._plock:
+                prev = self._verify.get(r.restriction_id)
+                self._verify[r.restriction_id] = v
+            if v.passed:
+                reg.release(r.restriction_id, by="verification", verification=v.to_json())
+            elif prev is None or prev.summary.startswith("watching") != v.summary.startswith("watching"):
+                reg.record(r.restriction_id, "verification", passed=False, summary=v.summary)
+        props = self._make_proposals(view, reg)
+        with self._plock:
+            old = {p.proposal_id for p in self._proposals}
+            self._proposals = props
+        for p in props:
+            if p.proposal_id not in old:
+                self._emit("protection.proposed", p.assessment.subsystem, "warning",
+                           f"Health proposes restricting: {p.title} (policy {p.policy.policy_id} v{p.policy.version},"
+                           f" after rule {p.assessment.detector}). Nothing is restricted until the operator confirms",
+                           provenance=p.assessment.provenance, source="Health protection",
+                           data={"proposal": p.proposal_id, "assessment": p.assessment.to_json(),
+                                 "capabilities": list(p.capabilities), "runs": list(p.runs)})
+        subof = self._sub_of
+        confirmed = tuple({"policy": r.policy_id, "version": r.policy_version, "title": r.title, "reason": r.reason,
+                           "since": r.activated_at, "release": list(r.release_conditions),
+                           "capabilities": tuple(dict.fromkeys(k for c in r.capabilities
+                                                               for k in page_capabilities(c, subof)))}
+                          for r in reg.open() if r.active)
+        return replace(view, confirmed=confirmed)
+
+    def _make_proposals(self, view: HealthView, reg: RestrictionRegistry) -> tuple[Proposal, ...]:
+        rs = reg.all()
+        open_keys = {(r.policy_id, r.trigger.get("key")) for r in rs if r.open}
+        with self._plock:
+            declined = set(self._declined)
+        out = []
+        for a in view.assessments:
+            pol = policy_for(a)
+            if pol is None or (pol.policy_id, a.key) in open_keys or a.assessment_id in declined:
+                continue
+            caps, cmds = pol.capabilities(a.key), pol.commands(a.key)
+            recurring = any(r.policy_id == pol.policy_id and r.trigger.get("key") == a.key and r.released_at
+                            and (view.now - datetime.fromisoformat(r.released_at)).total_seconds() < RECURRENCE_S
+                            for r in rs)
+            out.append(Proposal(f"{pol.policy_id}:{a.key}", pol, a, pol.title(a.key), caps, cmds,
+                                tuple(x.kind for x in reg.conflicting_runs(caps, cmds)), recurring))
+        return tuple(out)
+
+    def proposals(self) -> tuple[Proposal, ...]:
+        with self._plock:
+            return self._proposals
+
+    def protections(self) -> list[tuple[Restriction, Verification | None]]:
+        """The open restrictions (pending and active), with their latest verification."""
+        reg = self.registry
+        if reg is None:
+            return []
+        with self._plock:
+            return [(r, self._verify.get(r.restriction_id)) for r in reg.open()]
+
+    def confirm(self, proposal_id: str, *, stop_runs: bool = False) -> Restriction:
+        """The operator confirmed a proposal: request the restriction from the SafetyManager's registry."""
+        reg = self.registry
+        if reg is None:
+            raise RuntimeError("no SafetyManager restriction registry in this session")
+        with self._plock:
+            p = next((x for x in self._proposals if x.proposal_id == proposal_id), None)
+        if p is None:
+            raise KeyError(f"no open proposal {proposal_id!r} (its WATCH may have resolved)")
+        r = reg.request(p.restriction(self._now()), stop_runs=stop_runs)
+        with self._plock:
+            self._proposals = tuple(x for x in self._proposals if x.proposal_id != proposal_id)
+        stopping = ", the runs that need it were asked to stop at their next safe point" if stop_runs and p.runs \
+            else ""
+        self._emit("protection.confirmed", p.assessment.subsystem, "warning",
+                   f"Operator confirmed the restriction: {p.title} ({r.state}{stopping})", source="operator",
+                   data={"restriction": r.to_json()})
+        if p.recurring:
+            self._emit("service.escalated", p.assessment.subsystem, "warning",
+                       f"Recurring: {p.title} was restricted and released within the last "
+                       f"{RECURRENCE_S / 3600:.0f} h for the same reason. A technician should inspect it",
+                       source="Health protection", data={"restriction": r.restriction_id,
+                                                         "policy": p.policy.policy_id, "key": p.assessment.key})
+        return r
+
+    def decline(self, proposal_id: str) -> None:
+        """The operator declined a proposal: no restriction for this WATCH (a new WATCH proposes again)."""
+        with self._plock:
+            p = next((x for x in self._proposals if x.proposal_id == proposal_id), None)
+            if p is None:
+                return
+            self._declined.add(p.assessment.assessment_id)
+            self._proposals = tuple(x for x in self._proposals if x.proposal_id != proposal_id)
+        self._emit("protection.declined", p.assessment.subsystem, "info",
+                   f"Operator declined to restrict: {p.title}; the WATCH stays", source="operator",
+                   data={"proposal": proposal_id, "assessment_id": p.assessment.assessment_id})
+
+    def lift(self, restriction_id: str, note: str = "") -> Restriction:
+        """The operator lifts a restriction without its verification (recorded as such)."""
+        if self.registry is None:
+            raise RuntimeError("no SafetyManager restriction registry in this session")
+        return self.registry.release(restriction_id, by="operator", note=note)
+
+    def stop_runs(self, restriction_id: str) -> list[str]:
+        """Ask the runs a pending restriction waits for to stop at their next safe point."""
+        if self.registry is None:
+            return []
+        stopped = self.registry.stop_runs(restriction_id)
+        if stopped:
+            self._emit("protection.runs_stopped", "host", "warning",
+                       f"Operator asked {', '.join(stopped)} to stop at the next safe point so a restriction can take "
+                       "effect; everything already taken is kept", source="operator",
+                       data={"restriction": restriction_id, "runs": stopped})
+        return stopped
+
+    def acknowledge(self, assessment_id: str) -> None:
+        """The operator saw this WATCH. Acknowledging clears nothing: the WATCH stays until its rule resolves it."""
+        a = next((x for x in self.latest.assessments if x.assessment_id == assessment_id), None)
+        with self._plock:
+            if assessment_id in self._acked:
+                return
+            self._acked[assessment_id] = self._now().isoformat()
+        self._emit("assessment.acknowledged", a.subsystem if a else "host", "info",
+                   f"Operator acknowledged the WATCH{': ' + a.title if a else ''} (it stays open until its rule "
+                   "resolves it)", source="operator", data={"assessment_id": assessment_id})
+
+    def acknowledged(self, assessment_id: str) -> str:
+        with self._plock:
+            return self._acked.get(assessment_id, "")
+
+    def _on_restriction(self, what: str, r: Restriction) -> None:
+        key = str(r.trigger.get("key", ""))
+        if r.policy_id.startswith("xy."):
+            subsystem = "xy_stage"
+        elif r.policy_id.startswith("camera."):
+            subsystem = self._sub_of(key) or "mono_camera"
+        elif r.policy_id.startswith("storage."):
+            subsystem = "storage"
+        else:
+            subsystem = "host"
+        how = "its verification passed" if r.released_by == "verification" else \
+            "by the operator, without verification"
+        text = {"active": f"Restriction in force (SafetyManager): {r.title}",
+                "pending": f"Restriction confirmed, waiting for the run that needs it to end: {r.title}",
+                "released": f"Restriction lifted ({how}): {r.title}"}
+        self._emit(f"restriction.{what}", subsystem, "info" if what == "released" else "warning",
+                   text.get(what, f"Restriction {what}: {r.title}"), source="SafetyManager (Health restriction)",
+                   data=r.to_json())
 
     # ------------------------------------------------------------------ Phase 1 (ADR-0069): series, rules, baselines
     def _run_rules(self, view: HealthView) -> HealthView:
