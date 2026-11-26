@@ -447,7 +447,7 @@ class MainWindow(QMainWindow):
         self._cmd(m, "mic.vessel", "Vessel…", cap._vessel_expert, why=busy)
         self._cmd(m, "mic.lightcam", "Light and camera…", cap._light_camera, why=busy)
         m.addSeparator()
-        self._cmd(m, "mic.release", "Release stage lock…", self.release_stage_lock, why=self._release_why)
+        self._cmd(m, "mic.release", "Release stage lock…", self.release_stage_lock, why=self._release_menu_why)
         self._cmd(m, "mic.rehome", "Re-home stage…", lambda: self.rehome_stage(), why=self._rehome_why)
         self._cmd(m, "mic.precheck", "System precheck…", self.open_precheck)
         self._cmd(m, "mic.heights", "Objective safe heights…", self.open_safe_heights, why=busy)
@@ -560,6 +560,12 @@ class MainWindow(QMainWindow):
         if not locked:
             return "the stage is not locked"
         return locked[0].monitor._release_blocker()
+
+    def _release_menu_why(self) -> str:
+        """The menu command (also Capture's lock notice) is available whenever the stage is locked. A lock the release
+        cannot clear goes on to the Re-home offer in release_stage_lock. Gating it on `_release_why` (2026-11-26) made
+        the click write one log line and do nothing else for every drive-trip lock."""
+        return "" if self._locked_monitors() else "the stage is not locked"
 
     def release_stage_lock(self) -> None:
         """Operator release of a small drift lock without a power cycle: confirm, then fresh X/Y reads decide."""

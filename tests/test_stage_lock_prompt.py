@@ -87,6 +87,26 @@ def test_unreleasable_lock_offers_the_rehome_with_its_reason(win, monkeypatch):
     assert w._rehome_why() == ""
 
 
+
+def test_the_release_menu_command_reaches_the_rehome_offer_for_a_drive_trip(win, monkeypatch):
+    """2026-11-26 on the instrument: "release stage locks button does nothing". Microscope › Release stage lock (and
+    Capture's lock notice, which runs the same command) was gated on the release's own blocker, so for a drive-trip
+    lock the click only logged a line. It is available whenever the stage is locked and offers the Re-home."""
+    from PySide6.QtWidgets import QMessageBox
+
+    app, w, s = win
+    assert w._release_menu_why() == "the stage is not locked"
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: (asked.append(a[2]), QMessageBox.StandardButton.No)[1])
+    svc = s.telemetry[0]
+    svc.monitor.trip("overcurrent_trip", "Y", "Y drive over-current trip recorded")
+    pump(app, 0.2)
+    w._refresh_commands()
+    assert w.commands["mic.release"].action.isEnabled()
+    w.run_command("mic.release")
+    assert asked and "Y drive over-current trip recorded" in asked[0] and "Re-home" in asked[0]
+    assert svc.monitor.latched  # No: nothing sent, the lock stays
+
 def test_rehome_from_the_ui_clears_the_lock_and_returns(win, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
 
