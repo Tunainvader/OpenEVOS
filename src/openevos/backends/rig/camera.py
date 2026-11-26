@@ -79,6 +79,11 @@ class SimCamera:
         self._timer: TimerHandle | None = None
         self._stream: dict | None = None
         self.frames_produced = 0
+        #: simulation of the FlyCapture2 camera's incomplete frames (ADR-0069, Health fault injection): every n-th
+        #: tick of a stream is an incomplete frame, counted and skipped like the real backend does; 0 = none
+        self.incomplete_frames = 0
+        self.inject_incomplete_every = 0
+        self._ticks = 0
 
     # ------------------------------------------------------------------ DeviceBackend
     def attach(self, reporter: Reporter) -> None:
@@ -182,12 +187,21 @@ class SimCamera:
             s = self._stream
             if s is None:
                 return
-            idx = s["i"]
-            s["i"] += 1
-            img = self.render()
-            md = FrameMetadata(device_id=self.device_id, frame_index=idx, synthetic=True,
-                               acquisition_id=s["acq"], channel=self.frame_channel(),
-                               exposure_ms=self.exposure_ms, extra=self.frame_extra())
+            self._ticks += 1
+            if self.inject_incomplete_every and self._ticks % self.inject_incomplete_every == 0:
+                self.incomplete_frames += 1  # an incomplete frame: skipped, nothing pushed, the stream goes on
+                skip = True
+            else:
+                skip = False
+                idx = s["i"]
+                s["i"] += 1
+                img = self.render()
+                md = FrameMetadata(device_id=self.device_id, frame_index=idx, synthetic=True,
+                                   acquisition_id=s["acq"], channel=self.frame_channel(),
+                                   exposure_ms=self.exposure_ms, extra=self.frame_extra())
+        if skip:
+            self._schedule()
+            return
         accepted = self.transport.push(img, md, owned=True)
         self.frames_produced += 1
         if not accepted:

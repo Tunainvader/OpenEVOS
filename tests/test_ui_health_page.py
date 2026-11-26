@@ -104,10 +104,48 @@ def test_health_page_on_the_simulator(win):
 def test_health_page_is_read_only(win):
     from PySide6.QtWidgets import QAbstractButton
 
-    _app, w, _s = win
+    _app, w, s = win
     page = w.pages["health"]
-    buttons = [b for b in page.findChildren(QAbstractButton) if b.objectName() != "qt_tableview_cornerbutton"]
-    assert buttons == []  # nothing to press: no acknowledge, release or command here (Phase 0)
+    buttons = [b.objectName() for b in page.findChildren(QAbstractButton)
+               if b.objectName() != "qt_tableview_cornerbutton"]
+    # nothing to acknowledge, release or command here: the one button writes a diagnostic zip (Phase 1)
+    assert buttons == ["health_export"]
+    from openevos.backends.technosoft import protocol as tp
+
+    reads = {v.frame for vs in tp.VARS.values() for v in vs.values()} | {bytes([0xFF])}
+    chain = s.telemetry[0].simulated_chain
+    n = len(chain.writes)
+    page.service.sample()
+    page.export_btn.click()
+    assert wait_for(_app, lambda: page.export_btn.isEnabled() and "Written:" in page.export_note.text(), 20), \
+        page.export_note.text()
+    assert [f for f in list(chain.writes)[n:] if f not in reads] == []  # the export commanded nothing
+    assert list(page.export_folder().glob("health-diagnostics-*.zip"))
+
+
+def test_page_shows_a_rule_watch_and_its_incident(win):
+    """Three failed light commands (the simulator's own fail-next hook) raise the error-burst rule's WATCH; the page
+    lists it with its rule, limit and unconfirmed causes, and the incident table groups the failures."""
+    app, w, s = win
+    page = w.pages["health"]
+    w.navigate("health")
+    h = page.service
+    h.sample()
+    light = s.rig.light
+    for _ in range(3):
+        light.fail_next = "simulated LED driver fault"
+        s.controller.set_light("trans", 10.0, True).wait(5)
+        light.recover()
+    pump(app, 0.2)
+    h.sample()
+    page.refresh()
+    assert any(a.detector == "comm.error_burst" for a in h.latest.assessments)
+    text = page.rules.text()
+    assert "WATCH" in text and "comm.error_burst" in text and "not confirmed" in text
+    assert "rules:" in page.detectors.text() and "running" in page.detectors.text()
+    titles = [page.incidents.item(r, 4).text() for r in range(page.incidents.rowCount())]
+    assert any("simulated LED driver fault" in t for t in titles), titles
+    assert page.cards["illumination"].chip.state in ("WATCH", "FAULT")
 
 
 def test_page_without_an_app_service_runs_its_own_memory_only_one():

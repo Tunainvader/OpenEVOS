@@ -43,7 +43,7 @@ def worst(states: Iterable[HealthState], default: HealthState = HealthState.UNKN
 class Provenance(str, Enum):
     MEASURED = "Measured"  # read from the instrument or the host by an adapter, or by Health itself (free disk space)
     DERIVED = "Derived"  # computed deterministically from measured values, or the SafetyManager's own decision
-    INFERRED = "Inferred"  # an estimate or hypothesis; not produced in Phase 0
+    INFERRED = "Inferred"  # a rule's assessment from a trend or a limit (Phase 1); never confirmed
     UNAVAILABLE = "Unavailable"  # nothing exposes it: NOT MONITORED
     DEMO = "Demo"  # from the simulator or demo data, not from the instrument
 
@@ -201,6 +201,62 @@ class Restriction:
 
 
 @dataclass(frozen=True)
+class Assessment:
+    """One rule's finding (Phase 1, ADR-0069), shaped like the kit's schemas/fault_assessment.example.json.
+
+    Phase 1 rules only ever say WATCH: they inform, they restrict nothing. A rule returning to normal resolves its
+    WATCH (the kit's "Watch -> Resolved"); it never releases a lock, which stays the StageMonitor's and the
+    SafetyManager's."""
+
+    assessment_id: str
+    detector: str  # e.g. "comm.error_burst"
+    detector_version: str
+    key: str  # what it is about, e.g. a device id or an axis
+    subsystem: str
+    title: str
+    detail: str
+    provenance: Provenance  # INFERRED; DEMO when the evidence came from the simulator
+    first_seen: datetime
+    last_seen: datetime
+    state: HealthState = HealthState.WATCH
+    severity: str = "medium"
+    evidence_event_ids: tuple[str, ...] = ()
+    affected_capabilities: tuple[str, ...] = ()
+    #: the baseline it compared against ({"id", "version", "regime"}), None for a fixed provisional limit
+    baseline: dict[str, Any] | None = None
+    limit: str = ""  # the threshold, in words, e.g. "3 failures within 60 s (provisional, not qualified)"
+    hypotheses: tuple[str, ...] = ()  # never confirmed by Health
+    checks: tuple[str, ...] = ()  # recommended operator checks
+    data: dict[str, Any] = field(default_factory=dict)
+
+    SCHEMA_VERSION = "1.0"
+
+    def to_json(self) -> dict[str, Any]:
+        return {"schema_version": self.SCHEMA_VERSION, "assessment_id": self.assessment_id, "state": self.state.value,
+                "severity": self.severity, "title": self.title, "detail": self.detail,
+                "provenance": self.provenance.value.lower(), "confidence": None,
+                "detector": {"name": self.detector, "version": self.detector_version}, "key": self.key,
+                "subsystem": self.subsystem, "baseline": self.baseline, "limit": self.limit,
+                "evidence_event_ids": list(self.evidence_event_ids),
+                "affected_capabilities": list(self.affected_capabilities),
+                "hypotheses": [{"label": h, "confirmed": False} for h in self.hypotheses],
+                "recommended_operator_checks": list(self.checks), "first_seen": self.first_seen.isoformat(),
+                "last_seen": self.last_seen.isoformat(), "data": self.data}
+
+
+@dataclass(frozen=True)
+class DetectorStatus:
+    """Whether a rule runs in this session, and why not (e.g. "inactive: no baseline")."""
+
+    name: str
+    version: str
+    subsystem: str
+    title: str
+    active: bool
+    note: str = ""
+
+
+@dataclass(frozen=True)
 class HealthReport:
     generated_at: datetime
     overall: HealthState
@@ -208,6 +264,9 @@ class HealthReport:
     capabilities: tuple[CapabilityStatus, ...] = ()
     restrictions: tuple[Restriction, ...] = ()
     error: str = ""
+    #: Phase 1 (ADR-0069): the rules' open WATCH assessments and whether each rule runs
+    assessments: tuple[Assessment, ...] = ()
+    detectors: tuple[DetectorStatus, ...] = ()
 
     def subsystem(self, key: str) -> SubsystemHealth | None:
         return next((s for s in self.subsystems if s.key == key), None)

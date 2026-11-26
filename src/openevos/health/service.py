@@ -13,6 +13,11 @@ Probe commands: to show what the authority decides, the sampler builds one comma
 device already is, an exposure it already has, a light ON) and passes it to `SafetyManager.validate`, a pure function.
 The probe is never submitted: it never reaches the router, a worker or a backend. Only the state checks of the decision
 are kept (assess.STATE_CHECKS); target checks (limits, confirmation, interlocks) do not apply to a probe.
+
+Phase 1 (ADR-0069): each sample also records metric series (backend counters, following error at rest, free space)
+and runs the rules (rules.py) over them and the recent events, before the assessment. A rule's WATCH and its end are
+journaled (assessment.raised / assessment.resolved). Backend counters are plain integers the backends already keep;
+Health reads them with getattr and never calls a backend method.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ import threading
 import time
 from collections import OrderedDict, deque
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -64,7 +70,9 @@ from openevos.health.assess import (
     failed_report,
 )
 from openevos.health.journal import JOURNAL_FILE, HealthJournal
-from openevos.health.model import HealthEvent, HealthReport, HealthState, Provenance
+from openevos.health.model import Assessment, HealthEvent, HealthReport, HealthState, Provenance
+from openevos.health.rules import AXES, MetricSeries, RuleEngine, RuleInput, following_metric
+from openevos.health.stats import BASELINE_FILE, Baseline, BaselineStore, build_baseline
 
 SAMPLE_PERIOD_S = 1.0
 RECENT_EVENTS = 300
@@ -78,6 +86,13 @@ RECOVERY_END_STEPS = ("recovered", "escalated", "handed back", "objective not ra
 RECORD_SCAN_S = 5.0
 MOTOR_EXTRA = {"xy_stage": "motor.stage", "focus": "motor.focus", "objective_turret": "motor.objective_turret"}
 CARRIAGES = ("motor.cube_carriage", "motor.phase_wheel")
+#: Phase 1: events the rules read (kept apart from the page's recent list, which busy devices can roll over)
+RULE_KINDS = frozenset({"command.failed", "command.timed_out", "device.condition", "stage_monitor.warning"})
+RULE_EVENTS = 2000
+#: Phase 1: plain integer counters some backends keep (read with getattr, never a call)
+BACKEND_COUNTERS = ("frames_produced", "incomplete_frames", "skipped_grabs", "reconnects")
+#: Phase 1: snapshot attributes that identify a device for a baseline's fingerprint
+FINGERPRINT_ATTRS = ("model", "fw", "firmware", "serial", "limits_mm")
 
 
 def default_data_folder() -> Path:
@@ -134,7 +149,8 @@ def _severity(s: DeviceSnapshot) -> str:
 class HealthService:
     def __init__(self, session: Any, *, journal: HealthJournal | None = None, journal_path: Path | str | None = None,
                  sample_period_s: float = SAMPLE_PERIOD_S, data_folder: Path | None = None,
-                 now: Callable[[], datetime] = utcnow):
+                 now: Callable[[], datetime] = utcnow, baselines: BaselineStore | None = None,
+                 rules: RuleEngine | None = None):
         self.session = session
         self.core = session.core
         self.journal = journal if journal is not None else HealthJournal(journal_path)
@@ -171,6 +187,19 @@ class HealthService:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.running = False
+        # Phase 1 (ADR-0069)
+        if baselines is None:
+            jp = self.journal.path
+            baselines = BaselineStore(jp.with_name(BASELINE_FILE) if jp is not None else None)
+        self.baselines = baselines
+        self.rules = rules if rules is not None else RuleEngine()
+        self.series = MetricSeries()
+        self._rule_events: deque[HealthEvent] = deque(maxlen=RULE_EVENTS)
+        self._series_disk_t: dict[str, datetime] = {}
+        self._series_obs: dict[str, datetime] = {}
+        #: how the free space is read, and how often (the simulator injector replaces the reader; tests the period)
+        self.disk_reader: Callable[[Path, datetime], DiskView] = disk_view
+        self.disk_period_s = DISK_PERIOD_S
 
     # ================================================================== lifecycle
     def start(self, *, sampler: bool = True) -> HealthService:
@@ -189,7 +218,7 @@ class HealthService:
                       bus.subscribe(AcquisitionStatusEvent, self._on_acquisition)]
         try:
             self.journal.start()
-            self._emit("recorder.started", "host", "info", "Health recorder started (read-only; Phase 0)",
+            self._emit("recorder.started", "host", "info", "Health recorder started (read-only; Phases 0-1)",
                        source="HealthService", data={"journal": self.journal.stats().get("path", "")})
         except Exception as exc:  # noqa: BLE001 - starting Health never fails the caller (the app launch)
             self._fail(exc)
@@ -355,9 +384,12 @@ class HealthService:
         now = self._now()
         ev = HealthEvent(new_id(), kind, subsystem, severity, message, observed_at or now, now, provenance, source,
                          device_id, data or {})
-        if recent:
+        if recent or kind in RULE_KINDS:
             with self._lock:
-                self._recent.append(ev)
+                if recent:
+                    self._recent.append(ev)
+                if kind in RULE_KINDS:
+                    self._rule_events.append(ev)
         self.journal.offer(ev)
 
     def _fail(self, exc: BaseException) -> None:
@@ -429,7 +461,12 @@ class HealthService:
         now = self._now()
         try:
             self._remap()
-            report = assess(self._gather(now))
+            view = self._gather(now)
+            try:
+                view = self._run_rules(view)
+            except Exception as exc:  # noqa: BLE001 - a rule failure leaves the Phase 0 assessment standing
+                self._fail(exc)
+            report = assess(view)
         except Exception as exc:  # noqa: BLE001 - an assessment failure shows UNKNOWN, never the last green
             self._fail(exc)
             report = failed_report(now, f"assessment failed: {type(exc).__name__}: {exc}")
@@ -469,10 +506,10 @@ class HealthService:
             link_errors = {k: tuple(v) for k, v in self._link_errors.items()}
             rec_err, rec_msg = self.recorder_errors, self.last_error
         t = time.monotonic()
-        if self._disk is None or t - self._disk[0] >= DISK_PERIOD_S:
-            disks = {"data": disk_view(self.data_folder, now)}
+        if self._disk is None or t - self._disk[0] >= self.disk_period_s:
+            disks = {"data": self.disk_reader(self.data_folder, now)}
             if self.journal.path is not None:
-                disks["journal"] = disk_view(self.journal.path.parent, now)
+                disks["journal"] = self.disk_reader(self.journal.path.parent, now)
             self._disk = (t, disks)
         preview = getattr(getattr(core, "transport", None), "preview", None)
         host = {"memory_percent": memory_load_percent(), "threads": threading.active_count(),
@@ -481,11 +518,117 @@ class HealthService:
                 "preview": dict(preview.stats) if preview is not None else None,
                 "journal": self.journal.stats(), "recorder_errors": rec_err, "recorder_error": rec_msg,
                 "period_s": self.sample_period_s}
+        counters_by_device: dict[str, dict[str, int]] = {}
+        for key in ("mono_camera", "colour_camera", "illumination"):
+            for did in self._mapped.get(key, ()):
+                backend = getattr(core.devices.get(did), "backend", None)
+                cs = {n: v for n in BACKEND_COUNTERS
+                      if isinstance(v := getattr(backend, n, None), int) and not isinstance(v, bool)}
+                if cs:
+                    counters_by_device[did] = cs
         return HealthView(now=now, devices=dict(self._mapped), snapshots=snaps, periods=periods,
                           monitors=tuple(monitors), links=self._links(), probe_refusals=refusals,
                           probe_missing=missing, last_reason=last_reason, last_refusal=last_refusal,
                           link_errors=link_errors, counters=counters, disks=dict(self._disk[1]), host=host,
-                          host_measured_at=now)
+                          host_measured_at=now, backend_counters=counters_by_device)
+
+    # ------------------------------------------------------------------ Phase 1 (ADR-0069): series, rules, baselines
+    def _run_rules(self, view: HealthView) -> HealthView:
+        self._record_series(view)
+        with self._lock:
+            events = tuple(self._rule_events)
+        inp = RuleInput(view.now, view, events, self.series, self.baselines, self.fingerprint(view))
+        active, statuses, transitions = self.rules.evaluate(inp)
+        for what, a in transitions:
+            self._journal_assessment(what, a)
+        return replace(view, assessments=active, detectors=statuses)
+
+    def _journal_assessment(self, what: str, a: Assessment) -> None:
+        sev = "warning" if what == "raised" else "info"
+        text = (f"WATCH raised by rule {a.detector} v{a.detector_version}: {a.title}" if what == "raised" else
+                f"WATCH resolved, rule {a.detector} v{a.detector_version} back within its limit: {a.title}")
+        self._emit(f"assessment.{what}", a.subsystem, sev, text, provenance=a.provenance,
+                   source=f"Health rule {a.detector} v{a.detector_version}", data=a.to_json())
+
+    def _record_series(self, view: HealthView) -> None:
+        t = view.now.timestamp()
+        series = self.series
+        for did in view.devices.get("xy_stage", ()):
+            snap = view.snapshots.get(did)
+            if snap is None:
+                continue
+            a, c = snap.attr("counts"), snap.attr("commanded_counts")
+            if not (isinstance(a, tuple) and isinstance(c, tuple) and len(a) == len(c) == len(AXES)):
+                continue
+            if snap.observed_at is None or self._series_obs.get(did) == snap.observed_at:
+                continue  # no new reading since the last sample: not counted twice
+            self._series_obs[did] = snap.observed_at
+            regime = "idle" if snap.activity.value == "idle" else str(snap.activity.value)
+            for ax, x, y in zip(AXES, a, c, strict=True):
+                series.record(following_metric(ax), t, abs(int(x) - int(y)), regime)
+        for m in view.monitors:
+            if not m.owns_stage:
+                continue
+            ra = m.state.get("reapproaches")
+            if isinstance(ra, dict):
+                for ax in AXES:
+                    series.record(f"xy_stage.reapproaches.{ax}", t, len(ra.get(ax) or ()))
+        for did, cs in view.backend_counters.items():
+            for name, v in cs.items():
+                series.record(f"backend.{name}.{did}", t, v)
+        for name, d in view.disks.items():
+            if d.free_bytes is None or d.measured_at is None or self._series_disk_t.get(name) == d.measured_at:
+                continue
+            self._series_disk_t[name] = d.measured_at
+            series.record(f"storage.free_bytes.{name}", d.measured_at.timestamp(), d.free_bytes)
+
+    def fingerprint(self, view: HealthView | None = None) -> dict[str, str]:
+        """What identifies the instrument for a baseline: each mapped device's backend kind, link and identifying
+        attributes (model, firmware, serial, drive limits), keyed "<device id>.<what>". A baseline keeps the keys of
+        its own subsystem's devices; any of them changing ends it."""
+        snaps = view.snapshots if view is not None else self.core.store.snapshot_all()
+        devices = view.devices if view is not None else self._mapped
+        out: dict[str, str] = {}
+        for ds in devices.values():
+            for did in ds:
+                snap = snaps.get(did)
+                if snap is None:
+                    continue
+                out[f"{did}.backend"] = snap.backend_kind.value
+                if did in self._link_of:
+                    out[f"{did}.link"] = self._link_of[did]
+                for name in FINGERPRINT_ATTRS:
+                    v = snap.attr(name)
+                    if v is not None:
+                        out[f"{did}.{name}"] = str(v)
+        return out
+
+    def capture_baseline(self, metric: str, regime: str = "idle", *, window_s: float = 3600.0,
+                         notes: str = "") -> Baseline:
+        """Build and store the next version of a baseline from the recorded series (at least 30 samples within
+        `window_s`). Always "not-qualified"; one made on the simulator says so in its source and can never be
+        qualified. Reads only; nothing is commanded."""
+        subsystem = metric.split(".", 1)[0]
+        pts = self.series.points(metric, since=self._now().timestamp() - window_s, regime=regime)
+        devices = set(self._mapped.get(subsystem, ()))
+        fp = {k: v for k, v in self.fingerprint().items() if k.rsplit(".", 1)[0] in devices}
+        sim = any(v == BackendKind.SIMULATED.value for k, v in fp.items() if k.endswith(".backend"))
+        unit = "counts" if "following_error" in metric else ""
+        b = self.baselines.add(build_baseline(metric, regime, unit, [v for _, v in pts],
+                                              source="simulator" if sim else "instrument", fingerprint=fp,
+                                              now=self._now(), notes=notes))
+        self._emit("baseline.recorded", subsystem, "info",
+                   f"baseline {b.baseline_id} v{b.version} recorded from {b.n} samples ({b.source}, "
+                   f"{b.qualification}): median {b.median:g}, p95 {b.p95:g} {b.unit}",
+                   provenance=Provenance.DEMO if sim else Provenance.DERIVED, source="HealthService.capture_baseline",
+                   data={"baseline_id": b.baseline_id, "version": b.version, "n": b.n, "median": b.median,
+                         "mad": b.mad, "p05": b.p05, "p95": b.p95, "source": b.source,
+                         "qualification": b.qualification, "fingerprint": b.fingerprint})
+        return b
+
+    def rule_events(self) -> tuple[HealthEvent, ...]:
+        with self._lock:
+            return tuple(self._rule_events)
 
     # ------------------------------------------------------------------ ADR-0067 automatic recovery (read only)
     def _recovery(self, label: str, svc: Any, mon: Any, sim: bool) -> dict[str, Any]:

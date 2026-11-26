@@ -27,6 +27,8 @@ M, D, U = Provenance.MEASURED, Provenance.DERIVED, Provenance.UNAVAILABLE
 #: the Technosoft slow poll (TelemetryService.poll_interval_s, POLL_INTERVAL_S = 1.0 in the app)
 POLL = "~1 Hz (Technosoft status poll)"
 ON_CHANGE = "on change"
+#: Phase 1 (ADR-0069): plain integer counters the backends already keep, read by Health with getattr each sample
+COUNTER = "1 Hz (Health reads the backend's counter)"
 
 
 @dataclass(frozen=True)
@@ -109,10 +111,13 @@ INVENTORY: tuple[Signal, ...] = (
     Signal("mono_camera", "Gain", "dB", ON_CHANGE, "RuntimeStateStore attribute gain_db", M, "attr:gain_db"),
     Signal("mono_camera", "Model / firmware", "", ON_CHANGE, "RuntimeStateStore attributes model, fw", M,
            "attr:model"),
-    Signal("mono_camera", "Frame rate, incomplete frames, latency", "fps, frames, ms", "", "", U,
-           why="counted inside the backend (frames_produced, incomplete_frames); not published"),
-    Signal("mono_camera", "Reconnects after a USB drop", "count", "", "", U,
-           why="counted inside the backend (reconnects, ADR-0066); its reason text is journaled"),
+    Signal("mono_camera", "Frames delivered (session)", "frames", COUNTER, "camera backend counter frames_produced", M,
+           "backend:frames_produced"),
+    Signal("mono_camera", "Incomplete frames skipped (session)", "frames", COUNTER,
+           "camera backend counter incomplete_frames (FlyCapture2)", M, "backend:incomplete_frames"),
+    Signal("mono_camera", "Reconnects after a USB drop (session)", "count", COUNTER,
+           "camera backend counter reconnects (ADR-0066)", M, "backend:reconnects"),
+    Signal("mono_camera", "Frame latency", "ms", "", "", U, why="not timed by the adapter"),
     Signal("mono_camera", "Sensor temperature", "°C", "", "", U, why="not read by the adapter"),
     # ------------------------------------------------------------------ colour camera (IDS uEye)
     Signal("colour_camera", "Connection", "", ON_CHANGE, "RuntimeStateStore (camera backend)", M,
@@ -123,13 +128,20 @@ INVENTORY: tuple[Signal, ...] = (
            "attr:exposure_ms"),
     Signal("colour_camera", "Gain", "dB", ON_CHANGE, "RuntimeStateStore attribute gain_db", M, "attr:gain_db"),
     Signal("colour_camera", "Model", "", ON_CHANGE, "RuntimeStateStore attribute model", M, "attr:model"),
-    Signal("colour_camera", "Frame rate, skipped grabs, latency", "fps, frames, ms", "", "", U,
-           why="counted inside the backend (frames_produced, skipped_grabs); not published"),
+    Signal("colour_camera", "Frames delivered (session)", "frames", COUNTER, "camera backend counter frames_produced",
+           M, "backend:frames_produced"),
+    Signal("colour_camera", "Grabs skipped (session)", "frames", COUNTER, "camera backend counter skipped_grabs (uEye)",
+           M, "backend:skipped_grabs"),
+    Signal("colour_camera", "Reconnects after a USB drop (session)", "count", COUNTER,
+           "camera backend counter reconnects (ADR-0066)", M, "backend:reconnects"),
+    Signal("colour_camera", "Frame latency", "ms", "", "", U, why="not timed by the adapter"),
     # ------------------------------------------------------------------ illumination (EVOS LED board, USB HID)
     Signal("illumination", "Connection", "", ON_CHANGE, "RuntimeStateStore (LED board backend)", M,
            "state:connection"),
     Signal("illumination", "Firmware (application / bootloader)", "", ON_CHANGE,
            "RuntimeStateStore (LED board backend)", M, "state:firmware_mode"),
+    Signal("illumination", "Reconnects after a USB drop (session)", "count", COUNTER,
+           "LED board backend counter reconnects", M, "backend:reconnects"),
     Signal("illumination", "Channel", "", ON_CHANGE, "RuntimeStateStore attribute channel", M, "attr:channel"),
     Signal("illumination", "Light on", "", ON_CHANGE, "RuntimeStateStore attribute led_enabled (read back)", M,
            "attr:led_enabled"),

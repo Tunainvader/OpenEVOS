@@ -20,7 +20,7 @@ Rules (Phase 0; none of them restricts anything, they only describe):
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -30,9 +30,11 @@ from openevos.health.model import (
     CAPABILITIES,
     SEVERITY,
     SUBSYSTEMS,
+    Assessment,
     CapabilityDef,
     CapabilityState,
     CapabilityStatus,
+    DetectorStatus,
     Finding,
     HealthReport,
     HealthState,
@@ -126,6 +128,11 @@ class HealthView:
     #: health:* host readings (memory_percent, threads, bus_errors, stale_obs, preview, journal, recorder_errors)
     host: dict[str, Any] = field(default_factory=dict)
     host_measured_at: datetime | None = None
+    #: Phase 1 (ADR-0069): the rules' open WATCH assessments and whether each rule runs
+    assessments: tuple[Assessment, ...] = ()
+    detectors: tuple[DetectorStatus, ...] = ()
+    #: device id -> the plain integer counters its backend keeps (frames_produced, incomplete_frames, reconnects ...)
+    backend_counters: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
 # ====================================================================================================== devices
@@ -227,7 +234,8 @@ def _fmt(v: Any) -> Any:
 
 
 def device_metrics(subsystem: str, dids: tuple[str, ...], snaps: dict[str, DeviceSnapshot],
-                   monitor: MonitorView | None = None, sampled_at: datetime | None = None) -> list[Metric]:
+                   monitor: MonitorView | None = None, sampled_at: datetime | None = None,
+                   counters: dict[str, dict[str, int]] | None = None) -> list[Metric]:
     out: list[Metric] = []
     many = len(dids) > 1
     for sig in inventory.signals(subsystem):
@@ -265,6 +273,11 @@ def device_metrics(subsystem: str, dids: tuple[str, ...], snaps: dict[str, Devic
                     if key in ("*", ax):
                         out.append(Metric(f"{name} {ax.upper()}" if key == "*" else name, round(val, 3), pos.unit,
                                           prov, src, at))
+            elif kind == "backend":
+                v = (counters or {}).get(did, {}).get(key)
+                if v is None:
+                    continue
+                out.append(Metric(name, v, sig.unit, prov, f"{did} backend counter {key}", sampled_at))
             elif kind == "attr":
                 v = snap.attr(key)
                 if v is None:
@@ -318,7 +331,8 @@ def _device_subsystem(key: str, title: str, view: HealthView) -> SubsystemHealth
                            observed_at=max(times) if times else None,
                            expected_period_s=min(periods) if periods else None, stale=stale,
                            findings=tuple(findings),
-                           metrics=tuple(device_metrics(key, dids, view.snapshots, monitor, view.now)),
+                           metrics=tuple(device_metrics(key, dids, view.snapshots, monitor, view.now,
+                                                        view.backend_counters)),
                            not_monitored=nm,
                            devices=dids, simulated=simulated, capabilities=caps)
 
@@ -553,7 +567,7 @@ def capability_status(cap: CapabilityDef, subs: dict[str, SubsystemHealth], view
         why = tuple(f"{d.title} {d.state.value}: {d.reasons[0] if d.reasons else ''}" for d in monitored
                     if d.state is dep_state)
         if state is CapabilityState.AT_RISK:
-            why += ("advisory: the SafetyManager does not refuse it, and Phase 0 Health restricts nothing",)
+            why += ("advisory: the SafetyManager does not refuse it, and Health restricts nothing",)
     return CapabilityStatus(cap.key, cap.title, state, why + note, "Health", cap.depends_on)
 
 
@@ -613,10 +627,24 @@ def assess(view: HealthView) -> HealthReport:
             subs[d.key] = _host(view)
         else:
             subs[d.key] = _device_subsystem(d.key, d.title, view)
+    _apply_assessments(subs, view.assessments)
     caps = [capability_status(c, subs, view) for c in CAPABILITIES]
     overall = worst(s.state for s in subs.values() if s.monitored)
     return HealthReport(view.now, overall, tuple(subs[d.key] for d in SUBSYSTEMS), tuple(caps),
-                        tuple(_restrictions(view, caps, subs)))
+                        tuple(_restrictions(view, caps, subs)), assessments=view.assessments,
+                        detectors=view.detectors)
+
+
+def _apply_assessments(subs: dict[str, SubsystemHealth], assessments: Iterable[Assessment]) -> None:
+    """A rule's open assessment adds a WATCH finding to its subsystem (Phase 1 rules say WATCH, never more). A
+    subsystem already worse keeps its state; an unmonitored one is left alone (no source, no rule)."""
+    for a in assessments:
+        sub = subs.get(a.subsystem)
+        if sub is None or not sub.monitored:
+            continue
+        f = Finding(W, f"rule {a.detector} v{a.detector_version}: {a.title}", a.provenance,
+                    f"Health rule {a.detector} v{a.detector_version}")
+        subs[a.subsystem] = replace(sub, state=worst((sub.state, W)), findings=(f, *sub.findings))
 
 
 def failed_report(now: datetime, error: str) -> HealthReport:

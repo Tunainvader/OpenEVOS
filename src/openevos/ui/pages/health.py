@@ -1,8 +1,9 @@
-"""Health page (ADR-0068, Phase 0 of the Instrument Health kit): read-only status of the instrument.
+"""Health page (ADR-0068 Phase 0, ADR-0069 Phase 1 of the Instrument Health kit): read-only status of the instrument.
 
 An overview (overall state, freshness, counts), the operating-capability list kept apart from physical health, one card
 per subsystem with its source, provenance and age, "Why is operation restricted?" quoting the StageMonitor's lock and
-the SafetyManager's refusal, and the recent Health events.
+the SafetyManager's refusal, the rules' open WATCH assessments and the correlated incidents (Phase 1), and the recent
+Health events. One button writes a diagnostic bundle (a zip file); it commands nothing.
 
 The page never commands anything and never waits on a device: it reads `HealthService.latest` (an immutable report the
 sampler thread swaps in) and the recorder's recent events once a second. States are shown as shape + text + colour,
@@ -11,7 +12,9 @@ never colour alone; a source that is missing reads NOT MONITORED, one that is st
 
 from __future__ import annotations
 
-from datetime import datetime
+import threading
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt, QTimer
@@ -21,6 +24,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -29,6 +33,7 @@ from PySide6.QtWidgets import (
 
 from openevos.core.models import utcnow
 from openevos.health.assess import overall_reasons
+from openevos.health.correlate import Incident, correlate
 from openevos.health.model import (
     CAPABILITIES,
     SUBSYSTEMS,
@@ -49,6 +54,8 @@ STATE_LOOK: dict[str, tuple[str, str]] = {
 }
 EVENT_HEADERS = ["Time", "Subsystem", "Severity", "Event", "Message", "Source · provenance"]
 SEVERITY_STATE = {"critical": "fault", "error": "fault", "warning": "warn", "info": "unknown"}
+INCIDENT_HEADERS = ["Started", "Lasted", "Severity", "Subsystems", "Incident", "Events"]
+INCIDENT_HOURS = 2.0
 REFRESH_MS = 1000
 CARD_COLUMNS = 3
 
@@ -251,6 +258,39 @@ class HealthPage(QWidget):
         sl.addLayout(cards)
         root.addWidget(s)
 
+        # ------------------------------------------------------------------ rules and incidents (Phase 1)
+        r, rl = panel("Rules and incidents")
+        rl.addWidget(label("Deterministic rules over what Health records. They say WATCH only and restrict nothing; a "
+                           "limit is provisional until a baseline qualified on the instrument backs it. Hypotheses "
+                           "are never confirmed. Incidents group events that came together; they do not prove a "
+                           "cause.", "caption", wrap=True))
+        self.rules = QLabel()
+        self.rules.setWordWrap(True)
+        self.rules.setTextFormat(Qt.TextFormat.RichText)
+        self.rules.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        rl.addWidget(self.rules)
+        self.detectors = label("", "caption", wrap=True)
+        rl.addWidget(self.detectors)
+        self.incidents = QTableWidget(0, len(INCIDENT_HEADERS))
+        self.incidents.setHorizontalHeaderLabels(INCIDENT_HEADERS)
+        self.incidents.verticalHeader().setVisible(False)
+        self.incidents.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.incidents.setMinimumHeight(140)
+        empty_hint(self.incidents, f"No incidents in the last {INCIDENT_HOURS:g} h")
+        rl.addWidget(self.incidents)
+        ex = QHBoxLayout()
+        self.export_btn = QPushButton("Export diagnostics")
+        self.export_btn.setObjectName("health_export")
+        self.export_btn.setToolTip("Write a zip with the report, rules, incidents, events, baselines and inventory "
+                                   "of the last 24 h. Reads only; commands nothing.")
+        self.export_btn.clicked.connect(self.export_diagnostics)
+        ex.addWidget(self.export_btn)
+        self.export_note = label("", "caption", wrap=True)
+        self.export_note.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        ex.addWidget(self.export_note, 1)
+        rl.addLayout(ex)
+        root.addWidget(r)
+
         # ------------------------------------------------------------------ recent events
         e, el = panel("Recent events")
         self.events = QTableWidget(0, len(EVENT_HEADERS))
@@ -267,6 +307,9 @@ class HealthPage(QWidget):
         root.addStretch(1)
 
         self._last_event_id = ""
+        self._last_incident_key: tuple[str, int] = ("", -1)
+        self._export: threading.Thread | None = None
+        self._export_result: tuple[str, str] | None = None
         self.report: HealthReport | None = None
         self._timer = QTimer(self)
         self._timer.setInterval(REFRESH_MS)
@@ -278,6 +321,8 @@ class HealthPage(QWidget):
     def _tick(self) -> None:
         if self.isVisible():
             self.refresh()
+        else:
+            self._export_done()  # an export started before the page was left still reports
 
     def refresh(self) -> None:
         rep = self.service.latest
@@ -320,7 +365,100 @@ class HealthPage(QWidget):
             else:
                 card.chip.set("UNKNOWN")
                 card.reasons.setText(rep.error or "not assessed")
+        self.rules.setText(self._rules_html(rep, now))
+        self.detectors.setText(self._detectors_text(rep))
+        self._fill_incidents()
+        self._export_done()
         self._fill_events(now)
+
+    # ------------------------------------------------------------------ Phase 1: rules, incidents, export
+    def _rules_html(self, rep: HealthReport, now: datetime) -> str:
+        if not rep.assessments:
+            return "<p><b>No rule is raising a WATCH.</b></p>"
+        look = theme.state_color("warn")
+        out = []
+        for a in rep.assessments:
+            base = (f"baseline {_esc(a.baseline.get('id'))} v{_esc(a.baseline.get('version'))} "
+                    f"({_esc(a.baseline.get('regime'))})") if a.baseline else "no baseline: fixed limit"
+            out.append(
+                f"<p><span style='color:{look}'>▲ WATCH</span> <b>{_esc(a.title)}</b><br>{_esc(a.detail)}"
+                f"<br>Rule {_esc(a.detector)} v{_esc(a.detector_version)} · limit: {_esc(a.limit)} · {base}"
+                f"<br>Since {ago(a.first_seen, now)} · {len(a.evidence_event_ids)} evidence event(s) · "
+                f"{_esc(a.provenance.value)}"
+                + (f"<br>Possible causes (not confirmed): {_esc('; '.join(a.hypotheses))}" if a.hypotheses else "")
+                + (f"<br>Checks: {_esc('; '.join(a.checks))}" if a.checks else "") + "</p>")
+        return "".join(out)
+
+    @staticmethod
+    def _detectors_text(rep: HealthReport) -> str:
+        if not rep.detectors:
+            return ""
+        on = [d for d in rep.detectors if d.active]
+        off = [d for d in rep.detectors if not d.active]
+        text = f"{len(rep.detectors)} rules: {len(on)} running"
+        if off:
+            text += f", {len(off)} inactive (" + "; ".join(
+                f"{d.name}: {d.note.removeprefix('inactive: ')}" for d in off) + ")"
+        return text
+
+    def _fill_incidents(self) -> None:
+        svc = self.service
+        evs = {e.event_id: e for e in (*svc.rule_events(), *svc.recent_events(10_000))}
+        since = utcnow() - timedelta(hours=INCIDENT_HOURS)
+        recent = [e for e in evs.values() if e.observed_at >= since]
+        key = (max((e.event_id for e in recent), default=""), len(recent))
+        if key == self._last_incident_key:
+            return
+        self._last_incident_key = key
+        incs: list[Incident] = correlate(recent)[::-1]
+        t = self.incidents
+        t.setRowCount(len(incs))
+        for row, inc in enumerate(incs):
+            col = theme.state_color(SEVERITY_STATE.get(inc.severity, "unknown"))
+            cells = [inc.started_at.astimezone().strftime("%H:%M:%S"), f"{inc.duration_s:.0f} s",
+                     inc.severity.upper(), ", ".join(inc.subsystems), inc.title, str(len(inc.event_ids))]
+            for c, text in enumerate(cells):
+                it = QTableWidgetItem(text)
+                if c == 2:
+                    it.setForeground(QColor(col))
+                if c == 4:
+                    it.setToolTip(text)
+                t.setItem(row, c, it)
+        if incs:
+            t.resizeColumnsToContents()
+            t.setColumnWidth(4, min(t.columnWidth(4), 560))
+
+    def export_folder(self) -> Path:
+        jp = self.service.journal.path
+        return (jp.parent if jp is not None else Path(self.service.data_folder)) / "diagnostics"
+
+    def export_diagnostics(self) -> None:
+        """Write the bundle on a worker thread (the journal read can take a moment); the timer shows the result."""
+        if self._export is not None and self._export.is_alive():
+            return
+        from openevos.health.export import export_diagnostics
+
+        dest = self.export_folder()
+        self.export_btn.setEnabled(False)
+        self.export_note.setText(f"Writing the diagnostic bundle to {dest} …")
+        self._export_result = None
+
+        def run() -> None:
+            try:
+                self._export_result = ("ok", str(export_diagnostics(self.service, dest)))
+            except Exception as exc:  # noqa: BLE001 - shown on the page, never raised into Qt
+                self._export_result = ("error", f"{type(exc).__name__}: {exc}")
+
+        self._export = threading.Thread(target=run, name="health-export", daemon=True)
+        self._export.start()
+
+    def _export_done(self) -> None:
+        res = self._export_result
+        if res is None or (self._export is not None and self._export.is_alive()):
+            return
+        self._export_result = None
+        self.export_btn.setEnabled(True)
+        self.export_note.setText(f"Written: {res[1]}" if res[0] == "ok" else f"Export failed: {res[1]}")
 
     def _why_html(self, rep: HealthReport, now: datetime) -> str:
         if rep.error:
