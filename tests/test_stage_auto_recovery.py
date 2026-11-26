@@ -194,6 +194,31 @@ def test_an_axis_switched_off_far_from_home_is_homed_from_where_it_stands(tmp_pa
         svc.stop()
 
 
+
+def test_a_trip_after_a_cleared_carried_over_lock_is_recovered(tmp_path):
+    """2026-11-26 on the instrument: the app started with yesterday's X lock carried over; the operator's Re-home
+    cleared it; a Y trip later in the session got no automatic recovery, because `carried_over` outlived the lock it
+    described ("the lock was carried over from an earlier session"). A new trip is this session's."""
+    (tmp_path / sm.LATCH_FILE).write_text(json.dumps({
+        "rule": "overcurrent_trip", "axis": "X", "message": "X drive over-current trip recorded",
+        "at_utc": "2026-11-25T14:28:54.347+00:00", "values": {}}), encoding="utf-8")
+    x0, y0 = 60000, 40000
+    chain, svc = _setup(x0, y0, tmp_path)
+    try:
+        assert svc.monitor.latched and svc.monitor.carried_over
+        assert "carried over" in svc.auto_recovery_blocker()
+        job = svc.rehome_stage("operator")
+        assert not isinstance(job, str), job
+        assert job.done.wait(30) and not svc.monitor.latched, job.message
+        assert not svc.monitor.carried_over
+        _trip(svc, chain, "Y", STUCK, x0, 120000)
+        assert svc.auto_recovery_blocker() == ""
+        rec = _recover(svc)
+        assert rec.ok and rec.stage == "recovered", rec.message
+        assert not svc.monitor.latched and svc.auto_recovery_attempts.keys() == {"Y"}
+    finally:
+        svc.stop()
+
 def test_a_trip_that_ran_back_against_its_command_is_never_retried():
     # the 2026-11-25 14:28 shape: half way to the target, then back near the start, current saturated
     chain, svc = _setup(60000, 40000)

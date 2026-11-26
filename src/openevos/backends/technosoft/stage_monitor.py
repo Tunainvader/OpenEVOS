@@ -586,6 +586,7 @@ class StageMonitor:
             self.commands.append((t, f"also {rule} on {axis}: {message}"))
             return None
         self.latch = Latch(rule, axis, message, _utc(), dict(values))
+        self.carried_over = False  # tripped in this session
         self._rehomed = dict.fromkeys(AXES, False)
         self._evidence_due = self._now() + POST_EVENT_S
         self.commands.append((t, f"LATCH {rule} on {axis}: {message}"))
@@ -595,6 +596,9 @@ class StageMonitor:
     def _clear(self, why: str) -> None:
         self.commands.append((round(self._now(), 3), f"latch cleared: {why}"))
         old, self.latch = self.latch, None
+        # 2026-11-26: a carried-over latch, once cleared (re-home, release, power-on homing), no longer marks the
+        # session; the flag outliving it blocked ADR-0067's recovery for every later trip ("carried over")
+        self.carried_over = False
         self.ref = dict.fromkeys(AXES)
         if self.evidence_dir is not None and old is not None:
             p = self.evidence_dir / LATCH_FILE
