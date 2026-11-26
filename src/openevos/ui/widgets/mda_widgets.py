@@ -4,7 +4,6 @@
   dimensions read "off" (words, not colour alone).
 * `PositionMap`: the vessel's wells or regions as a grid; positions in the plan are filled, the one being acquired is
   ringed. A click asks the page to add or remove a position at that well's centre.
-* `ZPlanRuler`: the planned planes along a horizontal Z axis, bottom to top, with the focus reference marked.
 * `AxisBar`: one dimension's progress, its letter, name, a bar in its colour and "12 / 49".
 * `KeyValues`: label / value rows (the summary and status cards).
 * `Checklist`: pre-flight lines with a mark and its word (passed, check, blocked, not used).
@@ -230,81 +229,6 @@ class PositionMap(QWidget):
             if not lx and r.width() > 30:  # slides and dishes: their names
                 p.setPen(QColor(theme.on(theme.ACCENT)) if sel else QColor(theme.TEXT_2))
                 p.drawText(r, Qt.AlignmentFlag.AlignCenter, rid)
-        p.end()
-
-
-# ====================================================================================== Z ruler
-class ZPlanRuler(QWidget):
-    """Planned planes on a horizontal axis (bottom on the left, top on the right), the focus reference marked."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.planes: list[float] = []
-        self.anchor: float | None = None
-        self.setMinimumHeight(54)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setAccessibleName("Z planes")
-
-    def sizeHint(self) -> QSize:
-        return QSize(280, 58)
-
-    def set_planes(self, planes: list[float], anchor: float | None) -> None:
-        self.planes, self.anchor = list(planes), anchor
-        if planes:
-            self.setToolTip(f"{len(planes)} planes from {planes[0]:,.2f} to {planes[-1]:,.2f} µm"
-                            + (f"; focus reference {anchor:,.2f} µm" if anchor is not None else ""))
-        self.update()
-
-    def paintEvent(self, _e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if not self.planes:
-            p.setPen(QColor(theme.TEXT_2))
-            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "One plane at the focus reference")
-            return
-        cap = QFont(self.font())
-        cap.setPointSizeF(max(7.0, cap.pointSizeF() - 1))
-        p.setFont(cap)
-        fm = p.fontMetrics()
-        lo, hi = self.planes[0], self.planes[-1]
-        if self.anchor is not None:
-            lo, hi = min(lo, self.anchor), max(hi, self.anchor)
-        span = max(hi - lo, 1e-6)
-        x0, x1 = 8.0 + fm.horizontalAdvance("0,000.0") / 2, self.width() - 8.0 - fm.horizontalAdvance("0,000.0") / 2
-        y = 22.0
-
-        def X(z: float) -> float:
-            return x0 + (z - lo) / span * (x1 - x0)
-
-        p.setPen(QPen(QColor(theme.BORDER_STRONG), 1.4))
-        p.drawLine(QPointF(x0, y), QPointF(x1, y))
-        col = QColor(dim_color("z"))
-        step = max(1, len(self.planes) // 80)
-        for i, z in enumerate(self.planes):
-            if i % step and i != len(self.planes) - 1:
-                continue
-            p.setPen(QPen(col, 1.4))
-            p.drawLine(QPointF(X(z), y - 7), QPointF(X(z), y + 7))
-        for z in (self.planes[0], self.planes[-1]):
-            p.setBrush(col)
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawEllipse(QPointF(X(z), y), 4, 4)
-        if self.anchor is not None:
-            xa = X(self.anchor)
-            p.setPen(QPen(QColor(theme.TEXT), 1.4))
-            p.setBrush(QColor(theme.PANEL))
-            d = 5.0
-            pts = [QPointF(xa, y - d), QPointF(xa + d, y), QPointF(xa, y + d), QPointF(xa - d, y)]
-            p.drawPolygon(pts)
-        p.setPen(QColor(theme.TEXT_2))
-        n_lab = 5 if len(self.planes) > 4 else len(self.planes)
-        for k in range(n_lab):
-            z = self.planes[0] + (self.planes[-1] - self.planes[0]) * (k / max(1, n_lab - 1))
-            t = f"{z:,.1f}"
-            w = fm.horizontalAdvance(t)
-            p.drawText(QRectF(X(z) - w / 2 - 2, y + 10, w + 4, fm.height()), Qt.AlignmentFlag.AlignCenter, t)
-        lab = f"{len(self.planes)} planes · µm"
-        p.drawText(QRectF(0, 0, self.width() - 4, 14), Qt.AlignmentFlag.AlignRight, lab)
         p.end()
 
 

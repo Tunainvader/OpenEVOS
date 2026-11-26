@@ -556,6 +556,7 @@ def test_page_runs_monitors_and_opens_review(app, window, tmp_path):
     pump(app, 0.3)
     assert pg._reader is not None and pg._reader.manifest["images_written"] == total
     assert pg.m_progress.value() == total and "Completed" in pg.m_status.text()
+    assert pg.m_depth_panel.isVisibleTo(pg) and pg.m_depth.all_done()  # the last volume's planes all green
     assert pg.r_p.count() == 2 and pg.r_view.has_image()
     pg.r_mode.setCurrentIndex(pg.r_mode.findData("max"))
     pump(app, 0.2)
@@ -604,6 +605,56 @@ def test_page_offers_a_fix_for_travel_and_applies_it(app, window, tmp_path):
     pump(app, 0.1)
     assert pg.anchor_um == pytest.approx(lo + pg.z_a.value()) and pg.btn_acquire.isEnabled()
     assert not pg.fix_box.isVisibleTo(pg)
+
+
+def test_depth_picture_follows_the_focus_until_the_reference_is_held(app, window, tmp_path):
+    """Operator 2026-11-26: the current focus in the middle, the slices either side, as the Z-stack page."""
+    pg = window.pages["multid"]
+    pg.md.save_folder = str(tmp_path / "exp")
+    ctl = pg.session.controller
+    pg.card_z.switch.setChecked(True)
+    pg.z_a.setValue(20.0)
+    pg.z_b.setValue(20.0)
+    pg.z_step.setValue(10.0)
+    pg.refresh()
+    z0 = ctl.focus_z()
+    pg._follow_focus()
+    v = pg.zview
+    assert pg.anchor_um == pytest.approx(z0) and v.focus == pytest.approx(z0)
+    assert v.positions == pytest.approx([z0 - 20, z0 - 10, z0, z0 + 10, z0 + 20]) and v.focus_word == "Focus"
+    assert "follow it" in pg.lbl_anchor.text() and not pg.btn_anchor.isEnabled()
+    ctl.move_focus(z0 + 30)
+    pump(app, 0.3)
+    pg._follow_focus()
+    assert pg.anchor_um == pytest.approx(z0 + 30) and v.positions[2] == pytest.approx(z0 + 30)
+    pg.anchor_um = z0 + 30  # held (a Fix, a loaded plan, Go to a slice)
+    ctl.move_focus(z0)
+    pump(app, 0.3)
+    pg._follow_focus()
+    assert pg.anchor_um == pytest.approx(z0 + 30) and v.current == pytest.approx(z0) and v.focus_word == "Reference"
+    assert "held" in pg.lbl_anchor.text() and pg.btn_anchor.isEnabled()
+    pg.btn_anchor.click()
+    pump(app, 0.2)
+    assert pg._follow and pg.anchor_um == pytest.approx(z0)
+
+
+def test_depth_go_to_a_slice_holds_the_reference_and_moves_the_focus(app, window, tmp_path):
+    pg = window.pages["multid"]
+    pg.md.save_folder = str(tmp_path / "exp")
+    pg.card_z.switch.setChecked(True)
+    pg.z_a.setValue(20.0)
+    pg.z_b.setValue(20.0)
+    pg.z_step.setValue(10.0)
+    pg.refresh()
+    pg._follow_focus()
+    z0 = pg.anchor_um
+    pg.zview.btn_top.click()
+    t0 = time.monotonic()
+    while abs(pg.session.controller.focus_z() - (z0 + 20)) > 0.5 and time.monotonic() - t0 < 10:
+        pump(app, 0.1)
+    pg._follow_focus()
+    assert pg.session.controller.focus_z() == pytest.approx(z0 + 20, abs=0.5)
+    assert not pg._follow and pg.anchor_um == pytest.approx(z0)  # the planes stayed put
 
 
 def test_u001_monitor_fits_1280_by_760(app, window):

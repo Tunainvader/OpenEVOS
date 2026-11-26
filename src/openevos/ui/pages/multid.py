@@ -81,14 +81,13 @@ from openevos.imaging.mda_store import ExperimentReader, ExperimentWriter
 from openevos.imaging.zproject import METHODS, project
 from openevos.ui import theme
 from openevos.ui.common import hbox, label, panel, render_frame
-from openevos.ui.pages.zstack import ChannelChips, _Elided, _NoHeightForWidth
+from openevos.ui.pages.zstack import ChannelChips, ZRangeView, _Elided, _NoHeightForWidth
 from openevos.ui.widgets.image_view import ImageView
 from openevos.ui.widgets.mda_widgets import (
     AxisBar,
     DimChip,
     KeyValues,
     PositionMap,
-    ZPlanRuler,
     checklist_html,
     dim_color,
 )
@@ -285,7 +284,10 @@ class MultiDPage(QWidget):
         self.model = model
         self.session = model.session
         self.md = self.session.settings.multid
-        self.anchor_um: float | None = None
+        self._anchor: float | None = None  # the focus reference the planes are placed around
+        self._follow = True  # the reference follows the live focus until something holds it (see anchor_um)
+        self._live_z: float | None = None
+        self._depth_key: tuple[int, int] | None = None  # the volume (T, P) on the monitor's depth picture
         self.positions: list[PositionPlan] = []
         self._runner: MultiDimRunner | None = None
         self._run_plan: MultiDimPlan | None = None
@@ -330,6 +332,9 @@ class MultiDPage(QWidget):
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.setInterval(150)
         self._refresh_timer.timeout.connect(self.refresh)
+        self._focus_timer = QTimer(self)  # the depth picture follows the drive, as the Z-stack page's
+        self._focus_timer.setInterval(400)
+        self._focus_timer.timeout.connect(self._follow_focus)
         model.tasks.busy_changed.connect(self._on_busy)
         model.register_stopper(self.stop)
         model.settings_changed.connect(self._changed)
@@ -497,11 +502,13 @@ class MultiDPage(QWidget):
             zg.addWidget(w, 1, col)
 
         self.card_z.body_lay.addLayout(zg)
-        self.zruler = ZPlanRuler()
-        self.card_z.body_lay.addWidget(self.zruler)
+        self.zview = ZRangeView()  # the Z-stack page's picture: the focus in the middle, the planes either side
+        self.zview.setAccessibleName("Multi-D depth plan")
+        self.zview.go.connect(self._go_slice)
+        self.card_z.body_lay.addWidget(self.zview)
         self.lbl_anchor = label("", "caption", wrap=True)
         self.btn_anchor = QPushButton("Use focus now")
-        self.btn_anchor.setToolTip("Make the current focus position the reference the planes are placed around")
+        self.btn_anchor.setToolTip("Place the planes around the current focus again, and follow it as you focus")
         self.btn_anchor.clicked.connect(self._use_focus_now)
         self.card_z.body_lay.addWidget(hbox(self.lbl_anchor, self.btn_anchor, spacing=8))
         self.lbl_anchor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -774,6 +781,11 @@ class MultiDPage(QWidget):
         self.btn_review.clicked.connect(lambda _c=False: self._go_step("review"))
         stl.addWidget(self.btn_review)
         rl.addWidget(st)
+        self.m_depth_panel, mdl = panel("This volume's planes", spacing=4)
+        self.m_depth = ZRangeView(go_buttons=False)  # the Z-stack page's picture: planes fill in as they are taken
+        self.m_depth.setAccessibleName("Planes of the volume being acquired")
+        mdl.addWidget(self.m_depth)
+        rl.addWidget(self.m_depth_panel)
         tp, tpl = panel("Timepoint timeline", spacing=6)
         self.m_timeline = TimelineStrip()
         tpl.addWidget(self.m_timeline)
@@ -1163,11 +1175,90 @@ class MultiDPage(QWidget):
         self._fill_table()
         self._changed()
 
+    # ------------------------------------------------------------------ the focus reference
+    @property
+    def anchor_um(self) -> float | None:
+        return self._anchor
+
+    @anchor_um.setter
+    def anchor_um(self, z: float | None) -> None:
+        """Setting the reference holds it (a Fix, a loaded plan, Go to a slice); Use focus now follows again."""
+        self._anchor = z
+        self._follow = False
+
     def _use_focus_now(self, _c: bool = False) -> None:
         z = self.session.controller.focus_z()
+        self._follow = True
         if z is not None:
-            self.anchor_um = float(z)
+            self._anchor = float(z)
         self._changed()
+
+    def _follow_focus(self) -> None:
+        """Every 400 ms while the page shows: the live focus on the picture; a followed reference moves with it."""
+        z = self.session.controller.focus_z()
+        self._live_z = float(z) if z is not None else None
+        if self.model.tasks.busy:
+            return  # a run (or another workflow) owns the focus; the plan stays as it is
+        if self._follow and z is not None and (self._anchor is None or abs(float(z) - self._anchor) > 0.05):
+            self._anchor = float(z)
+            self.refresh()
+            return
+        self._show_anchor()
+        self._draw_depth()
+
+    def _go_slice(self, which: str) -> None:
+        """Go to top / centre / bottom: holds the reference so the planes stay put while the operator checks the
+        slice on live view, then moves the focus there (an operator click, as on the Z-stack page)."""
+        pos = self.zview.positions
+        if not pos or self.model.tasks.busy:
+            return
+        target = {"top": pos[-1], "bottom": pos[0], "centre": pos[len(pos) // 2]}[which]
+        if which == "centre" and len(pos) % 2 == 0:
+            target = min(pos, key=lambda v: abs(v - (pos[0] + pos[-1]) / 2))
+        self.anchor_um = self._anchor  # hold it where it is
+        ctl = self.session.controller
+        self.model.submit(lambda: ctl.move_focus(target), f"Multi-D: go to the {which} plane")
+        self.refresh()
+
+    def _show_anchor(self) -> None:
+        """The line under the picture: following the focus, or held at a reference (and where the focus is now)."""
+        a = self.anchor_um
+        if a is None:
+            self.lbl_anchor.setText("No focus reference: focus read-back unavailable")
+        elif self._follow:
+            self.lbl_anchor.setText(f"Planes are placed around the current focus, {a:,.1f} µm, and follow it as you "
+                                    "focus")
+        else:
+            live = self._live_z
+            now = f" (focus now {live:,.1f} µm)" if live is not None and abs(live - a) > 0.05 else ""
+            self.lbl_anchor.setText(f"Planes are held around the focus reference, {a:,.1f} µm{now}. Use focus now "
+                                    "to follow the focus again")
+        self.btn_anchor.setEnabled(not self._follow or a is None)
+
+    def _depth_context(self) -> tuple:
+        """(safe height, travel limits, objective words, focus nominal) for the depth pictures."""
+        cap = self.session.capture
+        safe = cap.safe_height_for() if getattr(cap, "safe_height_for", None) else None
+        prof, ctl = self.session.profile, self.session.controller
+        limits = ctl.axis_limits(prof.focus_device, "z") if prof.focus_device else None
+        slot = ctl.objective_slot()
+        obj = prof.objective(slot) if slot else None
+        words = ""
+        if obj is not None and obj.magnification:
+            words = (f"{obj.magnification:g}× / NA {obj.numerical_aperture:g}" if obj.numerical_aperture
+                     else f"{obj.magnification:g}×")
+        return safe, limits, words, getattr(self.session.vessel, "focus_nominal_um", None)
+
+    def _draw_depth(self, planes: list[float] | None = None) -> None:
+        v = self.zview
+        safe, limits, v.objective, v.nominal = self._depth_context()
+        v.focus_word = "Focus" if self._follow else "Reference"
+        live = self._live_z
+        current = live if live is not None and (self._anchor is None or abs(live - self._anchor) > 0.05) else None
+        v.set_state(v.positions if planes is None else planes, self._anchor, safe, limits, current=current)
+        busy = self.model.tasks.busy
+        for b in (v.btn_top, v.btn_centre, v.btn_bottom):
+            b.setEnabled(not busy)
 
     def _choose_folder(self, _c: bool = False) -> None:
         d = QFileDialog.getExistingDirectory(self, "Save experiments in", str(self.save_root()))
@@ -1207,9 +1298,9 @@ class MultiDPage(QWidget):
         t = TimeAxisPlan(enabled=self.card_t.enabled(), timepoints=self.t_count.value(),
                          interval_s=self.t_every.value() * unit, schedule=Schedule(self.t_sched.currentData()),
                          missed=Missed(self.t_missed.currentData()))
-        if self.anchor_um is None:
+        if self._anchor is None:
             fz = self.session.controller.focus_z()
-            self.anchor_um = float(fz) if fz is not None else None
+            self._anchor = float(fz) if fz is not None else None
         kw: dict = {}
         if self.card_p.enabled():
             kw["positions"] = tuple(self.positions)
@@ -1291,9 +1382,7 @@ class MultiDPage(QWidget):
             exp.append(f"{c.label} {c.exposure_ms:g} ms")
         self.lbl_exposure.setText(("Exposure from the Capture page: " + ", ".join(exp)) if exp else
                                   f"Pick at least one channel on the {role.value} camera.")
-        a = self.anchor_um
-        self.lbl_anchor.setText(f"Planes are placed around the focus reference, {a:,.1f} µm" if a is not None else
-                                "No focus reference: focus read-back unavailable")
+        self._show_anchor()
         summ = summarize(plan, self.session.profile)
         pre = preflight(plan, self.session, summ, save_root=self.save_root())
         self.last_summary, self.last_preflight = summ, pre
@@ -1317,7 +1406,7 @@ class MultiDPage(QWidget):
         self.chip["t"].set_state(plan.time.enabled, summ.n_t)
         self.chip["p"].set_state(self.card_p.enabled(), summ.n_p)
         anchor = self.anchor_um
-        self.zruler.set_planes([(anchor or 0.0) + o for o in zoffs] if zoffs else [], anchor)
+        self._draw_depth([anchor + o for o in zoffs] if zoffs and anchor is not None else [])
         if plan.time.enabled:
             self.t_preview.set_state(plan.n_t, {})
             self.lbl_tpreview.setText(f"{plan.n_t} timepoints over {fmt_seconds(plan.time.interval_s * (plan.n_t - 1))}"
@@ -1447,6 +1536,15 @@ class MultiDPage(QWidget):
             self.btn_pause.setText("Pause")
         self._update_acquire()
 
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._focus_timer.start()
+        self._follow_focus()
+
+    def hideEvent(self, e):
+        super().hideEvent(e)
+        self._focus_timer.stop()
+
     # ------------------------------------------------------------------ plan files
     def _save_plan(self, _c: bool = False) -> None:
         try:
@@ -1533,6 +1631,10 @@ class MultiDPage(QWidget):
         self.m_progress.setValue(0)
         self.m_view.set_image(None)
         self.btn_review.setVisible(False)
+        self.m_depth_panel.setVisible(plan.z.enabled and summ.n_z > 1)
+        self.m_depth.set_run(None)
+        self.m_depth.set_finished(None)
+        self._depth_key = None
         self.m_timeline.set_state(plan.n_t, {})
         self._log(f"Started: {summ.images:,} images, about {fmt_seconds(summ.total_s)}")
         self._go_step("acquire")
@@ -1624,6 +1726,7 @@ class MultiDPage(QWidget):
                                summ.n_c)
         self.ax["t"].set_value(sum(1 for r in p.timepoints if "finished_at" in r), summ.n_t)
         self.ax["p"].set_value(p.p_index + (1 if vol_done >= per_vol else 0), summ.n_p)
+        self._show_volume(p, plan, summ, vol_done)
         q = self.m_queue
         q.setRowCount(summ.n_p)
         chans = ", ".join(c.label for c in plan.channels)
@@ -1663,6 +1766,34 @@ class MultiDPage(QWidget):
         done = {q.label for k, q in enumerate(plan.positions) if k < p.p_index} & on_map
         self.m_map.set_marks(on_map, p.position_label if p.position_label in on_map else None, done)
 
+    def _show_volume(self, p: MDAProgress, plan: MultiDimPlan, summ, vol_done: int) -> None:
+        """The volume being taken on the Z-stack page's picture: the planes around this position's reference, those
+        taken filled in, the one being exposed in amber, each turning green once every channel has it."""
+        if self.m_depth_panel.isHidden():  # Z off: one plane, nothing to draw
+            return
+        offs = plan.z_offsets()
+        nz, nc = max(1, len(offs)), max(1, summ.n_c)
+        pos = plan.positions[p.p_index] if p.p_index < len(plan.positions) else None
+        anchor = plan.anchor_for(pos) if pos is not None else plan.global_anchor_z_um
+        if anchor is None and p.z_um is not None and p.z_index < nz:
+            anchor = p.z_um - offs[p.z_index]  # the runner placed it on the live focus
+        if anchor is None:
+            return
+        v = self.m_depth
+        key = (p.t_index, p.p_index)
+        if key != self._depth_key:
+            self._depth_key = key
+            safe, limits, v.objective, v.nominal = self._depth_context()
+            v.set_state([anchor + o for o in offs], anchor, safe, limits)
+        if plan.traversal is Traversal.T_P_C_Z:  # channel by channel: every channel sweeps all the planes
+            chans, rest = divmod(vol_done, nz)
+            taken = nz if chans else rest
+            complete = nz if chans >= nc else rest if chans == nc - 1 else 0
+        else:  # plane by plane: every channel at a plane, then the next plane
+            complete = vol_done // nc
+            taken = -(-vol_done // nc)
+        v.set_run(taken, min(p.z_index, nz - 1), complete)
+
     def _show_latest(self) -> None:
         self._img_pending = False
         latest = self._latest
@@ -1673,6 +1804,9 @@ class MultiDPage(QWidget):
 
     def _done(self, res: MDAResult) -> None:
         self._runner = None
+        done = self.m_depth.complete
+        self.m_depth.set_run(None)
+        self.m_depth.set_finished(len(self.m_depth.positions) if res.state is MDAState.COMPLETED else done)
         words = {MDAState.COMPLETED: "Completed", MDAState.PARTIAL: "Partial", MDAState.FAILED: "Failed"}
         text = f"{words.get(res.state, res.state.value)}: {res.message}"
         self.m_status.setText(text + (f". Saved in {Path(res.folder).name}" if res.folder else ""))

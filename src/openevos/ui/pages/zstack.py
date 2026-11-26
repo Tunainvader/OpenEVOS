@@ -167,8 +167,10 @@ class ZRangeView(QWidget):
     BTN_W = 96.0  # right: Go to buttons and tags
     TOP_PAD, BOTTOM_PAD = 30.0, 58.0  # room for the safe-height label above, the objective below
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, go_buttons: bool = True):
         super().__init__(parent)
+        self.go_buttons = go_buttons  # False: a picture only (the Multi-D monitor, where nothing may move the focus)
+        self.focus_word = "Focus"  # the middle label's word (Multi-D: "Reference" when it is held)
         self.positions: list[float] = []
         self.focus: float | None = None
         self.current: float | None = None
@@ -307,9 +309,11 @@ class ZRangeView(QWidget):
     def _place_buttons(self) -> None:
         rng = self._range()
         pos = self.positions
-        if rng is None or not pos:
+        if rng is None or not pos or not self.go_buttons:
             for b in self._buttons.values():
                 b.setVisible(False)
+            if not self.go_buttons:
+                self._btn_w = 70  # room on the right for the travel-limit and safe-height words only
             return
         want = self._ends()
         show = {"top": len(pos) >= 2, "centre": len(pos) != 2, "bottom": len(pos) >= 2}
@@ -461,7 +465,7 @@ class ZRangeView(QWidget):
         p.drawLine(QPointF(axis_x, self._y(ends["top"], rng)), QPointF(axis_x, self._y(ends["bottom"], rng)))
         marks = [(ends["top"], "Top"), (ends["bottom"], "Bottom")]
         mid = self.focus if self.focus is not None else ends["centre"]
-        marks.insert(1, (mid, "Focus" if self.focus is not None else "Centre"))
+        marks.insert(1, (mid, self.focus_word if self.focus is not None else "Centre"))
         used: list[float] = []
         for z, word in marks:
             y = self._y(z, rng)

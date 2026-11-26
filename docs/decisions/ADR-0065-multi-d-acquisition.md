@@ -161,3 +161,23 @@ Tests: `test_physical_positions_need_the_operators_confirmation`, `test_travel_f
 reference`, `test_travel_fix_per_position_sets_only_the_failing_references`,
 `test_page_offers_a_fix_for_travel_and_applies_it`; the page's gate test now declines the question and checks that
 nothing starts.
+
+### Addendum 2026-11-26: the depth card uses the Z-stack page's picture, centred on the live focus
+
+The operator: "should show current focus at middle then show the slices both side, also make animation simmilar to z
+stack style". The horizontal ruler (`ZPlanRuler`, removed) drew the planes as absolute heights around a reference
+captured once, so a reference of 0 read as "-200 … 200" whatever the focus was.
+- The Depth card now shows the Z-stack page's `ZRangeView`: the planes stacked over the objective, with the focus as a
+  diamond in the middle, top and bottom labelled, the safe height, the travel limits and Go to top / centre / bottom.
+- **The reference follows the live focus** (a 400 ms timer while the page shows, as on the Z-stack page), so the
+  planes sit around wherever the operator has focused. It is **held** once something sets it on purpose: a pre-flight
+  Fix, a loaded plan file, or Go to a slice (so the planes stay put while that slice is checked on live view). A held
+  reference is labelled "Reference" and the live focus is drawn as an amber dashed line; *Use focus now* follows the
+  focus again. Nothing follows while any workflow runs.
+- The Acquire step adds "This volume's planes", the same picture without the Go to buttons: the planes taken fill in,
+  the one being exposed is amber, and each turns green once every channel has it (channel by channel or plane by
+  plane). It restarts at each position and timepoint; at the end the last volume stays drawn (green if completed).
+Code: `MultiDPage.anchor_um` (setting it holds), `_follow_focus`, `_go_slice`, `_draw_depth`, `_show_volume`;
+`ZRangeView(go_buttons=False)` and `focus_word`. Tests: `test_depth_picture_follows_the_focus_until_the_reference_is_
+held`, `test_depth_go_to_a_slice_holds_the_reference_and_moves_the_focus`, and the run test checks the last volume ends
+all green.
